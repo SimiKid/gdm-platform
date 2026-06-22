@@ -1,10 +1,10 @@
-workspace "GDM Study Platform" "AI-supported group decision-making study" {
+workspace "GDM Platform" "AI-supported group decision-making study" {
 
     model {
         participant = person "Participant" "Member of a 5-person hiring committee"
         researcher  = person "Researcher" "Configures conditions, exports data"
 
-        gdm = softwareSystem "GDM Study Platform" "Runs AI-assisted group decision-making sessions" {
+        gdm = softwareSystem "GDM Platform" "Runs AI-assisted group decision-making sessions" {
 
             spa = container "Participant client" "WhatsApp-style chat UI; lobby, briefing, poll, exit survey; renders inline private nudges" "React, matrix-js-sdk"
             admin = container "Researcher dashboard" "Conditions, session pool, completion counts, export" "React"
