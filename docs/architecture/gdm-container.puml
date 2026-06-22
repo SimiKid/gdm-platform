@@ -1,0 +1,39 @@
+@startuml gdm-container
+' If your renderer can't find the bundled C4 stdlib, replace the line below with:
+' !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+!include <C4/C4_Container>
+
+title GDM Study Platform — Container diagram
+
+Person(participant, "Participant", "Member of a 5-person hiring committee")
+Person(researcher, "Researcher", "Configures conditions, exports data")
+
+System_Boundary(gdm, "GDM Study Platform") {
+  Container(spa, "Participant client", "React, matrix-js-sdk", "WhatsApp-style chat UI; lobby, briefing, poll, exit survey; renders inline private nudges")
+  Container(admin, "Researcher dashboard", "React", "Conditions, session pool, completion counts, export")
+  Container(control, "Control plane / app server", "NestJS", "Lobby & condition assignment, user provisioning, surveys, polls, export")
+  Container(synapse, "Synapse homeserver", "Matrix / Synapse", "Real-time messaging; rooms = groups; encryption disabled so the bot can read")
+  Container(engine, "Rule engine", "Node appservice", "Detects non-acknowledged contributions; sends group or private nudges")
+  Container(etherpad, "Etherpad", "Etherpad", "Shared notepad, embedded via iframe")
+  ContainerDb(researchdb, "Research database", "PostgreSQL", "Messages, interventions, behavioural events; source for JSON/CSV export")
+  ContainerDb(synapsedb, "Synapse database", "PostgreSQL", "Matrix event graph & state (internal to Synapse)")
+}
+
+Rel(participant, spa, "Uses", "HTTPS")
+Rel(researcher, admin, "Uses", "HTTPS")
+
+Rel(spa, control, "Experiment flow: briefing, surveys, polls, provisioning", "HTTPS/JSON")
+Rel(spa, synapse, "Sends/receives messages, reactions, typing", "Matrix Client-Server API")
+Rel(spa, etherpad, "Collaborative notes", "HTTPS (iframe)")
+Rel(admin, control, "Manage conditions, trigger export", "HTTPS/JSON")
+
+Rel(control, synapse, "Provisions virtual users & rooms", "Appservice login / Admin API")
+Rel(control, researchdb, "Reads/writes experiment data", "SQL")
+
+Rel(synapse, engine, "Pushes room event stream", "Appservice API")
+Rel(engine, synapse, "Posts group nudge / bot to user DM", "Matrix Client-Server API")
+Rel(engine, researchdb, "Writes interventions & behavioural logs", "SQL")
+Rel(synapse, synapsedb, "Reads/writes", "SQL")
+
+SHOW_LEGEND()
+@enduml

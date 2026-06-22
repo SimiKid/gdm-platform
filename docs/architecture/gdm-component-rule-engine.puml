@@ -1,0 +1,37 @@
+@startuml gdm-component-rule-engine
+' If your renderer can't find the bundled C4 stdlib, replace the line below with:
+' !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+!include <C4/C4_Component>
+
+title Rule engine (appservice) — Component diagram
+
+System_Boundary(gdm, "GDM Study Platform") {
+  Container(synapse, "Synapse homeserver", "Matrix", "Chat backend; pushes events, receives nudges")
+  Container(control, "Control plane", "NestJS", "Owns each session's experimental condition")
+  ContainerDb(researchdb, "Research database", "PostgreSQL", "Logs & export")
+
+  Container_Boundary(engine, "Rule engine (appservice)") {
+    Component(ingest, "Event adapter", "matrix-bot-sdk", "Receives m.room.message / m.reaction from the appservice stream")
+    Component(state, "State tracker", "TypeScript", "Per-room contribution state: reply graph, timers, reaction set")
+    Component(detectors, "Detectors", "TypeScript", "Non-acknowledgment rules: reply window, reactions, silence")
+    Component(ruleset, "Ruleset config", "JSON/YAML", "Configurable thresholds per condition")
+    Component(gate, "Condition gate", "TypeScript", "Maps a fired rule to group / private / no nudge for the session's 2x2 cell")
+    Component(dispatch, "Dispatcher", "TypeScript", "Emits the nudge as a Matrix room message or bot to user DM")
+    Component(logger, "Logger", "TypeScript", "Persists interventions & behavioural events")
+  }
+}
+
+Rel(synapse, ingest, "Event stream", "Appservice API")
+Rel(ingest, state, "Normalized message / reaction events")
+Rel(state, detectors, "Current room state")
+Rel(ruleset, detectors, "Thresholds", "reads")
+Rel(detectors, gate, "Fired non-ack signals")
+Rel(control, gate, "Session condition", "config")
+Rel(gate, dispatch, "Nudge action (group / private)")
+Rel(dispatch, synapse, "Post nudge", "Client-Server API")
+Rel(gate, logger, "Intervention record")
+Rel(state, logger, "Behavioural events")
+Rel(logger, researchdb, "Writes", "SQL")
+
+SHOW_LEGEND()
+@enduml
