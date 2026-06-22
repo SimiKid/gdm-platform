@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+
+# Structurizr Lite working files
+.structurizr/
+docs/architecture/workspace.json
+
+# Synapse/Postgres runtime data
+infra/data/
