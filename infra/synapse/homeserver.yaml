@@ -49,6 +49,13 @@ suppress_key_server_warning: true
 # Disable encryption by default so study rooms stay readable
 encryption_enabled_by_default_for_room_type: "off"
 
+# ── Application services (Bot / Rule Engine) ──────────
+# STUB: uncomment when the bot appservice lands. Synapse loads the bot's
+# registration file from here; the file must be mounted into this container
+# (see the matching volume stub in docker-compose.yml).
+# app_service_config_files:
+#   - /data/appservice-registration.yaml
+
 # ── Rate limiting (relaxed for study sessions) ────────
 rc_message:
   per_second: 10

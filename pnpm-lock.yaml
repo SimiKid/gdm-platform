@@ -42,6 +42,12 @@ importers:
         specifier: ^8.1.1
         version: 8.1.2(@types/node@24.13.2)
 
+  packages/shared:
+    devDependencies:
+      typescript:
+        specifier: ~6.0.2
+        version: 6.0.3
+
 packages:
 
   '@babel/runtime@7.29.7':
