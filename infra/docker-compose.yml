@@ -1,0 +1,61 @@
+services:
+  # ── Matrix Synapse ────────────────────────────────────
+  synapse:
+    image: matrixdotorg/synapse:latest
+    container_name: gdm-synapse
+    restart: unless-stopped
+    volumes:
+      - synapse-data:/data
+      - ./synapse/homeserver.yaml:/data/homeserver.yaml:ro
+      - ./synapse/log.config:/data/log.config:ro
+      # STUB: uncomment when the bot appservice lands (pair with the
+      # app_service_config_files entry in homeserver.yaml).
+      # - ./appservice/registration.yaml:/data/appservice-registration.yaml:ro
+    environment:
+      UID: "0"
+      GID: "0"
+    ports:
+      - "8008:8008"
+    depends_on:
+      synapse-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fSs http://localhost:8008/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Synapse PostgreSQL ────────────────────────────────
+  synapse-db:
+    image: postgres:16-alpine
+    container_name: gdm-synapse-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${SYNAPSE_DB_NAME}
+      POSTGRES_USER: ${SYNAPSE_DB_USER}
+      POSTGRES_PASSWORD: ${SYNAPSE_DB_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - synapse-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SYNAPSE_DB_USER} -d ${SYNAPSE_DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Participant Frontend ──────────────────────────────
+  participant:
+    build:
+      context: ..
+      dockerfile: frontend/participant/Dockerfile
+    container_name: gdm-participant
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      synapse:
+        condition: service_healthy
+
+volumes:
+  synapse-data:
+  synapse-db-data:
