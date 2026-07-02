@@ -10,3 +10,6 @@ docs/architecture/workspace.json
 
 # Synapse/Postgres runtime data
 infra/data/
+
+# Claude Code local context
+.claude/
