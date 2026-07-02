@@ -87,6 +87,18 @@ http://localhost:3000/?token=<BOB_TOKEN>
 - Messages arrive in real-time across both windows
 - Magic link strips the token from the URL after login
 
+## Reset database
+
+To wipe all data (users, rooms, messages) and start fresh:
+
+```bash
+cd infra
+docker compose down -v
+docker compose up --build
+```
+
+The `-v` flag removes the Docker volumes (`synapse-data`, `synapse-db-data`), so Synapse and PostgreSQL reinitialize from scratch on the next start.
+
 ## Configuration
 
 All config lives in `infra/.env` (see `.env.example`). The Synapse `homeserver.yaml` DB credentials must match the `.env` values manually (Synapse reads static YAML, not env vars).
