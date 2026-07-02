@@ -99,6 +99,33 @@ docker compose up --build
 
 The `-v` flag removes the Docker volumes (`synapse-data`, `synapse-db-data`), so Synapse and PostgreSQL reinitialize from scratch on the next start.
 
+## Database inspection
+
+Open an interactive psql session:
+
+```bash
+docker exec -it gdm-synapse-db psql -U synapse -d synapse
+```
+
+Useful queries:
+
+```sql
+-- All registered users
+SELECT name, creation_ts, admin FROM users;
+
+-- All rooms
+SELECT room_id, creator FROM rooms;
+
+-- Last 20 messages
+SELECT e.sender, j.json::jsonb->'content'->>'body' as body, e.received_ts
+FROM events e JOIN event_json j ON e.event_id = j.event_id
+WHERE e.type = 'm.room.message'
+ORDER BY e.received_ts DESC LIMIT 20;
+
+-- Room memberships
+SELECT room_id, user_id FROM room_memberships WHERE membership = 'join';
+```
+
 ## Configuration
 
 All config lives in `infra/.env` (see `.env.example`). The Synapse `homeserver.yaml` DB credentials must match the `.env` values manually (Synapse reads static YAML, not env vars).
