@@ -8,6 +8,9 @@ services:
       - synapse-data:/data
       - ./synapse/homeserver.yaml:/data/homeserver.yaml:ro
       - ./synapse/log.config:/data/log.config:ro
+      # STUB: uncomment when the bot appservice lands (pair with the
+      # app_service_config_files entry in homeserver.yaml).
+      # - ./appservice/registration.yaml:/data/appservice-registration.yaml:ro
     environment:
       UID: "0"
       GID: "0"
