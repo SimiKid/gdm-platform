@@ -31,6 +31,7 @@ type Stage =
 export default function App() {
   const [stage, setStage] = useState<Stage>("recruiting");
   const [trackingToken, setTrackingToken] = useState<string | null>(null);
+  const [conditionId, setConditionId] = useState<string | undefined>();
   const [entrySurvey, setEntrySurvey] = useState<SurveyData | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [participantId, setParticipantId] = useState("");
@@ -124,8 +125,9 @@ export default function App() {
     case "recruiting":
       return (
         <Recruiting
-          onEnter={(t) => {
+          onEnter={(t, forcedConditionId) => {
             setTrackingToken(t);
+            setConditionId(forcedConditionId);
             setStage("survey");
           }}
           onDevLogin={() => setStage("devlogin")}
@@ -150,6 +152,7 @@ export default function App() {
       return (
         <WaitingRoom
           trackingToken={trackingToken}
+          conditionId={conditionId}
           entrySurvey={entrySurvey}
           onReady={(readyClient, readySession, readyParticipantId) => {
             setSession(readySession);

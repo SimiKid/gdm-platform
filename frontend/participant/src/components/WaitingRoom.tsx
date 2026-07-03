@@ -6,6 +6,7 @@ import { httpSessionManager } from "../study/sessionClient";
 
 interface Props {
   trackingToken: string;
+  conditionId?: string;
   entrySurvey: Survey | null;
   /** Called with a synced Matrix client, the session, and our participant id. */
   onReady: (
@@ -25,6 +26,7 @@ interface Props {
  */
 export default function WaitingRoom({
   trackingToken,
+  conditionId,
   entrySurvey,
   onReady,
 }: Props) {
@@ -52,6 +54,7 @@ export default function WaitingRoom({
         const res = await httpSessionManager.openSession({
           trackingToken,
           participantName: "",
+          conditionId,
         });
         if (!alive.current) return;
 
@@ -112,7 +115,7 @@ export default function WaitingRoom({
       alive.current = false;
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [trackingToken, entrySurvey]);
+  }, [trackingToken, conditionId, entrySurvey]);
 
   if (error) {
     return (

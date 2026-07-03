@@ -79,6 +79,20 @@ export class MatrixBotService implements OnModuleInit {
     if (!res.ok) throw new Error(`bot send failed (${res.status})`);
   }
 
+  async getJoinedMemberIds(roomId: string): Promise<string[]> {
+    const res = await fetch(
+      `${this.internalUrl}/_matrix/client/v3/rooms/${encodeURIComponent(
+        roomId,
+      )}/joined_members`,
+      { headers: this.authHeaders() },
+    );
+    if (!res.ok) throw new Error(`joined_members failed (${res.status})`);
+    const data = (await res.json()) as {
+      joined?: Record<string, unknown>;
+    };
+    return Object.keys(data.joined ?? {});
+  }
+
   stop(): void {
     this.running = false;
   }

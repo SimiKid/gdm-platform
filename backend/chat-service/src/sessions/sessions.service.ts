@@ -42,6 +42,7 @@ export class SessionsService {
       note.sessionId,
       note.roomId,
       note.condition,
+      note.durationMinutes,
       this.bot,
     );
     this.runtimes.set(note.roomId, runtime);
@@ -125,6 +126,7 @@ export class SessionsService {
           body: JSON.stringify({
             messages: runtime.messages,
             rankingHistory: runtime.rankingHistory,
+            interventions: runtime.interventions,
           }),
         },
       );

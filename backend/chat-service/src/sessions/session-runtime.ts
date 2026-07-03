@@ -1,5 +1,11 @@
-import { GDM_RECIPIENT_KEY } from "@gdm/shared";
-import type { Condition, Message, Ranking, Reaction } from "@gdm/shared";
+import { GDM_RECIPIENT_KEY, isServiceUser } from "@gdm/shared";
+import type {
+  Condition,
+  InterventionLog,
+  Message,
+  Ranking,
+  Reaction,
+} from "@gdm/shared";
 import type { MatrixBotService } from "../matrix/matrix-bot.service";
 
 /**
@@ -14,9 +20,12 @@ export class SessionRuntime {
   readonly messages: Message[] = [];
   /** Every shared-ranking state seen this session, oldest → newest. */
   readonly rankingHistory: Ranking[] = [];
+  /** Every bot intervention emitted this session. */
+  readonly interventions: InterventionLog[] = [];
   /** Rules may stash arbitrary per-session bookkeeping here. */
   readonly state: Record<string, unknown> = {};
 
+  readonly startedAtMs: number;
   private ended = false;
   private readonly byId = new Map<string, Message>();
   /** reaction event id -> where it landed, so redactions can undo it. */
@@ -29,8 +38,11 @@ export class SessionRuntime {
     readonly sessionId: string,
     readonly roomId: string,
     readonly condition: Condition,
+    readonly durationMinutes: number,
     private readonly bot: MatrixBotService,
-  ) {}
+  ) {
+    this.startedAtMs = Date.now();
+  }
 
   recordMessage(message: Message): void {
     this.messages.push(message);
@@ -60,6 +72,15 @@ export class SessionRuntime {
 
   recordRanking(ranking: Ranking): void {
     this.rankingHistory.push(ranking);
+  }
+
+  recordIntervention(intervention: InterventionLog): void {
+    this.interventions.push(intervention);
+  }
+
+  async getParticipantUserIds(): Promise<string[]> {
+    const memberIds = await this.bot.getJoinedMemberIds(this.roomId);
+    return memberIds.filter((id) => !isServiceUser(id)).sort();
   }
 
   /** Post a nudge / message into the room as the bot (visible to everyone). */

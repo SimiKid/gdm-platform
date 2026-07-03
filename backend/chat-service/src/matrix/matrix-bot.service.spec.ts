@@ -32,6 +32,26 @@ describe("MatrixBotService", () => {
     vi.unstubAllGlobals();
   });
 
+  it("getJoinedMemberIds returns joined Matrix user ids", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          joined: {
+            "@a:localhost": {},
+            "@b:localhost": {},
+          },
+        }),
+      })),
+    );
+    await expect(new MatrixBotService().getJoinedMemberIds("!r")).resolves.toEqual([
+      "@a:localhost",
+      "@b:localhost",
+    ]);
+    vi.unstubAllGlobals();
+  });
+
   it("registers and delivers timeline events from /sync to handlers", async () => {
     const bot = new MatrixBotService();
     const events: { roomId: string; type: string; eventId: string }[] = [];

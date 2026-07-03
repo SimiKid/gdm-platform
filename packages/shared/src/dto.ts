@@ -6,12 +6,20 @@
  * against the REAL local Matrix instance — not mocked. They ride on Matrix
  * events (see MATRIX_EVENT_TYPES below), not these REST DTOs.
  *
- * Only the still-pending infra gets an interface/mock: the research DB
- * (persistence) and the bot appservice registration. These DTOs cover session
+ * Research persistence is owned by the Session Manager. The remaining mocked
+ * boundary is the future bot appservice registration. These DTOs cover session
  * lifecycle, surveys, condition config and export.
  */
 
-import type { Condition, Message, Ranking, Session, Survey } from "./models.js";
+import type { InterventionLog } from "./interventions.js";
+import type {
+  Condition,
+  Message,
+  Ranking,
+  Session,
+  SessionStatus,
+  Survey,
+} from "./models.js";
 
 // ── Participant Client -> Session Manager ────────────────────────
 
@@ -20,6 +28,8 @@ export interface OpenSessionRequest {
   /** The per-participant tracking token from the individual URL. */
   trackingToken: string;
   participantName: string;
+  /** Pilot/testing only: force this participant into a specific condition. */
+  conditionId?: string;
 }
 
 /** The "session object" returned to the client (sketch: "return session object"). */
@@ -57,6 +67,35 @@ export interface UpsertConditionRequest {
   condition: Condition;
 }
 
+export interface SessionSummary {
+  id: string;
+  status: SessionStatus;
+  conditionId: string;
+  conditionName: string;
+  participantCount: number;
+  groupSize: number;
+  messageCount: number;
+  interventionCount: number;
+  rankingEditCount: number;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  roomId?: string;
+}
+
+export interface InterventionSummary {
+  sessionId: string;
+  conditionId: string;
+  timestamp: string;
+  mode: InterventionLog["mode"];
+  audience: InterventionLog["audience"];
+  tone: InterventionLog["tone"];
+  targets: InterventionLog["targets"];
+  quietMembers: InterventionLog["quietMembers"];
+  contributionSplit: InterventionLog["contributionSplit"];
+  message: string;
+}
+
 // ── Admin Dashboard -> Export Service ────────────────────────────
 
 export type ExportFormat = "json" | "csv";
@@ -65,6 +104,11 @@ export interface ExportRequest {
   format: ExportFormat;
   /** Restrict to specific conditions; empty / omitted = everything. */
   conditionIds?: string[];
+}
+
+export interface ExportBundle {
+  generatedAt: string;
+  sessions: Session[];
 }
 
 // ── Real-time (Matrix custom events) ─────────────────────────────
@@ -117,4 +161,6 @@ export interface FinalizeSessionRequest {
   messages: Message[];
   /** Every shared-ranking state during the session, oldest → newest. */
   rankingHistory: Ranking[];
+  /** Bot interventions emitted during the session. */
+  interventions?: InterventionLog[];
 }

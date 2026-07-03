@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 interface Props {
   /** Called with the tracking token once a valid individual link is detected. */
-  onEnter: (trackingToken: string) => void;
+  onEnter: (trackingToken: string, conditionId?: string) => void;
   /** Fallback for developers testing without a real study link. */
   onDevLogin: () => void;
 }
@@ -18,16 +18,21 @@ interface Props {
  */
 export default function Recruiting({ onEnter, onDevLogin }: Props) {
   const [trackingToken, setTrackingToken] = useState<string | null>(null);
+  const [conditionId, setConditionId] = useState<string | undefined>();
   const [checked, setChecked] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const p = params.get("p");
+    const condition = params.get("conditionId") ?? params.get("c") ?? undefined;
     if (p) {
       const url = new URL(window.location.href);
       url.searchParams.delete("p");
+      url.searchParams.delete("c");
+      if (condition) url.searchParams.set("conditionId", condition);
       window.history.replaceState({}, "", url.toString());
       setTrackingToken(p);
+      setConditionId(condition);
     }
     setChecked(true);
   }, []);
@@ -56,7 +61,7 @@ export default function Recruiting({ onEnter, onDevLogin }: Props) {
         You're about to take part in a short group decision-making exercise.
         The next screens will brief you and ask for your consent.
       </p>
-      <button type="button" onClick={() => onEnter(trackingToken)}>
+      <button type="button" onClick={() => onEnter(trackingToken, conditionId)}>
         Start
       </button>
     </div>

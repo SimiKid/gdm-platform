@@ -1,3 +1,5 @@
+import type { InterventionConfig, InterventionLog } from "./interventions.js";
+
 /**
  * Domain models for the GDM Study Platform.
  *
@@ -118,8 +120,8 @@ export interface Condition {
   durationMinutes: number;
   /** Required participants per session ("# People"). */
   groupSize: number;
-  /** Opaque, condition-specific knobs consumed by the bot. */
-  config: Record<string, unknown>;
+  /** Condition-specific knobs consumed by the bot. */
+  config: InterventionConfig & Record<string, unknown>;
 }
 
 /** Which nudge behavior the bot runs for a session. */
@@ -153,6 +155,8 @@ export interface Session {
   ranking: Ranking;
   /** Every shared-ranking state during the session, oldest → newest. */
   rankingHistory?: Ranking[];
+  /** Bot interventions emitted during the live session. */
+  interventions: InterventionLog[];
   polls: Poll[];
   /** Copied from the condition at assignment time; drives the chat timer. */
   durationMinutes: number;

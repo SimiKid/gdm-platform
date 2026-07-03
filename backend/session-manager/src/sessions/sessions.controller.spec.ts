@@ -6,14 +6,19 @@ import type { StoreService } from "../store/store.service";
 describe("SessionsController", () => {
   const sessions = {
     openSession: vi.fn(async () => ({ session: { id: "s" } })),
-    getSession: vi.fn(() => ({ id: "s" })),
-    submitSurvey: vi.fn(),
-    completeSession: vi.fn(() => ({ id: "s", status: "completed" })),
-    finalizeSession: vi.fn(() => ({ id: "s" })),
+    listSessions: vi.fn(async () => [{ id: "s" }]),
+    getSession: vi.fn(async () => ({ id: "s" })),
+    listInterventions: vi.fn(async () => [{ sessionId: "s" }]),
+    exportBundle: vi.fn(async () => ({ generatedAt: "now", sessions: [] })),
+    exportCsv: vi.fn(async () => "session_id\n"),
+    submitSurvey: vi.fn(async () => undefined),
+    completeSession: vi.fn(async () => ({ id: "s", status: "completed" })),
+    finalizeSession: vi.fn(async () => ({ id: "s" })),
   } as unknown as SessionsService;
   const store = {
-    listConditions: () => [{ id: "c1", name: "C1", goal: 5 }],
-    completedCount: () => 2,
+    listConditions: async () => [{ id: "c1", name: "C1", goal: 5 }],
+    upsertCondition: vi.fn(async (condition) => condition),
+    completedCount: async () => 2,
   } as unknown as StoreService;
   const ctrl = new SessionsController(sessions, store);
 
@@ -22,34 +27,80 @@ describe("SessionsController", () => {
     expect(sessions.openSession).toHaveBeenCalled();
   });
 
-  it("getSession delegates by id", () => {
-    ctrl.getSession("s");
+  it("getSession delegates by id", async () => {
+    await ctrl.getSession("s");
     expect(sessions.getSession).toHaveBeenCalledWith("s");
   });
 
-  it("submitSurvey returns ok", () => {
-    expect(
+  it("listSessions delegates to the service", async () => {
+    await expect(ctrl.listSessions()).resolves.toEqual([{ id: "s" }]);
+  });
+
+  it("submitSurvey returns ok", async () => {
+    await expect(
       ctrl.submitSurvey({
         sessionId: "s",
         participantId: "p",
         kind: "entry",
         survey: { answers: {}, submittedAt: "" },
       }),
-    ).toEqual({ ok: true });
+    ).resolves.toEqual({ ok: true });
   });
 
-  it("complete delegates by id", () => {
-    ctrl.complete("s");
+  it("complete delegates by id", async () => {
+    await ctrl.complete("s");
     expect(sessions.completeSession).toHaveBeenCalledWith("s");
   });
 
-  it("finalize passes messages and ranking history", () => {
-    ctrl.finalize("s", { messages: [], rankingHistory: [] });
-    expect(sessions.finalizeSession).toHaveBeenCalledWith("s", [], []);
+  it("finalize passes messages and ranking history", async () => {
+    await ctrl.finalize("s", { messages: [], rankingHistory: [] });
+    expect(sessions.finalizeSession).toHaveBeenCalledWith("s", [], [], []);
   });
 
-  it("progress maps completed count and goal per condition", () => {
-    const progress = ctrl.progress();
+  it("progress maps completed count and goal per condition", async () => {
+    const progress = await ctrl.progress();
     expect(progress[0]).toMatchObject({ completed: 2, goal: 5 });
+  });
+
+  it("upsertCondition updates through the store", async () => {
+    const condition = {
+      id: "c1",
+      name: "C1",
+      active: true,
+      goal: 5,
+      durationMinutes: 10,
+      groupSize: 3,
+      config: {
+        interventionMode: "public-neutral",
+        contributionThreshold: 0.4,
+        protectedStartMinutes: 3,
+        protectedEndMinutes: 2,
+        interventionWindowMinutes: 4,
+        contributionWindowMinutes: 4,
+        scoreWeights: { messages: 1, characters: 0.01 },
+      },
+    } as const;
+    await expect(ctrl.upsertCondition("c1", { condition })).resolves.toMatchObject({
+      id: "c1",
+    });
+    expect(store.upsertCondition).toHaveBeenCalledWith(condition);
+  });
+
+  it("lists intervention summaries", async () => {
+    await expect(ctrl.interventions()).resolves.toEqual([{ sessionId: "s" }]);
+  });
+
+  it("exports JSON and CSV with optional condition filters", async () => {
+    await expect(ctrl.exportSessions("public-neutral,public-engaging")).resolves.toEqual({
+      generatedAt: "now",
+      sessions: [],
+    });
+    expect(sessions.exportBundle).toHaveBeenCalledWith([
+      "public-neutral",
+      "public-engaging",
+    ]);
+
+    await expect(ctrl.exportSessionsCsv("public-neutral")).resolves.toBe("session_id\n");
+    expect(sessions.exportCsv).toHaveBeenCalledWith(["public-neutral"]);
   });
 });

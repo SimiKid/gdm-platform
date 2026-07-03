@@ -5,6 +5,7 @@ import type {
   TimelineEvent,
 } from "../matrix/matrix-bot.service";
 import type { BotRules } from "../rules/bot-rules";
+import { DEFAULT_INTERVENTION_CONFIG } from "@gdm/shared";
 import type { Condition, StartSessionNotification } from "@gdm/shared";
 
 const condition: Condition = {
@@ -14,7 +15,7 @@ const condition: Condition = {
   goal: 5,
   durationMinutes: 10,
   groupSize: 3,
-  config: {},
+  config: { ...DEFAULT_INTERVENTION_CONFIG },
 };
 
 const note: StartSessionNotification = {
@@ -31,6 +32,7 @@ function makeBot() {
     onTimelineEvent: (h: (e: TimelineEvent) => void) => handlers.push(h),
     join: vi.fn(async () => undefined),
     sendText: vi.fn(async () => undefined),
+    getJoinedMemberIds: vi.fn(async () => ["@u:localhost", "@u2:localhost"]),
   };
   return { bot: bot as unknown as MatrixBotService, emit: (e: TimelineEvent) => handlers.forEach((h) => h(e)) };
 }
