@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { createClient, ClientEvent } from "matrix-js-sdk";
 import type { MatrixClient } from "matrix-js-sdk";
-import type { Survey } from "@gdm/shared";
+import type { Session, Survey } from "@gdm/shared";
 import { httpSessionManager } from "../study/sessionClient";
 
 interface Props {
   trackingToken: string;
   participantName: string;
   entrySurvey: Survey | null;
-  /** Called with a synced Matrix client once the group's room is ready. */
-  onReady: (client: MatrixClient) => void;
+  /** Called with a synced Matrix client + the session once the room is ready. */
+  onReady: (client: MatrixClient, session: Session) => void;
 }
 
 /**
@@ -80,7 +80,7 @@ export default function WaitingRoom({
 
         // If our own join already completed the group, go straight in.
         if (res.matrix.roomId) {
-          onReadyRef.current(client);
+          onReadyRef.current(client, res.session);
           return;
         }
 
@@ -93,7 +93,7 @@ export default function WaitingRoom({
             setGroupSize(session.condition.groupSize);
             if (session.roomId) {
               clearInterval(pollRef.current);
-              onReadyRef.current(client);
+              onReadyRef.current(client, session);
             }
           } catch {
             /* transient — keep polling */

@@ -6,7 +6,7 @@ import Login from "./components/Login";
 import Chat from "./components/Chat";
 import { createClient, ClientEvent } from "matrix-js-sdk";
 import type { MatrixClient } from "matrix-js-sdk";
-import type { Survey as SurveyData } from "@gdm/shared";
+import type { Session, Survey as SurveyData } from "@gdm/shared";
 import "./App.css";
 
 const HOMESERVER =
@@ -25,6 +25,7 @@ export default function App() {
   const [trackingToken, setTrackingToken] = useState<string | null>(null);
   const [participantName, setParticipantName] = useState("");
   const [entrySurvey, setEntrySurvey] = useState<SurveyData | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [client, setClient] = useState<MatrixClient | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [booting, setBooting] = useState(true);
@@ -99,10 +100,10 @@ export default function App() {
     );
   }
 
-  // A live Matrix client means we're in the chat room (dev fast-path or,
-  // later, provisioned by the Waiting Room via openSession).
+  // A live Matrix client means we're in the chat room (dev fast-path has no
+  // session; the study flow provisions one via the Waiting Room).
   if (client) {
-    return <Chat client={client} />;
+    return <Chat client={client} session={session} />;
   }
 
   switch (stage) {
@@ -138,7 +139,8 @@ export default function App() {
           trackingToken={trackingToken}
           participantName={participantName}
           entrySurvey={entrySurvey}
-          onReady={(readyClient) => {
+          onReady={(readyClient, readySession) => {
+            setSession(readySession);
             setClient(readyClient);
             setStage("chat");
           }}
