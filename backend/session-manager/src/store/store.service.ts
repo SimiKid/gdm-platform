@@ -1,11 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
-import type {
-  Briefing,
-  Condition,
-  RankingTask,
-  Session,
-} from "@gdm/shared";
+import { EXPEDITION_MARS, EXPEDITION_MARS_BRIEFING } from "@gdm/shared";
+import type { Condition, Session } from "@gdm/shared";
 import type { MatrixCreds } from "../matrix/matrix.service";
 
 /**
@@ -14,31 +10,8 @@ import type { MatrixCreds } from "../matrix/matrix.service";
  * changes to SessionsService. Data resets on restart — dev only.
  */
 
-const BRIEFING: Briefing = {
-  title: "Expedition Mars",
-  html:
-    "<p>Your crew has crash-landed 200 km from the rendezvous point on Mars. " +
-    "Much of the equipment was damaged. As a group, rank the surviving items " +
-    "by how critical they are for reaching the rendezvous point. Discuss in " +
-    "the chat and agree on a shared ranking.</p>",
-};
-
-const RANKING_TASK: RankingTask = {
-  id: "expedition-mars",
-  title: "Rank the surviving equipment (most to least critical)",
-  items: [
-    { id: "oxygen", label: "Oxygen tanks" },
-    { id: "water", label: "Water (20 litres)" },
-    { id: "map", label: "Star map of Mars' constellations" },
-    { id: "radio", label: "Solar-powered FM radio" },
-    { id: "firstaid", label: "First-aid kit" },
-    { id: "food", label: "Case of dehydrated food" },
-    { id: "heater", label: "Portable heating unit" },
-    { id: "rope", label: "50 m of nylon rope" },
-    { id: "flares", label: "Signal flares" },
-    { id: "compass", label: "Magnetic compass" },
-  ],
-};
+const BRIEFING = EXPEDITION_MARS_BRIEFING;
+const RANKING_TASK = EXPEDITION_MARS;
 
 @Injectable()
 export class StoreService {

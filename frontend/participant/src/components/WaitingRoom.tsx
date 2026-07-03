@@ -6,10 +6,13 @@ import { httpSessionManager } from "../study/sessionClient";
 
 interface Props {
   trackingToken: string;
-  participantName: string;
   entrySurvey: Survey | null;
-  /** Called with a synced Matrix client + the session once the room is ready. */
-  onReady: (client: MatrixClient, session: Session) => void;
+  /** Called with a synced Matrix client, the session, and our participant id. */
+  onReady: (
+    client: MatrixClient,
+    session: Session,
+    participantId: string,
+  ) => void;
 }
 
 /**
@@ -22,7 +25,6 @@ interface Props {
  */
 export default function WaitingRoom({
   trackingToken,
-  participantName,
   entrySurvey,
   onReady,
 }: Props) {
@@ -49,7 +51,7 @@ export default function WaitingRoom({
       try {
         const res = await httpSessionManager.openSession({
           trackingToken,
-          participantName,
+          participantName: "",
         });
         if (!alive.current) return;
 
@@ -80,7 +82,7 @@ export default function WaitingRoom({
 
         // If our own join already completed the group, go straight in.
         if (res.matrix.roomId) {
-          onReadyRef.current(client, res.session);
+          onReadyRef.current(client, res.session, res.participantId);
           return;
         }
 
@@ -93,7 +95,7 @@ export default function WaitingRoom({
             setGroupSize(session.condition.groupSize);
             if (session.roomId) {
               clearInterval(pollRef.current);
-              onReadyRef.current(client, session);
+              onReadyRef.current(client, session, res.participantId);
             }
           } catch {
             /* transient — keep polling */
@@ -110,7 +112,7 @@ export default function WaitingRoom({
       alive.current = false;
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [trackingToken, participantName, entrySurvey]);
+  }, [trackingToken, entrySurvey]);
 
   if (error) {
     return (
@@ -128,8 +130,7 @@ export default function WaitingRoom({
     <div className="login-container">
       <h1>Waiting room</h1>
       <p className="login-hint">
-        Thanks{participantName ? `, ${participantName}` : ""} — waiting for the
-        group to fill up...
+        Thanks — waiting for the group to fill up...
       </p>
       <p className="login-hint">
         {count}

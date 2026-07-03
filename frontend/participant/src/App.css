@@ -91,6 +91,49 @@ body {
   text-decoration: underline;
 }
 
+.pay-button {
+  display: inline-block;
+  padding: 0.6rem 1.5rem;
+  background: #2f9e44;
+  color: #fff;
+  border-radius: 4px;
+  font-size: 1rem;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.pay-button:hover {
+  background: #2b8a3e;
+}
+
+.login-container select {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 1rem;
+  background: #fff;
+}
+
+.login-container .field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 320px;
+  font-size: 0.9rem;
+  color: #333;
+}
+
+.login-container .consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  width: 320px;
+  font-size: 0.9rem;
+  color: #333;
+  text-align: left;
+}
+
 /* ── Chat layout (sidebar + main) ────────────── */
 
 .chat-layout {
@@ -239,6 +282,39 @@ body {
   bottom: 0.35rem;
   font-size: 0.65rem;
   color: #667781;
+}
+
+/* ── Bot / nudge messages ────────────────────── */
+
+.bot-message {
+  align-self: center;
+  max-width: 80%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 10px;
+  background: #fff8e1;
+  border: 1px solid #ffe08a;
+  font-size: 0.85rem;
+}
+
+.bot-message.private {
+  background: #eef4fb;
+  border-color: #b3d4f5;
+}
+
+.bot-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #b8860b;
+  margin-bottom: 0.15rem;
+}
+
+.bot-message.private .bot-label {
+  color: #1168bd;
+}
+
+.bot-body {
+  line-height: 1.35;
+  color: #333;
 }
 
 /* ── Reactions ───────────────────────────────── */
@@ -471,8 +547,10 @@ body {
 .rank-actions button {
   width: 1.6rem;
   height: 1.6rem;
+  padding: 0;
   border: 1px solid #ccc;
   background: #fff;
+  color: #333;
   border-radius: 4px;
   cursor: pointer;
   font-size: 0.8rem;

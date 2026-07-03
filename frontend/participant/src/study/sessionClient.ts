@@ -21,6 +21,8 @@ export interface SessionManagerClient {
   getSession(id: string): Promise<Session>;
   /** Persist an entry/exit survey. */
   submitSurvey(req: SubmitSurveyRequest): Promise<void>;
+  /** Mark the session completed when the discussion timer ends. */
+  completeSession(id: string): Promise<void>;
 }
 
 /**
@@ -53,5 +55,11 @@ export const httpSessionManager: SessionManagerClient = {
       body: JSON.stringify(req),
     });
     if (!res.ok) throw new Error(`submitSurvey failed: ${res.status}`);
+  },
+  async completeSession(id) {
+    const res = await fetch(`${API_BASE}/sessions/${id}/complete`, {
+      method: "POST",
+    });
+    if (!res.ok) throw new Error(`completeSession failed: ${res.status}`);
   },
 };

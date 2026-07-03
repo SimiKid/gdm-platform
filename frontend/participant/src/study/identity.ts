@@ -27,9 +27,14 @@ const PALETTE: Identity[] = [
 
 const FALLBACK: Identity = { name: "Gray", color: "#868e96" };
 
+/** True for the study bot user (its messages render as assistant nudges). */
+export function isBot(userId: string): boolean {
+  return /_bot[:_]/i.test(userId);
+}
+
 /** Bot / orchestrator service accounts that shouldn't get a participant slot. */
 function isService(userId: string): boolean {
-  return /orchestrator|_bot[:_]/i.test(userId);
+  return /orchestrator/i.test(userId) || isBot(userId);
 }
 
 /**

@@ -3,3 +3,5 @@ packages:
   - "backend/*"
   - "frontend/*"
   - "packages/*"
+allowBuilds:
+  esbuild: true

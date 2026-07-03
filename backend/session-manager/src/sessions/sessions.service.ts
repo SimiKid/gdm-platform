@@ -7,10 +7,13 @@ import {
 import { randomUUID } from "node:crypto";
 import type {
   Condition,
+  Message,
   OpenSessionRequest,
   OpenSessionResponse,
   Participant,
+  Ranking,
   Session,
+  StartSessionNotification,
   SubmitSurveyRequest,
 } from "@gdm/shared";
 import { MatrixService } from "../matrix/matrix.service";
@@ -22,6 +25,9 @@ export class SessionsService {
   /** URL the browser uses to reach Synapse (returned to the client). */
   private readonly publicUrl =
     process.env.MATRIX_PUBLIC_URL ?? "http://localhost:8008";
+  /** Chat Service that runs the live session (bot rules). */
+  private readonly chatServiceUrl =
+    process.env.CHAT_SERVICE_URL ?? "http://localhost:3002";
 
   constructor(
     private readonly store: StoreService,
@@ -73,6 +79,42 @@ export class SessionsService {
     return session;
   }
 
+  /** Mark a session completed (idempotent) — drives progress & auto-off. */
+  completeSession(id: string): Session {
+    const session = this.getSession(id);
+    if (session.status !== "completed" && session.status !== "aborted") {
+      session.status = "completed";
+      session.completedAt = new Date().toISOString();
+      this.store.saveSession(session);
+      this.log.log(`session ${session.id} completed (${session.condition.name})`);
+    }
+    return session;
+  }
+
+  /** Persist the discussion returned by the Chat Service at session end. */
+  finalizeSession(
+    id: string,
+    messages: Message[],
+    rankingHistory: Ranking[],
+  ): Session {
+    const session = this.getSession(id);
+    session.chat.messages = messages;
+    session.rankingHistory = rankingHistory;
+    if (rankingHistory.length > 0) {
+      session.ranking = rankingHistory[rankingHistory.length - 1];
+    }
+    if (session.status !== "aborted") {
+      session.status = "completed";
+      session.completedAt = new Date().toISOString();
+    }
+    this.store.saveSession(session);
+    this.log.log(
+      `finalized session ${id}: ${messages.length} messages, ` +
+        `${rankingHistory.length} ranking edits`,
+    );
+    return session;
+  }
+
   submitSurvey(req: SubmitSurveyRequest): void {
     const session = this.getSession(req.sessionId);
     const participant = session.participants.find((p) => p.id === req.participantId);
@@ -104,5 +146,26 @@ export class SessionsService {
     session.status = "running";
     session.startedAt = new Date().toISOString();
     this.log.log(`provisioned room ${roomId} for session ${session.id}`);
+    // Hand the live session to the Chat Service (best-effort — the chat still
+    // works client-side if the Chat Service isn't running).
+    void this.notifyChatService(session);
+  }
+
+  private async notifyChatService(session: Session): Promise<void> {
+    const payload: StartSessionNotification = {
+      sessionId: session.id,
+      roomId: session.roomId ?? "",
+      condition: session.condition,
+      durationMinutes: session.durationMinutes,
+    };
+    try {
+      await fetch(`${this.chatServiceUrl}/internal/sessions/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } catch (err) {
+      this.log.warn(`chat service notify failed (is it running?): ${String(err)}`);
+    }
   }
 }

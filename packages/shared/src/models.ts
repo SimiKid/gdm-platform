@@ -11,8 +11,11 @@
 
 /** A named survey answer set (in-app entry or exit questionnaire). */
 export interface Survey {
-  /** Question id -> answer. Kept generic until the instruments are fixed. */
-  answers: Record<string, string | number | boolean>;
+  /**
+   * Question id -> answer. Kept generic until the instruments are fixed.
+   * `string[]` carries the individual Expedition-Mars ranking (ordered ids).
+   */
+  answers: Record<string, string | number | boolean | string[]>;
   submittedAt: string; // ISO 8601
 }
 
@@ -148,6 +151,8 @@ export interface Session {
   rankingTask: RankingTask;
   /** The group's current shared ranking (evolves live during the session). */
   ranking: Ranking;
+  /** Every shared-ranking state during the session, oldest → newest. */
+  rankingHistory?: Ranking[];
   polls: Poll[];
   /** Copied from the condition at assignment time; drives the chat timer. */
   durationMinutes: number;

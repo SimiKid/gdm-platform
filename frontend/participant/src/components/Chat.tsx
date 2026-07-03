@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { MatrixClient } from "matrix-js-sdk";
 import { ClientEvent, RoomEvent } from "matrix-js-sdk";
+import { GDM_RECIPIENT_KEY } from "@gdm/shared";
 import type { Session } from "@gdm/shared";
 import SharedRanking from "./SharedRanking";
-import { buildIdentities, identityFor } from "../study/identity";
+import { buildIdentities, identityFor, isBot } from "../study/identity";
 
 interface Message {
   id: string;
@@ -11,6 +12,10 @@ interface Message {
   body: string;
   isOwn: boolean;
   ts: number;
+  /** True when the message is from the study bot (rendered as a nudge). */
+  fromBot: boolean;
+  /** Set when this is a private nudge for a single participant. */
+  recipient: string | null;
 }
 
 /** targetEventId -> emoji -> { count, mine: my reaction event id if reacted }. */
@@ -20,6 +25,8 @@ interface Props {
   client: MatrixClient;
   /** The study session (briefing, ranking, timer). Null on the dev fast-path. */
   session: Session | null;
+  /** Fired once when the discussion timer reaches zero. */
+  onTimeUp?: () => void;
 }
 
 const QUICK_EMOJI = ["👍", "👎", "❤️"];
@@ -50,7 +57,7 @@ function formatClock(ts: number): string {
   return `${d.getHours()}:${d.getMinutes().toString().padStart(2, "0")}`;
 }
 
-export default function Chat({ client, session }: Props) {
+export default function Chat({ client, session, onTimeUp }: Props) {
   const [activeRoomId, setActiveRoomId] = useState<string | null>(
     session?.roomId ?? null,
   );
@@ -101,12 +108,19 @@ export default function Chat({ client, session }: Props) {
         if (type === "m.room.message") {
           const content = e.getContent();
           const sender = e.getSender() ?? "unknown";
+          const recipientRaw = content[GDM_RECIPIENT_KEY];
+          const recipient =
+            typeof recipientRaw === "string" ? recipientRaw : null;
+          // A private nudge is only shown to its recipient.
+          if (recipient && recipient !== userId) continue;
           msgs.push({
             id: e.getId() ?? crypto.randomUUID(),
             sender,
             body: typeof content.body === "string" ? content.body : "",
             isOwn: sender === userId,
             ts: e.getTs(),
+            fromBot: isBot(sender),
+            recipient,
           });
         } else if (type === "m.reaction") {
           const rel = e.getContent()["m.relates_to"] as
@@ -136,6 +150,15 @@ export default function Chat({ client, session }: Props) {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Fire onTimeUp exactly once when the discussion timer hits zero.
+  const endedRef = useRef(false);
+  useEffect(() => {
+    if (remaining === 0 && !endedRef.current) {
+      endedRef.current = true;
+      onTimeUp?.();
+    }
+  }, [remaining, onTimeUp]);
 
   async function sendMessage() {
     if (!input.trim() || !activeRoomId) return;
@@ -185,6 +208,20 @@ export default function Chat({ client, session }: Props) {
           <>
             <div className="messages">
               {messages.map((msg) => {
+                if (msg.fromBot) {
+                  return (
+                    <div
+                      key={msg.id}
+                      className={`bot-message ${msg.recipient ? "private" : ""}`}
+                    >
+                      <div className="bot-label">
+                        🤖 Assistant
+                        {msg.recipient ? " · only you can see this" : ""}
+                      </div>
+                      <div className="bot-body">{msg.body}</div>
+                    </div>
+                  );
+                }
                 const msgReactions = reactions[msg.id] ?? {};
                 return (
                   <div

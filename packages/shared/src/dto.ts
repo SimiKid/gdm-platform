@@ -11,7 +11,7 @@
  * lifecycle, surveys, condition config and export.
  */
 
-import type { Condition, Ranking, Session, Survey } from "./models.js";
+import type { Condition, Message, Ranking, Session, Survey } from "./models.js";
 
 // ── Participant Client -> Session Manager ────────────────────────
 
@@ -82,7 +82,39 @@ export const MATRIX_EVENT_TYPES = {
   sessionSignal: "de.gdm.session_signal",
 } as const;
 
+/**
+ * Custom content key on a bot `m.room.message`. When present, the message is a
+ * private nudge meant for that participant only — the client renders it solely
+ * to the recipient (soft privacy; the event still exists in the room for the
+ * research record).
+ */
+export const GDM_RECIPIENT_KEY = "de.gdm.recipient";
+
 /** Payload of a `de.gdm.ranking` event (one participant reordered the list). */
 export interface RankingUpdateEvent {
   ranking: Ranking;
+}
+
+// ── Session Manager <-> Chat Service ─────────────────────────────
+
+/**
+ * Session Manager hands a freshly-provisioned live session to the Chat Service
+ * to run (bot rules, relay, timer). The Chat Service joins the room itself.
+ */
+export interface StartSessionNotification {
+  sessionId: string;
+  roomId: string;
+  condition: Condition;
+  durationMinutes: number;
+}
+
+/**
+ * Chat Service returns the collected discussion data to the Session Manager at
+ * session end, to be persisted in the research DB.
+ */
+export interface FinalizeSessionRequest {
+  /** Full chat log (messages carry their aggregated reactions). */
+  messages: Message[];
+  /** Every shared-ranking state during the session, oldest → newest. */
+  rankingHistory: Ranking[];
 }

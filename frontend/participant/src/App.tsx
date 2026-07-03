@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import Recruiting from "./components/Recruiting";
 import Survey from "./components/Survey";
 import WaitingRoom from "./components/WaitingRoom";
+import ExitSurvey from "./components/ExitSurvey";
 import Login from "./components/Login";
 import Chat from "./components/Chat";
 import { createClient, ClientEvent } from "matrix-js-sdk";
@@ -18,14 +19,21 @@ const HOMESERVER =
  * `devlogin` is the developer fast-path (username/password), separate from the
  * real study flow which is driven by the individual tracking link.
  */
-type Stage = "recruiting" | "survey" | "waiting" | "chat" | "devlogin";
+type Stage =
+  | "recruiting"
+  | "survey"
+  | "waiting"
+  | "chat"
+  | "exit"
+  | "done"
+  | "devlogin";
 
 export default function App() {
   const [stage, setStage] = useState<Stage>("recruiting");
   const [trackingToken, setTrackingToken] = useState<string | null>(null);
-  const [participantName, setParticipantName] = useState("");
   const [entrySurvey, setEntrySurvey] = useState<SurveyData | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+  const [participantId, setParticipantId] = useState("");
   const [client, setClient] = useState<MatrixClient | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [booting, setBooting] = useState(true);
@@ -100,10 +108,16 @@ export default function App() {
     );
   }
 
-  // A live Matrix client means we're in the chat room (dev fast-path has no
-  // session; the study flow provisions one via the Waiting Room).
-  if (client) {
-    return <Chat client={client} session={session} />;
+  // In the chat room: a live Matrix client + the chat stage. (Dev fast-path
+  // has no session, so its timer never fires and it stays here.)
+  if (client && stage === "chat") {
+    return (
+      <Chat
+        client={client}
+        session={session}
+        onTimeUp={() => setStage("exit")}
+      />
+    );
   }
 
   switch (stage) {
@@ -124,8 +138,7 @@ export default function App() {
     case "survey":
       return (
         <Survey
-          onComplete={(name, survey) => {
-            setParticipantName(name);
+          onComplete={(survey) => {
             setEntrySurvey(survey);
             setStage("waiting");
           }}
@@ -137,14 +150,41 @@ export default function App() {
       return (
         <WaitingRoom
           trackingToken={trackingToken}
-          participantName={participantName}
           entrySurvey={entrySurvey}
-          onReady={(readyClient, readySession) => {
+          onReady={(readyClient, readySession, readyParticipantId) => {
             setSession(readySession);
+            setParticipantId(readyParticipantId);
             setClient(readyClient);
             setStage("chat");
           }}
         />
+      );
+
+    case "exit":
+      if (!session || !client) return null;
+      return (
+        <ExitSurvey
+          client={client}
+          session={session}
+          participantId={participantId}
+          onDone={() => setStage("done")}
+        />
+      );
+
+    case "done":
+      return (
+        <div className="login-container">
+          <h1>Thank you!</h1>
+          <p className="login-hint">
+            Your responses have been recorded.
+          </p>
+          <a
+            className="pay-button"
+            href={import.meta.env.VITE_PAYMENT_URL ?? "#"}
+          >
+            Get paid
+          </a>
+        </div>
       );
 
     default:

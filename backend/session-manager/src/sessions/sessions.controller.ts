@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post } from "@nestjs/common";
 import type {
   ConditionProgress,
+  FinalizeSessionRequest,
   OpenSessionRequest,
   OpenSessionResponse,
   Session,
@@ -31,6 +32,21 @@ export class SessionsController {
   submitSurvey(@Body() body: SubmitSurveyRequest): { ok: true } {
     this.sessions.submitSurvey(body);
     return { ok: true };
+  }
+
+  /** Mark the discussion finished (called when the timer runs out). */
+  @Post("sessions/:id/complete")
+  complete(@Param("id") id: string): Session {
+    return this.sessions.completeSession(id);
+  }
+
+  /** Chat Service hands back the collected discussion at session end. */
+  @Post("sessions/:id/finalize")
+  finalize(
+    @Param("id") id: string,
+    @Body() body: FinalizeSessionRequest,
+  ): Session {
+    return this.sessions.finalizeSession(id, body.messages, body.rankingHistory);
   }
 
   /** Admin: per-condition progress (how many done vs. goal). */

@@ -1,5 +1,5 @@
 {
-  "name": "session-manager",
+  "name": "chat-service",
   "version": "0.0.0",
   "private": true,
   "scripts": {

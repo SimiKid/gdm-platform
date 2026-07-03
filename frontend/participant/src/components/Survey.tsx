@@ -1,35 +1,49 @@
 import { useState } from "react";
+import { EXPEDITION_MARS, EXPEDITION_MARS_BRIEFING } from "@gdm/shared";
 import type { Survey } from "@gdm/shared";
 
 interface Props {
-  /** Called with the participant's name and the assembled entry survey. */
-  onComplete: (name: string, survey: Survey) => void;
+  /** Called with the assembled entry survey (incl. the individual ranking). */
+  onComplete: (survey: Survey) => void;
 }
 
-type Step = "briefing" | "consent" | "name" | "questions";
-const STEPS: Step[] = ["briefing", "consent", "name", "questions"];
+type Step = "questions" | "briefing" | "consent";
+const STEPS: Step[] = ["questions", "briefing", "consent"];
 
 /**
- * In-app entry survey (wireframe: Survey — Briefing, Consent, Name, Question).
+ * In-app entry survey (wireframe: Survey).
  *
- * A small step wizard. The name is returned separately (it becomes
- * Participant.name); everything else is packed into a {@link Survey}. The
- * question set is a placeholder pending the final study instrument.
+ * The briefing page shows the Expedition-Mars scenario and asks the
+ * participant to rank the items on their own first (the individual ranking,
+ * captured for research). No name is collected — participants are shown by
+ * assigned colour in the chat. Question set is a placeholder.
  */
 export default function Survey({ onComplete }: Props) {
-  const [step, setStep] = useState<Step>("briefing");
+  const [step, setStep] = useState<Step>("questions");
+  const [order, setOrder] = useState<string[]>(
+    EXPEDITION_MARS.items.map((i) => i.id),
+  );
   const [consent, setConsent] = useState(false);
-  const [name, setName] = useState("");
   const [age, setAge] = useState("");
   const [gender, setGender] = useState("");
   const [experience, setExperience] = useState("");
 
+  const labels = new Map(EXPEDITION_MARS.items.map((i) => [i.id, i.label]));
   const stepIndex = STEPS.indexOf(step);
   const next = () => setStep(STEPS[Math.min(stepIndex + 1, STEPS.length - 1)]);
+
+  function move(index: number, dir: -1 | 1) {
+    const j = index + dir;
+    if (j < 0 || j >= order.length) return;
+    const nextOrder = order.slice();
+    [nextOrder[index], nextOrder[j]] = [nextOrder[j], nextOrder[index]];
+    setOrder(nextOrder);
+  }
 
   function submit() {
     const survey: Survey = {
       answers: {
+        individualRanking: order,
         consent,
         age: Number(age),
         gender,
@@ -37,7 +51,7 @@ export default function Survey({ onComplete }: Props) {
       },
       submittedAt: new Date().toISOString(),
     };
-    onComplete(name.trim(), survey);
+    onComplete(survey);
   }
 
   return (
@@ -48,13 +62,40 @@ export default function Survey({ onComplete }: Props) {
 
       {step === "briefing" && (
         <>
-          <h1>Briefing</h1>
-          <p className="login-hint">
-            You'll join a small group to complete a decision-making exercise
-            together via chat. There are no right or wrong answers — we're
-            interested in how the group reaches a decision. The session takes a
-            few minutes.
-          </p>
+          <h1>{EXPEDITION_MARS_BRIEFING.title}</h1>
+          <div
+            className="briefing-body"
+            style={{ width: 320 }}
+            // Trusted, server-authored briefing HTML.
+            dangerouslySetInnerHTML={{ __html: EXPEDITION_MARS_BRIEFING.html }}
+          />
+          <p className="login-hint">Your ranking (most to least critical):</p>
+          <ol className="ranking-list" style={{ width: 320 }}>
+            {order.map((id, idx) => (
+              <li key={id} className="ranking-item">
+                <span className="rank-num">{idx + 1}</span>
+                <span className="rank-label">{labels.get(id) ?? id}</span>
+                <span className="rank-actions">
+                  <button
+                    type="button"
+                    onClick={() => move(idx, -1)}
+                    disabled={idx === 0}
+                    aria-label="Move up"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => move(idx, 1)}
+                    disabled={idx === order.length - 1}
+                    aria-label="Move down"
+                  >
+                    ↓
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ol>
           <button type="button" onClick={next}>
             Continue
           </button>
@@ -77,27 +118,8 @@ export default function Survey({ onComplete }: Props) {
             />
             I have read the information and consent to take part.
           </label>
-          <button type="button" onClick={next} disabled={!consent}>
-            Continue
-          </button>
-        </>
-      )}
-
-      {step === "name" && (
-        <>
-          <h1>Your name</h1>
-          <p className="login-hint">
-            This is shown to the other participants in the chat.
-          </p>
-          <input
-            type="text"
-            placeholder="Name or nickname"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            autoFocus
-          />
-          <button type="button" onClick={next} disabled={!name.trim()}>
-            Continue
+          <button type="button" onClick={submit} disabled={!consent}>
+            Finish
           </button>
         </>
       )}
@@ -131,10 +153,10 @@ export default function Survey({ onComplete }: Props) {
           </select>
           <button
             type="button"
-            onClick={submit}
+            onClick={next}
             disabled={!age || !gender || !experience}
           >
-            Finish
+            Continue
           </button>
         </>
       )}
