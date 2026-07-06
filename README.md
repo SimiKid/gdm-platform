@@ -38,7 +38,6 @@ See [docs/getting-started.md](docs/getting-started.md) for prerequisites, ports,
 
 ## Current Deferrals
 
-- Final task specification and scoring (NASA/Mars exercise)
 - Semantic/LLM-based contribution classifier
 - Typing-speed and tab-visibility telemetry
 - Matrix appservice registration for the bot

@@ -46,13 +46,17 @@ Open in 3 tabs (one per participant). Repeat for each condition:
 For each participant tab:
 
 - [ ] Tracking token is removed from the browser URL
-- [ ] Entry survey completes
+- [ ] Consent page accepts and advances
+- [ ] About You questionnaire completes
+- [ ] Individual Moon Survival ranking completes (10-min timer)
+- [ ] Group Intro page advances to waiting room
 - [ ] Waiting room count increments
 - [ ] Chat opens once the group is full
 - [ ] Shared ranking edits sync across participants
 - [ ] Reactions sync across participants
 - [ ] Timer ends the discussion and opens the exit survey
 - [ ] Exit survey can submit
+- [ ] Debriefing page shows study explanation and compensation link
 
 ## 4. Trigger Bot Behavior
 

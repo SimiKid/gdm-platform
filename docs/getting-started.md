@@ -72,11 +72,14 @@ http://localhost:3000/?conditionId=public-neutral
 In each tab:
 
 1. **Recruiting** — click "Start"
-2. **Survey** — fill in the pre-study questionnaire, submit
-3. **Waiting Room** — shows "N / 3 people joined", waits for all tabs to arrive
-4. **Chat** — once the group is full, a Matrix room is created and all participants enter the chat. A timer counts down based on `durationMinutes`.
-5. **Exit Survey** — after the timer expires, participants complete a post-study questionnaire
-6. **Done** — thank-you screen
+2. **Consent** — accept informed consent
+3. **About You** — fill in demographic questionnaire
+4. **Ranking Task** — complete the individual Moon Survival ranking (10-minute timer)
+5. **Group Intro** — read the group discussion explanation, continue
+6. **Waiting Room** — shows "N / 3 people joined", waits for all tabs to arrive
+7. **Chat** — once the group is full, a Matrix room is created and all participants enter the chat. A timer counts down based on `durationMinutes`.
+8. **Exit Survey** — after the timer expires, participants complete a post-study questionnaire
+9. **Debriefing** — study explanation and compensation link
 
 ### 4. Observe bot behavior
 
