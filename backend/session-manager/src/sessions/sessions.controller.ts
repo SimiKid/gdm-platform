@@ -15,7 +15,9 @@ import type {
   OpenSessionResponse,
   Session,
   SessionSummary,
+  StudySettings,
   SubmitSurveyRequest,
+  UpdateStudySettingsRequest,
   UpsertConditionRequest,
 } from "@gdm/shared";
 import { SessionsService } from "./sessions.service";
@@ -97,6 +99,20 @@ export class SessionsController {
     @Body() body: UpsertConditionRequest,
   ) {
     return this.store.upsertCondition({ ...body.condition, id });
+  }
+
+  /** Study-wide settings; the participant app reads the compensation link. */
+  @Get("settings")
+  settings(): Promise<StudySettings> {
+    return this.store.getStudySettings();
+  }
+
+  /** Admin: update study-wide settings (e.g. the compensation link). */
+  @Put("settings")
+  updateSettings(
+    @Body() body: UpdateStudySettingsRequest,
+  ): Promise<StudySettings> {
+    return this.store.updateStudySettings(body.settings ?? {});
   }
 
   /** Admin/debug: newest interventions across all sessions. */

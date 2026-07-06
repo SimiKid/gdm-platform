@@ -4,10 +4,614 @@
   padding: 0;
 }
 
+:root {
+  /* UZH blue — the single accent color of the study pages. */
+  --accent: #0028a5;
+  --accent-dark: #001d78;
+  --accent-tint: #eef1fa;
+  --ink: #1c2130;
+  --ink-soft: #4a5163;
+  --line: #d9dde6;
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --error: #b3261e;
+  --warn-bg: #fff4d6;
+  --warn-ink: #7a5200;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: #f5f5f5;
-  color: #1a1a1a;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+:focus-visible {
+  outline: 3px solid rgba(0, 40, 165, 0.45);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ── Study page frame ────────────────────────── */
+
+.study-page {
+  min-height: 100vh;
+  padding: 1.5rem 1rem 4rem;
+}
+
+.study-column {
+  max-width: 680px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.study-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: clamp(1.25rem, 4vw, 2.5rem);
+}
+
+.study-card.narrow {
+  max-width: 480px;
+  margin: 2rem auto 0;
+  width: 100%;
+}
+
+.study-card.centered {
+  text-align: center;
+}
+
+.study-card.centered .btn {
+  margin-top: 1rem;
+}
+
+.study-card h1 {
+  font-size: 1.45rem;
+  line-height: 1.3;
+  margin-bottom: 1rem;
+  color: var(--ink);
+}
+
+.study-card h2 {
+  font-size: 1.05rem;
+  margin: 1.5rem 0 0.4rem;
+  color: var(--ink);
+}
+
+.study-card h2:first-of-type {
+  margin-top: 1.25rem;
+}
+
+.study-card p {
+  margin-bottom: 0.75rem;
+  color: var(--ink-soft);
+}
+
+/* Prose lists (consent info, instructions) — not the ranking widgets. */
+.study-card > ul,
+.study-card > ol:not(.ranking-list),
+.notice-box ul {
+  margin: 0 0 0.75rem 1.35rem;
+  color: var(--ink-soft);
+}
+
+.study-card > ul li,
+.study-card > ol:not(.ranking-list) li,
+.notice-box li {
+  margin-bottom: 0.35rem;
+}
+
+.study-card .error {
+  color: var(--error);
+  font-weight: 600;
+}
+
+/* ── Progress indicator (steps 1–4) ──────────── */
+
+.progress-steps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.25rem;
+  padding: 0.75rem 0.5rem;
+}
+
+.progress-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  position: relative;
+  text-align: center;
+}
+
+/* connector line between the dots */
+.progress-step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 0.9rem;
+  left: calc(50% + 1.1rem);
+  right: calc(-50% + 1.1rem);
+  height: 2px;
+  background: var(--line);
+}
+
+.progress-step.done:not(:last-child)::after {
+  background: var(--accent);
+}
+
+.progress-dot {
+  width: 1.8rem;
+  height: 1.8rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  background: var(--card);
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+  font-weight: 600;
+  z-index: 1;
+}
+
+.progress-step.current .progress-dot {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.progress-step.done .progress-dot {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.progress-label {
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+}
+
+.progress-step.current .progress-label {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ── Buttons ─────────────────────────────────── */
+
+.btn {
+  display: inline-block;
+  padding: 0.75rem 1.75rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-dark);
+}
+
+.btn-primary:disabled {
+  background: #c6cbd8;
+  color: #f2f3f7;
+  cursor: not-allowed;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.9rem;
+  text-decoration: underline;
+}
+
+.card-actions {
+  margin-top: 1.75rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.study-card.centered .card-actions {
+  align-items: center;
+}
+
+.action-hint {
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+/* ── Consent ─────────────────────────────────── */
+
+.consent-box {
+  margin-top: 1.75rem;
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent-tint);
+}
+
+.consent-box h2 {
+  margin-top: 0;
+}
+
+.consent-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.6rem 0.25rem;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.consent-check input {
+  width: 1.35rem;
+  height: 1.35rem;
+  margin-top: 0.15rem;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* ── Question blocks & inputs ────────────────── */
+
+.q-block {
+  border: none;
+  margin: 1.5rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.q-label {
+  font-weight: 600;
+  color: var(--ink);
+  padding: 0;
+}
+
+.text-input {
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 1rem;
+  font-family: inherit;
+  background: #fff;
+  color: var(--ink);
+  max-width: 20rem;
+  width: 100%;
+}
+
+.text-input:focus {
+  border-color: var(--accent);
+}
+
+/* Likert scales / radio groups as horizontal button groups */
+
+.likert-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.likert-option input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.likert-option span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.likert-option span:hover {
+  border-color: var(--accent);
+}
+
+.likert-option input:checked + span {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.likert-option input:focus-visible + span {
+  outline: 3px solid rgba(0, 40, 165, 0.45);
+  outline-offset: 2px;
+}
+
+.likert-anchors {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  max-width: 24rem;
+}
+
+/* ── Individual task: timer ──────────────────── */
+
+.task-timer {
+  position: sticky;
+  top: 0.5rem;
+  z-index: 10;
+  align-self: center;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.55rem 1.4rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  box-shadow: 0 2px 10px rgba(28, 33, 48, 0.08);
+  color: var(--accent);
+  font-size: 1.25rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-timer-caption {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--ink-soft);
+}
+
+.task-timer.low {
+  background: var(--warn-bg);
+  border-color: #e5c65e;
+  color: var(--warn-ink);
+}
+
+/* ── Individual task: ranking widget ─────────── */
+
+.rank-columns {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  margin: 1.25rem 0;
+}
+
+.rank-pool,
+.rank-target {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 1rem;
+  background: #fbfbfd;
+}
+
+.rank-pool h2,
+.rank-target h2 {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+}
+
+.rank-pool .count {
+  font-weight: 400;
+  color: var(--ink-soft);
+}
+
+.rank-pool-list {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.rank-pool-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.4rem 0.4rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  cursor: grab;
+}
+
+.rank-pool-item.dragging,
+.ranking-item.dragging {
+  opacity: 0.45;
+}
+
+.rank-add {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.rank-add:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.rank-pool-empty {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.rank-drop-hint {
+  padding: 1rem;
+  border: 2px dashed var(--line);
+  border-radius: 6px;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+/* Shared ranked-list styles (task page, chat side panel, exit survey) */
+
+.ranking-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ranking-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 0.95rem;
+}
+
+.rank-target .ranking-item {
+  cursor: grab;
+}
+
+.ranking-item.drop-before {
+  box-shadow: 0 -3px 0 0 var(--accent);
+}
+
+.rank-num {
+  width: 1.6rem;
+  height: 1.6rem;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 50%;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.rank-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.rank-actions {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.rank-actions button {
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.rank-actions button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.rank-actions button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ── Notice / instruction box ────────────────── */
+
+.notice-box {
+  margin: 1.25rem 0 0;
+  padding: 1rem 1.25rem;
+  border: 1px solid #e5c65e;
+  border-radius: 8px;
+  background: var(--warn-bg);
+}
+
+.notice-box h2 {
+  margin: 0 0 0.4rem;
+  font-size: 0.95rem;
+  color: var(--warn-ink);
+}
+
+.notice-box ul {
+  margin-bottom: 0;
+}
+
+.notice-box li {
+  color: var(--ink);
+}
+
+/* ── Waiting room ────────────────────────────── */
+
+.waiting-spinner {
+  width: 2.25rem;
+  height: 2.25rem;
+  margin: 0.75rem auto;
+  border: 3px solid var(--accent-tint);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.waiting-count {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* ── Small screens ───────────────────────────── */
+
+@media (max-width: 480px) {
+  .progress-label {
+    font-size: 0.65rem;
+  }
+
+  .progress-step:not(:last-child)::after {
+    left: calc(50% + 1rem);
+    right: calc(-50% + 1rem);
+  }
+
+  .card-actions .btn {
+    width: 100%;
+    text-align: center;
+  }
+
+  .text-input {
+    max-width: none;
+  }
 }
 
 /* ── Loading / error screen ──────────────────── */
@@ -19,11 +623,11 @@ body {
   justify-content: center;
   min-height: 100vh;
   gap: 0.75rem;
-  color: #555;
+  color: var(--ink-soft);
 }
 
 .loading-container .error {
-  color: #d32f2f;
+  color: var(--error);
   font-weight: 600;
 }
 
@@ -45,7 +649,7 @@ body {
 
 .login-hint {
   font-size: 0.8rem;
-  color: #888;
+  color: var(--ink-soft);
   margin-bottom: 0.5rem;
 }
 
@@ -65,7 +669,7 @@ body {
 
 .login-container button {
   padding: 0.5rem;
-  background: #1168bd;
+  background: var(--accent);
   color: #fff;
   border: none;
   border-radius: 4px;
@@ -74,64 +678,21 @@ body {
 }
 
 .login-container button:hover {
-  background: #0d5ca8;
+  background: var(--accent-dark);
 }
 
 .login-container .error {
-  color: #d32f2f;
+  color: var(--error);
   font-size: 0.875rem;
 }
 
 .login-container .toggle {
   background: none;
   border: none;
-  color: #1168bd;
+  color: var(--accent);
   cursor: pointer;
   font-size: 0.875rem;
   text-decoration: underline;
-}
-
-.pay-button {
-  display: inline-block;
-  padding: 0.6rem 1.5rem;
-  background: #2f9e44;
-  color: #fff;
-  border-radius: 4px;
-  font-size: 1rem;
-  font-weight: 600;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.pay-button:hover {
-  background: #2b8a3e;
-}
-
-.login-container select {
-  padding: 0.5rem 0.75rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  font-size: 1rem;
-  background: #fff;
-}
-
-.login-container .field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  width: 320px;
-  font-size: 0.9rem;
-  color: #333;
-}
-
-.login-container .consent {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  width: 320px;
-  font-size: 0.9rem;
-  color: #333;
-  text-align: left;
 }
 
 /* ── Chat layout (sidebar + main) ────────────── */
@@ -220,9 +781,9 @@ body {
   display: flex;
   align-items: center;
   padding: 0.75rem 1rem;
-  background: #075e54;
+  background: var(--accent);
   color: #fff;
-  border-bottom: 1px solid #054d44;
+  border-bottom: 1px solid var(--accent-dark);
 }
 
 .chat-header h2 {
@@ -239,7 +800,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-  background: #ece5dd;
+  background: #e9ecf3;
 }
 
 .message {
@@ -251,10 +812,10 @@ body {
   box-shadow: 0 1px 0.5px rgba(0, 0, 0, 0.13);
 }
 
-/* Own messages: RIGHT side, WhatsApp green */
+/* Own messages: RIGHT side, accent-tinted */
 .message.own {
   align-self: flex-end;
-  background: #dcf8c6;
+  background: #dbe3f8;
 }
 
 /* Other messages: LEFT side, white */
@@ -266,7 +827,7 @@ body {
 .message .sender {
   font-size: 0.72rem;
   font-weight: 600;
-  color: #128c7e;
+  color: var(--accent);
   margin-bottom: 0.1rem;
 }
 
@@ -309,7 +870,7 @@ body {
 }
 
 .bot-message.private .bot-label {
-  color: #1168bd;
+  color: var(--accent);
 }
 
 .bot-body {
@@ -388,8 +949,8 @@ body {
 }
 
 .reaction.mine {
-  background: #d7f0e6;
-  border-color: #128c7e;
+  background: var(--accent-tint);
+  border-color: var(--accent);
 }
 
 /* ── Message input ───────────────────────────── */
@@ -416,7 +977,7 @@ body {
   width: 2.6rem;
   height: 2.6rem;
   flex-shrink: 0;
-  background: #128c7e;
+  background: var(--accent);
   color: #fff;
   border: none;
   border-radius: 50%;
@@ -425,7 +986,7 @@ body {
 }
 
 .message-input button:hover {
-  background: #0f7568;
+  background: var(--accent-dark);
 }
 
 /* ── Study room layout (chat + side panel) ───── */
@@ -454,10 +1015,25 @@ body {
   border-radius: 50%;
 }
 
-.panel-col {
-  width: 340px;
-  min-width: 340px;
+/* Drag handle between the chat and the study panel */
+.panel-resizer {
+  width: 6px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
   border-left: 1px solid #e0e0e0;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.panel-resizer:hover,
+.panel-resizer:focus-visible {
+  background: var(--accent-tint);
+  border-left-color: var(--accent);
+}
+
+.panel-col {
+  /* width is set inline (resizable); this is the no-JS fallback */
+  width: 340px;
   background: #fff;
   display: flex;
   flex-direction: column;
@@ -466,7 +1042,26 @@ body {
   gap: 1rem;
 }
 
-/* ── Timer ───────────────────────────────────── */
+/* Compact ranking rows inside the chat side panel */
+.panel-col .ranking-item {
+  padding: 0.4rem 0.5rem;
+  font-size: 0.85rem;
+  background: #fafafa;
+}
+
+.panel-col .rank-num {
+  width: 1.4rem;
+  height: 1.4rem;
+  font-size: 0.75rem;
+}
+
+.panel-col .rank-actions button {
+  width: 1.7rem;
+  height: 1.7rem;
+  font-size: 0.8rem;
+}
+
+/* ── Timer (chat side panel) ─────────────────── */
 
 .timer {
   text-align: center;
@@ -474,8 +1069,8 @@ body {
   font-size: 0.95rem;
   padding: 0.5rem;
   border-radius: 6px;
-  background: #eef4fb;
-  color: #1168bd;
+  background: var(--accent-tint);
+  color: var(--accent);
 }
 
 .timer.low {
@@ -483,7 +1078,7 @@ body {
   color: #d32f2f;
 }
 
-/* ── Briefing ────────────────────────────────── */
+/* ── Briefing (chat side panel) ──────────────── */
 
 .briefing h3 {
   font-size: 0.95rem;
@@ -491,75 +1086,24 @@ body {
 }
 
 .briefing-body {
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--ink-soft);
+  margin-bottom: 0.75rem;
+}
+
+.panel-col .briefing-body {
   font-size: 0.85rem;
   line-height: 1.5;
   color: #333;
+  margin-bottom: 0;
 }
 
-/* ── Shared ranking ──────────────────────────── */
+/* ── Shared ranking (chat side panel) ────────── */
 
 .ranking h3 {
   font-size: 0.95rem;
   margin-bottom: 0.5rem;
-}
-
-.ranking-list {
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.ranking-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0.5rem;
-  border: 1px solid #e0e0e0;
-  border-radius: 6px;
-  background: #fafafa;
-  font-size: 0.85rem;
-}
-
-.rank-num {
-  width: 1.4rem;
-  height: 1.4rem;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #1168bd;
-  color: #fff;
-  border-radius: 50%;
-  font-size: 0.75rem;
-  font-weight: 600;
-}
-
-.rank-label {
-  flex: 1;
-}
-
-.rank-actions {
-  display: flex;
-  gap: 0.2rem;
-}
-
-.rank-actions button {
-  width: 1.6rem;
-  height: 1.6rem;
-  padding: 0;
-  border: 1px solid #ccc;
-  background: #fff;
-  color: #333;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 0.8rem;
-  line-height: 1;
-}
-
-.rank-actions button:disabled {
-  opacity: 0.35;
-  cursor: default;
 }
 
 /* ── Empty state ─────────────────────────────── */

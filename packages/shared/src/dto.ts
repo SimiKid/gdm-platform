@@ -18,6 +18,7 @@ import type {
   Ranking,
   Session,
   SessionStatus,
+  StudySettings,
   Survey,
 } from "./models.js";
 
@@ -65,6 +66,11 @@ export interface ConditionProgress {
 /** Create or update a condition (goal/active/time/#people live on Condition). */
 export interface UpsertConditionRequest {
   condition: Condition;
+}
+
+/** Update study-wide settings (e.g. the compensation link). */
+export interface UpdateStudySettingsRequest {
+  settings: Partial<StudySettings>;
 }
 
 export interface SessionSummary {

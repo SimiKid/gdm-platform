@@ -5,6 +5,7 @@ import WaitingRoom from "./components/WaitingRoom";
 import ExitSurvey from "./components/ExitSurvey";
 import Login from "./components/Login";
 import Chat from "./components/Chat";
+import DebriefingPage from "./components/DebriefingPage";
 import { createClient, ClientEvent } from "matrix-js-sdk";
 import type { MatrixClient } from "matrix-js-sdk";
 import type { Session, Survey as SurveyData } from "@gdm/shared";
@@ -164,10 +165,9 @@ export default function App() {
       );
 
     case "exit":
-      if (!session || !client) return null;
+      if (!session) return null;
       return (
         <ExitSurvey
-          client={client}
           session={session}
           participantId={participantId}
           onDone={() => setStage("done")}
@@ -175,20 +175,7 @@ export default function App() {
       );
 
     case "done":
-      return (
-        <div className="login-container">
-          <h1>Thank you!</h1>
-          <p className="login-hint">
-            Your responses have been recorded.
-          </p>
-          <a
-            className="pay-button"
-            href={import.meta.env.VITE_PAYMENT_URL ?? "#"}
-          >
-            Get paid
-          </a>
-        </div>
-      );
+      return <DebriefingPage />;
 
     default:
       return null;

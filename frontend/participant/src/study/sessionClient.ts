@@ -2,6 +2,7 @@ import type {
   OpenSessionRequest,
   OpenSessionResponse,
   Session,
+  StudySettings,
   SubmitSurveyRequest,
 } from "@gdm/shared";
 
@@ -23,6 +24,8 @@ export interface SessionManagerClient {
   submitSurvey(req: SubmitSurveyRequest): Promise<void>;
   /** Mark the session completed when the discussion timer ends. */
   completeSession(id: string): Promise<void>;
+  /** Study-wide settings, e.g. the researcher-set compensation link. */
+  getStudySettings(): Promise<StudySettings>;
 }
 
 /**
@@ -61,5 +64,10 @@ export const httpSessionManager: SessionManagerClient = {
       method: "POST",
     });
     if (!res.ok) throw new Error(`completeSession failed: ${res.status}`);
+  },
+  async getStudySettings() {
+    const res = await fetch(`${API_BASE}/settings`);
+    if (!res.ok) throw new Error(`getStudySettings failed: ${res.status}`);
+    return (await res.json()) as StudySettings;
   },
 };

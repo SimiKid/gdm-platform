@@ -138,3 +138,11 @@ model InterventionRecord {
   @@index([timestamp])
   @@map("interventions")
 }
+
+model StudySettingRecord {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("study_settings")
+}

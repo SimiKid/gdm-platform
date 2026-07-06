@@ -1,34 +1,43 @@
 import type { Briefing, RankingTask } from "./models.js";
 
 /**
- * The Expedition-Mars exercise — the single source of truth for the briefing
- * and the rankable items. Used by the Session Manager to seed sessions and by
- * the participant frontend for the individual ranking during onboarding, so
- * the survey and the chat always show the same items.
+ * The "Survival on the Moon" exercise — the single source of truth for the
+ * briefing and the rankable items. Used by the Session Manager to seed
+ * sessions and by the participant frontend for the individual ranking during
+ * onboarding, so the survey and the chat always show the same items.
  */
 
-export const EXPEDITION_MARS_BRIEFING: Briefing = {
-  title: "Expedition Mars",
+export const MOON_SURVIVAL_BRIEFING: Briefing = {
+  title: "Survival on the Moon",
   html:
-    "<p>Your crew has crash-landed 200 km from the rendezvous point on Mars. " +
-    "Much of the equipment was damaged. Rank the surviving items by how " +
-    "critical they are for reaching the rendezvous point. First rank them on " +
-    "your own; then discuss in the chat and agree on a shared ranking.</p>",
+    "<p>Imagine you are part of a space crew scheduled to rendezvous with a " +
+    "mother ship on the lighted surface of the moon. Due to mechanical " +
+    "problems, your ship was forced to crash-land about 200 miles (320 km) " +
+    "from the rendezvous point. Much of the onboard equipment was damaged. " +
+    "Your survival depends on reaching the mother ship, so you must choose " +
+    "the most critical items for the journey.</p>",
 };
 
-export const EXPEDITION_MARS: RankingTask = {
-  id: "expedition-mars",
-  title: "Rank the surviving equipment (most to least critical)",
+export const MOON_SURVIVAL: RankingTask = {
+  id: "moon-survival",
+  title:
+    "Rank the 15 items by importance for reaching the rendezvous point: " +
+    "1 = most important, 15 = least important.",
   items: [
-    { id: "oxygen", label: "Oxygen tanks" },
-    { id: "water", label: "Water (20 litres)" },
-    { id: "map", label: "Star map of Mars' constellations" },
-    { id: "radio", label: "Solar-powered FM radio" },
-    { id: "firstaid", label: "First-aid kit" },
-    { id: "food", label: "Case of dehydrated food" },
+    { id: "matches", label: "Box of matches" },
+    { id: "food", label: "Food concentrate" },
+    { id: "rope", label: "50 ft nylon rope" },
+    { id: "parachute", label: "Parachute silk" },
     { id: "heater", label: "Portable heating unit" },
-    { id: "rope", label: "50 m of nylon rope" },
-    { id: "flares", label: "Signal flares" },
+    { id: "pistols", label: "Two .45 caliber pistols" },
+    { id: "milk", label: "One case dehydrated milk" },
+    { id: "oxygen", label: "Two 100-lb tanks of oxygen" },
+    { id: "map", label: "Stellar map" },
+    { id: "raft", label: "Life raft" },
     { id: "compass", label: "Magnetic compass" },
+    { id: "water", label: "5 gallons of water" },
+    { id: "flares", label: "Signal flares" },
+    { id: "firstaid", label: "First aid kit with injection needles" },
+    { id: "radio", label: "Solar-powered FM receiver-transmitter" },
   ],
 };

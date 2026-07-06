@@ -14,7 +14,7 @@ interface Props {
 }
 
 /**
- * The group's shared Expedition-Mars ranking.
+ * The group's shared ranking (same task as the individual survey).
  *
  * Every participant edits the same ordered list. Edits are broadcast as custom
  * `de.gdm.ranking` timeline events (regular members can send these — no power

@@ -94,4 +94,15 @@ describe("StoreService", () => {
       accessToken: "tok",
     });
   });
+
+  it("stores and returns study-wide settings (compensation link)", async () => {
+    expect(await store.getStudySettings()).toEqual({ compensationUrl: "" });
+    const updated = await store.updateStudySettings({
+      compensationUrl: "  https://pay.example.com/done  ",
+    });
+    expect(updated.compensationUrl).toBe("https://pay.example.com/done");
+    expect(await store.getStudySettings()).toEqual({
+      compensationUrl: "https://pay.example.com/done",
+    });
+  });
 });
