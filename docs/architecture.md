@@ -51,7 +51,7 @@ TypeScript domain models, DTOs, and constants shared across all services. Define
 
 NestJS API responsible for:
 
-- **Condition management** — CRUD for experimental conditions, seeded on first startup with the four 2x2 arms.
+- **Condition management** — CRUD for experimental conditions, seeded on first startup with five arms (baseline + 2x2).
 - **Matchmaking** — `POST /api/sessions` places a participant into a forming group. If no group exists for the assigned condition, one is created. When the group reaches `groupSize`, a Matrix room is provisioned.
 - **Condition assignment** — if the participant URL includes a `conditionId`, that condition is used. Otherwise, the system picks the least-completed active condition (balanced assignment).
 - **Matrix integration** — registers participant Matrix users, creates rooms, invites participants.
@@ -76,7 +76,7 @@ The chat service receives a notification from the session manager when a room is
 
 React SPA served by nginx. Implements the participant journey:
 
-1. **Recruiting** — reads tracking token and optional condition ID from the URL
+1. **Recruiting** — self-issues a tracking token (or reads one from `?p=`), optionally reads a forced condition from `?conditionId=`
 2. **Survey** — pre-study questionnaire
 3. **Waiting Room** — calls `POST /api/sessions` to join, polls for group readiness
 4. **Chat** — Matrix-based group chat with WhatsApp-style UI, shared ranking panel, briefing panel, countdown timer
@@ -87,14 +87,14 @@ Nginx proxies `/api/` to the session manager and `/_matrix/` to Synapse, so the 
 
 ### Admin Dashboard (`frontend/admin-dashboard`)
 
-React SPA for researchers. Provides condition configuration, session monitoring, intervention audit, and data export. Nginx proxies `/api/` to the session manager.
-
-> **Note:** The admin dashboard is currently being refactored. See the session manager API for the stable data contract.
+React SPA for researchers. Split into an **Overview** tab (study link, exports, condition progress, session list) and a **Settings** tab (per-condition active/goal/duration/group-size). Nginx proxies `/api/` to the session manager.
 
 ## Session Lifecycle
 
 ```
-Participant opens study link
+Participant opens http://localhost:3000/
+  -> Recruiting: self-issues a tracking token, clicks "Start"
+  -> Survey: fills pre-study questionnaire
         |
         v
   POST /api/sessions (Session Manager)

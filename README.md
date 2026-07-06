@@ -2,7 +2,7 @@
 
 A study platform for researching AI-supported group decision-making. Groups discuss a shared task in a real-time chat environment while a rule-based bot monitors contribution balance and intervenes when participation becomes uneven.
 
-The project investigates whether in-the-moment AI nudges can improve both decision quality and group experience, using a 2x2 between-subjects design (public/private x neutral/engaging interventions).
+The project investigates whether in-the-moment AI nudges can improve both decision quality and group experience, using a 2x2 between-subjects design (public/private x neutral/engaging) plus a no-intervention baseline.
 
 ## Repository Structure
 
@@ -33,13 +33,12 @@ See [docs/getting-started.md](docs/getting-started.md) for prerequisites, ports,
 |---|---|
 | [Getting Started](docs/getting-started.md) | Prerequisites, running locally, configuration, useful commands |
 | [Architecture](docs/architecture.md) | Services, data flow, session lifecycle, design decisions |
-| [Bot Rulebook](docs/bot-rulebook.md) | Intervention logic: 2x2 conditions, contribution scoring, thresholds, message templates |
+| [Bot Rulebook](docs/bot-rulebook.md) | Intervention logic: 2x2 conditions + baseline, contribution scoring, thresholds, message templates |
 | [Pilot Checklist](docs/pilot-checklist.md) | Step-by-step verification for local pilot runs |
 
 ## Current Deferrals
 
 - Final task specification and scoring (NASA/Mars exercise)
 - Semantic/LLM-based contribution classifier
-- No-intervention baseline condition (5th arm)
 - Typing-speed and tab-visibility telemetry
 - Matrix appservice registration for the bot

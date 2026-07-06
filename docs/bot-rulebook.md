@@ -4,24 +4,28 @@ How the rule-based intervention bot works, from trigger to message delivery.
 
 ## Research Context
 
-The study uses a **2x2 between-subjects design** (public/private x neutral/engaging) to test whether real-time AI nudges during group discussions improve decision quality and group experience. The bot monitors contribution balance and intervenes when one participant dominates the conversation, either by informing the whole group or privately nudging the dominant speaker.
+The study uses a **2x2 between-subjects design** (public/private x neutral/engaging) plus a **no-intervention baseline** to test whether real-time AI nudges during group discussions improve decision quality and group experience.
 
 ## Experimental Conditions
 
 | Condition | Audience | Tone | Description |
 |---|---|---|---|
+| `baseline` | none | none | No bot intervention; messages are recorded but the bot stays silent |
 | `public-neutral` | whole group | informational | Shows the participation split to everyone |
 | `public-engaging` | whole group | directive | Shows the split and prompts the top contributor to include quieter members |
 | `private-neutral` | target only | informational | Privately shows the participation split to the dominant participant |
 | `private-engaging` | target only | directive | Privately shows the split and prompts them to include quieter members |
 
-Each condition is assigned to a session at creation time and cannot change mid-session.
+Each condition is assigned to a session at creation time and cannot change mid-session. Five conditions are seeded on first startup.
 
 ## Intervention Lifecycle
 
 ```
 Matrix room event (m.room.message)
         |
+        v
+  Is mode "baseline"? ── yes ──> stop (no intervention)
+        |  no
         v
   Is it inside the intervention window?
   (after protectedStart, before protectedEnd)
@@ -130,7 +134,7 @@ All parameters are editable per condition via the admin dashboard and are stored
 
 | Parameter | Field | Default | Description |
 |---|---|---|---|
-| Intervention mode | `interventionMode` | `public-neutral` | Which of the four 2x2 conditions to use |
+| Intervention mode | `interventionMode` | `public-neutral` | One of the five study conditions |
 | Threshold | `contributionThreshold` | `0.40` | Share at which a participant triggers an intervention |
 | Protected start | `protectedStartMinutes` | `3` | Minutes of no-intervention warm-up |
 | Protected end | `protectedEndMinutes` | `2` | Minutes of no-intervention cool-down |
@@ -169,5 +173,4 @@ These logs are visible in the admin dashboard's **Intervention Audit** section a
 ## Current Limitations
 
 - **No semantic analysis.** The bot measures volume (messages + characters), not content. It cannot detect whether a contribution was actually acknowledged or engaged with.
-- **No baseline condition.** The current seed creates four active conditions. A no-intervention baseline would need a fifth condition with a `NoopBotRules` implementation (which exists in the codebase but is not wired to any condition).
 - **Fixed message templates.** The bot messages are hardcoded strings, not LLM-generated. An LLM-based approach is listed as a future deferral.

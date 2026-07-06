@@ -49,20 +49,23 @@ The participant frontend's nginx reverse-proxies `/api/` to the session manager 
 
 ### 1. Open the admin dashboard
 
-Go to http://localhost:3003. Confirm that the four conditions are listed and at least one is **active**. The default group size is **3**.
+Go to http://localhost:3003. Confirm that all five conditions (baseline + 4 intervention arms) are listed and at least one is **active**. The default group size is **3**.
 
 ### 2. Open participant links
 
-Use the **Pilot Link** for a condition (visible in the admin dashboard), or construct one manually:
+Copy the **Study Link** from the admin dashboard's Overview tab:
 
 ```
-http://localhost:3000/?p=pilot-public-neutral-1&conditionId=public-neutral
+http://localhost:3000/
 ```
 
-- `?p=` is the tracking token (any unique string per participant)
-- `?conditionId=` forces assignment to a specific condition
+This is the single link researchers hand out. Each tab that opens it self-issues a random tracking token and gets auto-assigned to the least-completed active condition.
 
-Open this in **3 separate browser tabs** (one per participant, matching the group size). Each tab represents a different participant.
+Open it in **3 separate browser tabs** (one per participant, matching the group size). To force a specific condition, use a pilot link instead:
+
+```
+http://localhost:3000/?conditionId=public-neutral
+```
 
 ### 3. Walk through the flow
 

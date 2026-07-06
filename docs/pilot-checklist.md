@@ -14,23 +14,28 @@ Open the admin dashboard at http://localhost:3003.
 
 Confirm:
 
-- all four conditions are visible
+- all five conditions are visible (baseline + 4 intervention arms)
 - desired pilot condition is active
 - group size is set appropriately (default `3`)
 - `research-db` is healthy in `docker compose ps`
 
 ## 2. Create a Forced-Condition Group
 
-Use the pilot links in the admin dashboard, or open participant links manually:
+For auto-assigned conditions, open the generic study link in 3 tabs:
 
 ```
-http://localhost:3000/?p=pilot-public-neutral-1&conditionId=public-neutral
-http://localhost:3000/?p=pilot-public-neutral-2&conditionId=public-neutral
-http://localhost:3000/?p=pilot-public-neutral-3&conditionId=public-neutral
+http://localhost:3000/
 ```
 
-Repeat for each condition you want to test:
+To force a specific condition, use a pilot link from the admin dashboard or manually:
 
+```
+http://localhost:3000/?conditionId=public-neutral
+```
+
+Open in 3 tabs (one per participant). Repeat for each condition:
+
+- `baseline`
 - `public-neutral`
 - `public-engaging`
 - `private-neutral`
@@ -62,6 +67,7 @@ Expected behavior per condition:
 
 | Condition | What to verify |
 |---|---|
+| `baseline` | No bot messages appear at all |
 | `public-neutral` | Whole group sees participation split |
 | `public-engaging` | Whole group sees split + top-contributor prompt naming quiet members |
 | `private-neutral` | Only dominant participant sees the split |
