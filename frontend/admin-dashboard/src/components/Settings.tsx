@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Condition, ConditionProgress, StudySettings } from "@gdm/shared";
 import { API_BASE } from "../App";
 
@@ -134,10 +134,18 @@ function ConditionRow({ row, onSaved }: { row: ConditionProgress; onSaved: () =>
   const [draft, setDraft] = useState<Condition>(row.condition);
   const [state, setState] = useState<SaveState>("idle");
 
-  // Adopt fresh server data unless the researcher is mid-edit.
+  // The dashboard polls every few seconds, so fresh `row.condition` objects
+  // keep arriving. Only adopt them while the draft still matches the previous
+  // server state — unsaved edits must survive the poll (issue #26).
+  const serverRef = useRef(row.condition);
   useEffect(() => {
-    if (state === "idle") setDraft(row.condition);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const prevServer = serverRef.current;
+    serverRef.current = row.condition;
+    setDraft((current) =>
+      JSON.stringify(current) === JSON.stringify(prevServer)
+        ? row.condition
+        : current,
+    );
   }, [row.condition]);
 
   function patch(next: Partial<Condition>) {
