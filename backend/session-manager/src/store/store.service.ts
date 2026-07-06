@@ -453,6 +453,7 @@ export class StoreService implements OnModuleInit {
 
 function seedConditions(): Condition[] {
   const arms: { id: string; name: string; mode: InterventionMode }[] = [
+    { id: "baseline", name: "Baseline", mode: "baseline" },
     { id: "public-neutral", name: "Public Neutral", mode: "public-neutral" },
     { id: "public-engaging", name: "Public Engaging", mode: "public-engaging" },
     { id: "private-neutral", name: "Private Neutral", mode: "private-neutral" },

@@ -1,4 +1,5 @@
 export type InterventionMode =
+  | "baseline"
   | "public-neutral"
   | "public-engaging"
   | "private-neutral"
@@ -82,9 +83,11 @@ export const DEFAULT_INTERVENTION_CONFIG: InterventionConfig = {
 };
 
 export function audienceForMode(mode: InterventionMode): InterventionAudience {
+  if (mode === "baseline") return "none";
   return mode.startsWith("private") ? "private" : "public";
 }
 
 export function toneForMode(mode: InterventionMode): InterventionTone {
+  if (mode === "baseline") return "none";
   return mode.endsWith("engaging") ? "engaging" : "neutral";
 }

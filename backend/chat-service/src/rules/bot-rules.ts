@@ -84,6 +84,7 @@ export class ContributionBotRules implements BotRules {
 
     const mode = config.interventionMode;
     const audience = audienceForMode(mode);
+    if (audience === "none") return;
     const selectedTargets =
       audience === "private" ? eligibleTargets : [eligibleTargets[0]];
     const quietMembers = quietestMembers(split, selectedTargets);
@@ -265,6 +266,8 @@ function buildMessage(
         `${status}\n\n@${target.identityName}, you are the top contributor right now. ` +
         `Now might be a good time to check in with group members who did not contribute as much, such as ${quiet} - you might be missing something useful.`
       );
+    case "baseline":
+      return "";
   }
 }
 

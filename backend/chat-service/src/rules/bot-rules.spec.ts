@@ -163,6 +163,14 @@ describe("ContributionBotRules", () => {
     });
   });
 
+  it("baseline mode never sends any intervention", async () => {
+    const { rt, bot, event } = await makeDominantRed("baseline");
+    await new ContributionBotRules().onEvent(rt, event);
+
+    expect(bot.sendText).not.toHaveBeenCalled();
+    expect(rt.interventions).toHaveLength(0);
+  });
+
   it("protected start and end windows suppress nudges", async () => {
     const start = await makeDominantRed("public-neutral", {
       protectedStartMinutes: 3,

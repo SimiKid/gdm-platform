@@ -36,7 +36,7 @@ describe("SessionsService (session-manager)", () => {
 
   it("openSession registers a Matrix user and assigns the least-completed condition", async () => {
     const res = await svc.openSession(open);
-    expect(res.session.condition.id).toBe("public-neutral");
+    expect(res.session.condition.id).toBe("baseline");
     expect(res.participantId).toBeTruthy();
     expect(res.matrix.accessToken).toMatch(/^tok/);
     expect(res.session.status).toBe("waiting"); // 1 of 3
@@ -76,7 +76,7 @@ describe("SessionsService (session-manager)", () => {
       await store.saveSession(session);
     }
     const res = await svc.openSession(open);
-    expect(res.session.condition.id).toBe("public-engaging");
+    expect(res.session.condition.id).toBe("public-neutral");
   });
 
   it("throws ConflictException when the whole study is full", async () => {
@@ -99,7 +99,7 @@ describe("SessionsService (session-manager)", () => {
     const summaries = await svc.listSessions();
     expect(summaries[0]).toMatchObject({
       id: res.session.id,
-      conditionId: "public-neutral",
+      conditionId: "baseline",
       participantCount: 1,
       interventionCount: 0,
     });
@@ -109,10 +109,10 @@ describe("SessionsService (session-manager)", () => {
         id: "i1",
         sessionId: res.session.id,
         roomId: "!r",
-        conditionId: "public-neutral",
-        mode: "public-neutral",
-        audience: "public",
-        tone: "neutral",
+        conditionId: "baseline",
+        mode: "baseline",
+        audience: "none",
+        tone: "none",
         timestamp: "2026-01-01T00:00:00.000Z",
         trigger: "contribution-threshold",
         threshold: 0.4,
@@ -188,7 +188,7 @@ describe("SessionsService (session-manager)", () => {
 
     const csv = await svc.exportCsv();
     expect(csv).toContain("session_id,condition_id");
-    expect(csv).toContain("public-neutral");
+    expect(csv).toContain("baseline");
   });
 
   it("exports chat logs, nudge events, and surveys with condition filters", async () => {
@@ -217,10 +217,10 @@ describe("SessionsService (session-manager)", () => {
           id: "i1",
           sessionId: res.session.id,
           roomId: "!r",
-          conditionId: "public-neutral",
-          mode: "public-neutral",
-          audience: "public",
-          tone: "neutral",
+          conditionId: "baseline",
+          mode: "baseline",
+          audience: "none",
+          tone: "none",
           timestamp: "2026-01-01T00:00:00.000Z",
           trigger: "contribution-threshold",
           threshold: 0.4,
@@ -236,11 +236,11 @@ describe("SessionsService (session-manager)", () => {
     // JSON rows carry session/condition context.
     expect((await svc.exportMessages()).messages[0]).toMatchObject({
       sessionId: res.session.id,
-      conditionId: "public-neutral",
+      conditionId: "baseline",
       text: 'hi, "team"',
     });
     expect((await svc.exportInterventions()).interventions[0]).toMatchObject({
-      conditionName: "Public Neutral",
+      conditionName: "Baseline",
       message: "hi",
     });
     expect((await svc.exportSurveys()).surveys[0]).toMatchObject({
