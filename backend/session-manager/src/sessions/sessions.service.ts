@@ -114,14 +114,18 @@ export class SessionsService {
   }
 
   async exportBundle(conditionIds: string[] = []): Promise<ExportBundle> {
-    const allowed = new Set(conditionIds);
-    const sessions = (await this.store
-      .allSessions())
-      .filter((session) => allowed.size === 0 || allowed.has(session.condition.id));
     return {
       generatedAt: new Date().toISOString(),
-      sessions,
+      sessions: await this.filteredSessions(conditionIds),
     };
+  }
+
+  /** Sessions restricted to the given conditions (empty = everything). */
+  private async filteredSessions(conditionIds: string[] = []): Promise<Session[]> {
+    const allowed = new Set(conditionIds);
+    return (await this.store
+      .allSessions())
+      .filter((session) => allowed.size === 0 || allowed.has(session.condition.id));
   }
 
   async exportCsv(conditionIds: string[] = []): Promise<string> {
@@ -161,7 +165,157 @@ export class SessionsService {
         session.completedAt ?? "",
       ]),
     ];
-    return rows.map((row) => row.map(csvCell).join(",")).join("\n");
+    return toCsv(rows);
+  }
+
+  /** Chat logs across sessions, one row per message. */
+  async exportMessages(conditionIds: string[] = []) {
+    return {
+      generatedAt: new Date().toISOString(),
+      messages: (await this.filteredSessions(conditionIds)).flatMap((session) =>
+        session.chat.messages.map((message) => ({
+          sessionId: session.id,
+          conditionId: session.condition.id,
+          conditionName: session.condition.name,
+          ...message,
+        })),
+      ),
+    };
+  }
+
+  async exportMessagesCsv(conditionIds: string[] = []): Promise<string> {
+    const rows = [
+      [
+        "session_id",
+        "condition_id",
+        "condition_name",
+        "message_id",
+        "timestamp",
+        "sender_id",
+        "recipient_id",
+        "text",
+        "reaction_count",
+        "reaction_keys",
+      ],
+      ...(await this.exportMessages(conditionIds)).messages.map((m) => [
+        m.sessionId,
+        m.conditionId,
+        m.conditionName,
+        m.id,
+        m.timestamp,
+        m.senderId,
+        m.recipientId ?? "",
+        m.text,
+        String(m.reactions.length),
+        m.reactions.map((reaction) => reaction.key).join("|"),
+      ]),
+    ];
+    return toCsv(rows);
+  }
+
+  /** Bot nudge events across sessions, one row per intervention. */
+  async exportInterventions(conditionIds: string[] = []) {
+    return {
+      generatedAt: new Date().toISOString(),
+      interventions: (await this.filteredSessions(conditionIds)).flatMap(
+        (session) =>
+          session.interventions.map((intervention) => ({
+            conditionName: session.condition.name,
+            ...intervention,
+          })),
+      ),
+    };
+  }
+
+  async exportInterventionsCsv(conditionIds: string[] = []): Promise<string> {
+    const rows = [
+      [
+        "session_id",
+        "condition_id",
+        "condition_name",
+        "timestamp",
+        "mode",
+        "audience",
+        "tone",
+        "trigger",
+        "threshold",
+        "targets",
+        "quiet_members",
+        "message",
+      ],
+      ...(await this.exportInterventions(conditionIds)).interventions.map((i) => [
+        i.sessionId,
+        i.conditionId,
+        i.conditionName,
+        i.timestamp,
+        i.mode,
+        i.audience,
+        i.tone,
+        i.trigger,
+        String(i.threshold),
+        i.targets.map((target) => target.identityName).join("|"),
+        i.quietMembers.map((member) => member.identityName).join("|"),
+        i.message,
+      ]),
+    ];
+    return toCsv(rows);
+  }
+
+  /** Survey responses across sessions, one row per participant and kind. */
+  async exportSurveys(conditionIds: string[] = []) {
+    return {
+      generatedAt: new Date().toISOString(),
+      surveys: (await this.filteredSessions(conditionIds)).flatMap((session) =>
+        session.participants.flatMap((participant) =>
+          (
+            [
+              ["entry", participant.entrySurvey],
+              ["exit", participant.exitSurvey],
+            ] as const
+          )
+            .filter(([, survey]) => survey !== undefined)
+            .map(([kind, survey]) => ({
+              sessionId: session.id,
+              conditionId: session.condition.id,
+              conditionName: session.condition.name,
+              participantId: participant.id,
+              participantName: participant.name,
+              trackingToken: participant.trackingToken,
+              kind,
+              submittedAt: survey?.submittedAt ?? "",
+              answers: survey?.answers ?? {},
+            })),
+        ),
+      ),
+    };
+  }
+
+  async exportSurveysCsv(conditionIds: string[] = []): Promise<string> {
+    const rows = [
+      [
+        "session_id",
+        "condition_id",
+        "condition_name",
+        "participant_id",
+        "participant_name",
+        "tracking_token",
+        "kind",
+        "submitted_at",
+        "answers_json",
+      ],
+      ...(await this.exportSurveys(conditionIds)).surveys.map((s) => [
+        s.sessionId,
+        s.conditionId,
+        s.conditionName,
+        s.participantId,
+        s.participantName,
+        s.trackingToken,
+        s.kind,
+        s.submittedAt,
+        JSON.stringify(s.answers),
+      ]),
+    ];
+    return toCsv(rows);
   }
 
   /** Mark a session completed (idempotent) — drives progress & auto-off. */
@@ -306,6 +460,10 @@ function toSummary(session: Session): SessionSummary {
     completedAt: session.completedAt,
     roomId: session.roomId,
   };
+}
+
+function toCsv(rows: string[][]): string {
+  return rows.map((row) => row.map(csvCell).join(",")).join("\n");
 }
 
 function csvCell(value: string): string {

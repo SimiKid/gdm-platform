@@ -117,6 +117,44 @@ export class SessionsController {
   exportSessionsCsv(@Query("conditionIds") conditionIds?: string): Promise<string> {
     return this.sessions.exportCsv(parseConditionIds(conditionIds));
   }
+
+  /** Chat logs export (one row per message). */
+  @Get("export/messages")
+  exportMessages(@Query("conditionIds") conditionIds?: string) {
+    return this.sessions.exportMessages(parseConditionIds(conditionIds));
+  }
+
+  @Get("export/messages.csv")
+  @Header("Content-Type", "text/csv; charset=utf-8")
+  exportMessagesCsv(@Query("conditionIds") conditionIds?: string): Promise<string> {
+    return this.sessions.exportMessagesCsv(parseConditionIds(conditionIds));
+  }
+
+  /** Bot nudge events export (one row per intervention). */
+  @Get("export/interventions")
+  exportInterventions(@Query("conditionIds") conditionIds?: string) {
+    return this.sessions.exportInterventions(parseConditionIds(conditionIds));
+  }
+
+  @Get("export/interventions.csv")
+  @Header("Content-Type", "text/csv; charset=utf-8")
+  exportInterventionsCsv(
+    @Query("conditionIds") conditionIds?: string,
+  ): Promise<string> {
+    return this.sessions.exportInterventionsCsv(parseConditionIds(conditionIds));
+  }
+
+  /** Survey responses export (one row per participant and kind). */
+  @Get("export/surveys")
+  exportSurveys(@Query("conditionIds") conditionIds?: string) {
+    return this.sessions.exportSurveys(parseConditionIds(conditionIds));
+  }
+
+  @Get("export/surveys.csv")
+  @Header("Content-Type", "text/csv; charset=utf-8")
+  exportSurveysCsv(@Query("conditionIds") conditionIds?: string): Promise<string> {
+    return this.sessions.exportSurveysCsv(parseConditionIds(conditionIds));
+  }
 }
 
 function parseConditionIds(conditionIds?: string): string[] {

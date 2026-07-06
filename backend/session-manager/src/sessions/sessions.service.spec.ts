@@ -190,4 +190,84 @@ describe("SessionsService (session-manager)", () => {
     expect(csv).toContain("session_id,condition_id");
     expect(csv).toContain("public-neutral");
   });
+
+  it("exports chat logs, nudge events, and surveys with condition filters", async () => {
+    const res = await svc.openSession(open);
+    await svc.submitSurvey({
+      sessionId: res.session.id,
+      participantId: res.participantId,
+      kind: "entry",
+      survey: { answers: { age: 30 }, submittedAt: "now" },
+    });
+    await svc.finalizeSession(
+      res.session.id,
+      [
+        {
+          id: "m1",
+          timestamp: "now",
+          senderId: "u1",
+          recipientId: null,
+          text: 'hi, "team"', // exercises CSV escaping
+          reactions: [{ key: "👍", senderId: "u2", timestamp: "now" }],
+        },
+      ],
+      [],
+      [
+        {
+          id: "i1",
+          sessionId: res.session.id,
+          roomId: "!r",
+          conditionId: "public-neutral",
+          mode: "public-neutral",
+          audience: "public",
+          tone: "neutral",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          trigger: "contribution-threshold",
+          threshold: 0.4,
+          contributionWindowMinutes: 4,
+          contributionSplit: [],
+          targets: [{ userId: "u1", identityName: "Rot" }],
+          quietMembers: [],
+          message: "hi",
+        },
+      ],
+    );
+
+    // JSON rows carry session/condition context.
+    expect((await svc.exportMessages()).messages[0]).toMatchObject({
+      sessionId: res.session.id,
+      conditionId: "public-neutral",
+      text: 'hi, "team"',
+    });
+    expect((await svc.exportInterventions()).interventions[0]).toMatchObject({
+      conditionName: "Public Neutral",
+      message: "hi",
+    });
+    expect((await svc.exportSurveys()).surveys[0]).toMatchObject({
+      participantId: res.participantId,
+      kind: "entry",
+      answers: { age: 30 },
+    });
+
+    // Condition filter applies to every data set.
+    expect((await svc.exportMessages(["private-neutral"])).messages).toHaveLength(0);
+    expect(
+      (await svc.exportInterventions(["private-neutral"])).interventions,
+    ).toHaveLength(0);
+    expect((await svc.exportSurveys(["private-neutral"])).surveys).toHaveLength(0);
+
+    // CSV variants: headers, escaping, serialized details.
+    const messagesCsv = await svc.exportMessagesCsv();
+    expect(messagesCsv).toContain("session_id,condition_id,condition_name,message_id");
+    expect(messagesCsv).toContain('"hi, ""team"""');
+    expect(messagesCsv).toContain("👍");
+
+    const interventionsCsv = await svc.exportInterventionsCsv();
+    expect(interventionsCsv).toContain("mode,audience,tone");
+    expect(interventionsCsv).toContain("Rot");
+
+    const surveysCsv = await svc.exportSurveysCsv();
+    expect(surveysCsv).toContain("participant_id,participant_name");
+    expect(surveysCsv).toContain('""age"":30');
+  });
 });
