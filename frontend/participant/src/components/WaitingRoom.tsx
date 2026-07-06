@@ -3,6 +3,7 @@ import { createClient, ClientEvent } from "matrix-js-sdk";
 import type { MatrixClient } from "matrix-js-sdk";
 import type { Session, Survey } from "@gdm/shared";
 import { httpSessionManager } from "../study/sessionClient";
+import StudyShell from "./StudyShell";
 
 interface Props {
   trackingToken: string;
@@ -119,26 +120,27 @@ export default function WaitingRoom({
 
   if (error) {
     return (
-      <div className="login-container">
-        <h1>Waiting room</h1>
-        <p className="error">{error}</p>
-        <p className="login-hint">
-          The study may be full, or the servers aren't running.
-        </p>
-      </div>
+      <StudyShell step={4}>
+        <div className="study-card narrow centered">
+          <h1>Waiting room</h1>
+          <p className="error">{error}</p>
+          <p>The study may be full, or the servers aren't running.</p>
+        </div>
+      </StudyShell>
     );
   }
 
   return (
-    <div className="login-container">
-      <h1>Waiting room</h1>
-      <p className="login-hint">
-        Thanks — waiting for the group to fill up...
-      </p>
-      <p className="login-hint">
-        {count}
-        {groupSize ? ` / ${groupSize}` : ""} people joined
-      </p>
-    </div>
+    <StudyShell step={4}>
+      <div className="study-card narrow centered">
+        <h1>Waiting room</h1>
+        <div className="waiting-spinner" aria-hidden="true" />
+        <p>Thanks — waiting for the group to fill up...</p>
+        <p className="waiting-count" aria-live="polite">
+          {count}
+          {groupSize ? ` / ${groupSize}` : ""} people joined
+        </p>
+      </div>
+    </StudyShell>
   );
 }

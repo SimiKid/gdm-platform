@@ -3,8 +3,8 @@ import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import {
   DEFAULT_INTERVENTION_CONFIG,
-  EXPEDITION_MARS,
-  EXPEDITION_MARS_BRIEFING,
+  MOON_SURVIVAL,
+  MOON_SURVIVAL_BRIEFING,
 } from "@gdm/shared";
 import type {
   Briefing,
@@ -19,13 +19,14 @@ import type {
   Ranking,
   RankingTask,
   Session,
+  StudySettings,
   Survey,
 } from "@gdm/shared";
 import type { MatrixCreds } from "../matrix/matrix.service";
 import { PrismaService } from "../prisma/prisma.service";
 
-const BRIEFING = EXPEDITION_MARS_BRIEFING;
-const RANKING_TASK = EXPEDITION_MARS;
+const BRIEFING = MOON_SURVIVAL_BRIEFING;
+const RANKING_TASK = MOON_SURVIVAL;
 
 const SESSION_INCLUDE = {
   participants: {
@@ -61,6 +62,7 @@ export class StoreService implements OnModuleInit {
   private readonly conditions: Condition[] = [];
   private readonly sessions = new Map<string, Session>();
   private readonly memoryCreds = new Map<string, MatrixCreds>();
+  private readonly memorySettings: StudySettings = { compensationUrl: "" };
   private seedPromise?: Promise<void>;
 
   constructor(@Optional() private readonly prisma?: PrismaService) {
@@ -94,6 +96,40 @@ export class StoreService implements OnModuleInit {
       update: conditionData(next),
     });
     return next;
+  }
+
+  /** Study-wide settings (e.g. the compensation link on the debriefing page). */
+  async getStudySettings(): Promise<StudySettings> {
+    if (!this.dbEnabled) return { ...this.memorySettings };
+    await this.ensureSeeded();
+    const rows = await this.db.studySettingRecord.findMany();
+    const byKey = new Map(rows.map((row) => [row.key, row.value]));
+    return { compensationUrl: byKey.get("compensationUrl") ?? "" };
+  }
+
+  async updateStudySettings(
+    patch: Partial<StudySettings>,
+  ): Promise<StudySettings> {
+    const entries = Object.entries(patch).filter(
+      ([, value]) => typeof value === "string",
+    ) as [string, string][];
+
+    if (!this.dbEnabled) {
+      for (const [key, value] of entries) {
+        this.memorySettings[key as keyof StudySettings] = value.trim();
+      }
+      return { ...this.memorySettings };
+    }
+
+    await this.ensureSeeded();
+    for (const [key, value] of entries) {
+      await this.db.studySettingRecord.upsert({
+        where: { key },
+        create: { key, value: value.trim() },
+        update: { value: value.trim() },
+      });
+    }
+    return this.getStudySettings();
   }
 
   /** Sessions counting against a condition's goal (everything but aborted). */

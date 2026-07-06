@@ -1,72 +1,49 @@
 import { useState } from "react";
-import type { MatrixClient } from "matrix-js-sdk";
-import { MATRIX_EVENT_TYPES } from "@gdm/shared";
 import type { Session, Survey } from "@gdm/shared";
 import { httpSessionManager } from "../study/sessionClient";
+import StudyShell from "./StudyShell";
+import RankingBoard from "./RankingBoard";
+import Likert from "./Likert";
+
+/** 1..n numeric scale as Likert options. */
+function numericScale(n: number) {
+  return Array.from({ length: n }, (_, i) => ({
+    value: String(i + 1),
+    label: String(i + 1),
+  }));
+}
 
 interface Props {
-  client: MatrixClient;
   session: Session;
   participantId: string;
   /** Called once the exit survey is submitted and the session is completed. */
   onDone: () => void;
 }
 
-/** The group's final shared ranking, read from the room (fallback: initial). */
-function readGroupRanking(client: MatrixClient, session: Session): string[] {
-  const room = session.roomId ? client.getRoom(session.roomId) : null;
-  if (room) {
-    const events = room.getLiveTimeline().getEvents();
-    for (let i = events.length - 1; i >= 0; i--) {
-      if (events[i].getType() === MATRIX_EVENT_TYPES.ranking) {
-        const content = events[i].getContent() as { order?: string[] };
-        if (Array.isArray(content.order)) return content.order;
-      }
-    }
-  }
-  return session.ranking.order;
-}
-
 /**
- * In-app exit survey (wireframe: Exit Survey behind the individual URL).
+ * Page 5 — Exit Survey, shown when the discussion timer runs out.
  *
- * Shown when the discussion timer runs out. It seeds the ranking with the
- * group's final order from the chat and asks the participant whether they'd
- * change anything (their post-discussion individual ranking), then a few
- * questions. Submitting persists everything and completes the session.
+ * Part 1 asks for a fresh individual ranking (same widget as the individual
+ * task, no timer, starting unranked so it reflects the participant's own
+ * post-discussion view). Part 2 rates the group experience on 1–7 scales.
+ * Submitting persists everything and completes the session.
  */
-export default function ExitSurvey({
-  client,
-  session,
-  participantId,
-  onDone,
-}: Props) {
-  const [order, setOrder] = useState<string[]>(() =>
-    readGroupRanking(client, session),
-  );
+export default function ExitSurvey({ session, participantId, onDone }: Props) {
+  const items = session.rankingTask.items;
+  const [ranked, setRanked] = useState<string[]>([]);
   const [satisfaction, setSatisfaction] = useState("");
   const [fairness, setFairness] = useState("");
   const [feltHeard, setFeltHeard] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const labels = new Map(session.rankingTask.items.map((i) => [i.id, i.label]));
-
-  function move(index: number, dir: -1 | 1) {
-    const j = index + dir;
-    if (j < 0 || j >= order.length) return;
-    const next = order.slice();
-    [next[index], next[j]] = [next[j], next[index]];
-    setOrder(next);
-  }
-
   async function submit() {
     setSubmitting(true);
     const survey: Survey = {
       answers: {
-        finalRanking: order,
+        finalRanking: ranked,
         satisfaction: Number(satisfaction),
-        fairness,
-        feltHeard,
+        fairness: Number(fairness),
+        feltHeard: Number(feltHeard),
       },
       submittedAt: new Date().toISOString(),
     };
@@ -84,81 +61,75 @@ export default function ExitSurvey({
     onDone();
   }
 
-  const ready = satisfaction && fairness && feltHeard;
+  const allRanked = ranked.length === items.length;
+  const ready = allRanked && satisfaction && fairness && feltHeard;
 
   return (
-    <div className="login-container">
-      <h1>The discussion has ended</h1>
+    <StudyShell>
+      <div className="study-card">
+        <h1>Almost done: A few final questions</h1>
 
-      <p className="login-hint" style={{ width: 320 }}>
-        This is the group's final ranking. Would you change anything? Adjust it
-        to your own final view.
-      </p>
-      <ol className="ranking-list" style={{ width: 320 }}>
-        {order.map((id, idx) => (
-          <li key={id} className="ranking-item">
-            <span className="rank-num">{idx + 1}</span>
-            <span className="rank-label">{labels.get(id) ?? id}</span>
-            <span className="rank-actions">
-              <button
-                type="button"
-                onClick={() => move(idx, -1)}
-                disabled={idx === 0}
-                aria-label="Move up"
-              >
-                ↑
-              </button>
-              <button
-                type="button"
-                onClick={() => move(idx, 1)}
-                disabled={idx === order.length - 1}
-                aria-label="Move down"
-              >
-                ↓
-              </button>
-            </span>
-          </li>
-        ))}
-      </ol>
+        <h2>Part 1: Your final ranking</h2>
+        <p>
+          Now that the group discussion is over, please rank the 15 items one
+          more time on your own. Your ranking may match the team's or differ
+          from it. There is no right answer here; we are interested in your
+          personal view after the discussion.
+        </p>
 
-      <label className="field">
-        How satisfied are you with the group's ranking?
-        <select
+        <RankingBoard items={items} ranked={ranked} onChange={setRanked} />
+
+        <h2>Part 2: Your experience of the group discussion</h2>
+        <p>
+          Please rate the following statements (1 = strongly disagree, 7 =
+          strongly agree):
+        </p>
+
+        <Likert
+          name="satisfaction"
+          legend="How satisfied are you with the group's final ranking?"
+          options={numericScale(7)}
           value={satisfaction}
-          onChange={(e) => setSatisfaction(e.target.value)}
-        >
-          <option value="">Choose…</option>
-          <option value="1">1 — Not at all</option>
-          <option value="2">2</option>
-          <option value="3">3 — Neutral</option>
-          <option value="4">4</option>
-          <option value="5">5 — Very satisfied</option>
-        </select>
-      </label>
+          onChange={setSatisfaction}
+          anchors={["1 = very dissatisfied", "7 = very satisfied"]}
+        />
 
-      <label className="field">
-        The group reached its decision fairly.
-        <select value={fairness} onChange={(e) => setFairness(e.target.value)}>
-          <option value="">Choose…</option>
-          <option value="agree">Agree</option>
-          <option value="neutral">Neutral</option>
-          <option value="disagree">Disagree</option>
-        </select>
-      </label>
+        <Likert
+          name="fairness"
+          legend="The group reached its decision fairly."
+          options={numericScale(7)}
+          value={fairness}
+          onChange={setFairness}
+          anchors={["1 = strongly disagree", "7 = strongly agree"]}
+        />
 
-      <label className="field">
-        I felt my views were heard.
-        <select value={feltHeard} onChange={(e) => setFeltHeard(e.target.value)}>
-          <option value="">Choose…</option>
-          <option value="yes">Yes</option>
-          <option value="somewhat">Somewhat</option>
-          <option value="no">No</option>
-        </select>
-      </label>
+        <Likert
+          name="felt-heard"
+          legend="I felt my views were heard during the discussion."
+          options={numericScale(7)}
+          value={feltHeard}
+          onChange={setFeltHeard}
+          anchors={["1 = strongly disagree", "7 = strongly agree"]}
+        />
 
-      <button type="button" onClick={submit} disabled={!ready || submitting}>
-        {submitting ? "Submitting…" : "Finish"}
-      </button>
-    </div>
+        <div className="card-actions">
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={submit}
+            disabled={!ready || submitting}
+          >
+            {submitting ? "Submitting…" : "Submit"}
+          </button>
+          {!ready && (
+            <p className="action-hint">
+              {allRanked
+                ? "Please rate all three statements to submit."
+                : `Rank all 15 items to submit (${items.length - ranked.length} remaining).`}
+            </p>
+          )}
+        </div>
+      </div>
+    </StudyShell>
   );
 }

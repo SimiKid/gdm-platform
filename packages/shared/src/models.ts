@@ -124,6 +124,19 @@ export interface Condition {
   config: InterventionConfig & Record<string, unknown>;
 }
 
+/**
+ * Study-wide settings the researcher edits in the admin dashboard
+ * (wireframe: Settings). Applied globally, not per condition.
+ */
+export interface StudySettings {
+  /**
+   * Where the debriefing page's "Claim compensation" button sends
+   * participants (payment / Prolific completion link). Empty = the
+   * participant app falls back to its build-time default.
+   */
+  compensationUrl: string;
+}
+
 /** Which nudge behavior the bot runs for a session. */
 export interface BotConfig {
   /** Rule-based only for milestone 1; LLM check is optional/future. */

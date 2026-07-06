@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import type { MatrixClient } from "matrix-js-sdk";
 import { ClientEvent, RoomEvent } from "matrix-js-sdk";
 import { GDM_RECIPIENT_KEY } from "@gdm/shared";
@@ -30,6 +31,16 @@ interface Props {
 }
 
 const QUICK_EMOJI = ["👍", "👎", "❤️"];
+
+const PANEL_WIDTH_KEY = "gdm-panel-width";
+const PANEL_MIN = 280;
+const PANEL_MAX = 640;
+
+/** Keep the panel usable and leave the chat column at least ~360px. */
+function clampPanelWidth(w: number): number {
+  const max = Math.min(PANEL_MAX, window.innerWidth - 360);
+  return Math.max(PANEL_MIN, Math.min(w, Math.max(PANEL_MIN, max)));
+}
 
 /** Countdown to the end of the discussion, in ms (null if no timer). */
 function useCountdown(startedAt?: string, durationMinutes?: number) {
@@ -66,6 +77,32 @@ export default function Chat({ client, session, onTimeUp }: Props) {
   const [pickerFor, setPickerFor] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Width of the resizable study side panel (persisted across reloads).
+  const [panelWidth, setPanelWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem(PANEL_WIDTH_KEY));
+    return saved ? clampPanelWidth(saved) : 340;
+  });
+
+  useEffect(() => {
+    localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidth));
+  }, [panelWidth]);
+
+  function startPanelResize(e: ReactPointerEvent) {
+    e.preventDefault();
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    const onMove = (ev: PointerEvent) =>
+      setPanelWidth(clampPanelWidth(window.innerWidth - ev.clientX));
+    const onUp = () => {
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
 
   const userId = client.getUserId() ?? "";
   const remaining = useCountdown(session?.startedAt, session?.durationMinutes);
@@ -300,9 +337,32 @@ export default function Chat({ client, session, onTimeUp }: Props) {
         )}
       </main>
 
-      {/* ── Study side panel ────────────────────────── */}
+      {/* ── Study side panel (resizable) ────────────── */}
       {session && (
-        <aside className="panel-col">
+        <div
+          className="panel-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize task panel"
+          tabIndex={0}
+          onPointerDown={startPanelResize}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowLeft") {
+              e.preventDefault();
+              setPanelWidth((w) => clampPanelWidth(w + 24));
+            }
+            if (e.key === "ArrowRight") {
+              e.preventDefault();
+              setPanelWidth((w) => clampPanelWidth(w - 24));
+            }
+          }}
+        />
+      )}
+      {session && (
+        <aside
+          className="panel-col"
+          style={{ width: panelWidth, minWidth: panelWidth }}
+        >
           {remaining !== null && (
             <div className={`timer ${timerLow ? "low" : ""}`}>
               {remaining === 0

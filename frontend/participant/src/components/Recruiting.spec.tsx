@@ -35,7 +35,7 @@ describe("Recruiting", () => {
     expect(onDevLogin).toHaveBeenCalled();
   });
 
-  it("reads the tracking token from ?p= and enters the flow on Start", async () => {
+  it("reads the tracking token from ?p= and enters the flow directly", () => {
     window.history.replaceState(
       {},
       "",
@@ -43,8 +43,6 @@ describe("Recruiting", () => {
     );
     const onEnter = vi.fn();
     render(<Recruiting onEnter={onEnter} onDevLogin={vi.fn()} />);
-    expect(screen.getByText(/Welcome to the study/)).toBeInTheDocument();
-    await userEvent.click(screen.getByText("Start"));
     expect(onEnter).toHaveBeenCalledWith("abc123", "private-engaging");
     // token stripped from the URL
     expect(window.location.search).toBe("?conditionId=private-engaging");

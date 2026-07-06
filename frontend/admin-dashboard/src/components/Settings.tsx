@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Condition, ConditionProgress } from "@gdm/shared";
+import type { Condition, ConditionProgress, StudySettings } from "@gdm/shared";
 import { API_BASE } from "../App";
 
 interface Props {
@@ -15,6 +15,89 @@ type SaveState = "idle" | "saving" | "saved" | "error";
  * per condition). The four 2×2 arms are fixed; bot tuning stays backend-only.
  */
 export default function Settings({ rows, onSaved }: Props) {
+  return (
+    <>
+      <CompensationCard />
+      <ConditionsCard rows={rows} onSaved={onSaved} />
+    </>
+  );
+}
+
+/**
+ * Where the debriefing page's "Claim compensation" button sends participants
+ * (payment / Prolific completion link). Stored study-wide on the backend.
+ */
+function CompensationCard() {
+  const [url, setUrl] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [saved, setSaved] = useState("");
+  const [state, setState] = useState<SaveState>("idle");
+
+  useEffect(() => {
+    void fetch(`${API_BASE}/settings`).then(async (res) => {
+      if (!res.ok) return;
+      const settings = (await res.json()) as StudySettings;
+      setUrl(settings.compensationUrl);
+      setSaved(settings.compensationUrl);
+      setLoaded(true);
+    });
+  }, []);
+
+  async function save() {
+    setState("saving");
+    try {
+      const res = await fetch(`${API_BASE}/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ settings: { compensationUrl: url.trim() } }),
+      });
+      if (!res.ok) throw new Error(`Save failed (${res.status})`);
+      const settings = (await res.json()) as StudySettings;
+      setUrl(settings.compensationUrl);
+      setSaved(settings.compensationUrl);
+      setState("saved");
+    } catch {
+      setState("error");
+    }
+  }
+
+  const dirty = url.trim() !== saved;
+
+  return (
+    <section className="section">
+      <h2>Compensation Link</h2>
+      <p className="hint">
+        Participants land on this link when they press “Claim compensation” on
+        the final debriefing page (e.g. your payment form or Prolific
+        completion URL). Leave empty to use the app's build-time default.
+      </p>
+      <div className="copy-row">
+        <input
+          type="url"
+          placeholder="https://…"
+          value={url}
+          disabled={!loaded}
+          onChange={(e) => {
+            setUrl(e.target.value);
+            setState("idle");
+          }}
+          aria-label="Compensation link"
+        />
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={state === "saving" || !loaded || !dirty}
+        >
+          {state === "saving" ? "Saving" : "Save"}
+        </button>
+        {state === "saved" && <span className="ok">Saved</span>}
+        {state === "error" && <span className="bad">Error</span>}
+      </div>
+    </section>
+  );
+}
+
+function ConditionsCard({ rows, onSaved }: Props) {
   return (
     <section className="section">
       <h2>Conditions</h2>
