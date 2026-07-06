@@ -14,11 +14,12 @@ describe("StoreService", () => {
     store = new StoreService();
   });
 
-  it("seeds the four bot intervention conditions", async () => {
+  it("seeds the five study conditions", async () => {
     const conditions = await store.listConditions();
-    expect(conditions).toHaveLength(4);
+    expect(conditions).toHaveLength(5);
     expect(conditions[0]).toMatchObject({ active: true, goal: 5, groupSize: 3 });
     expect(conditions.map((c) => c.config.interventionMode)).toEqual([
+      "baseline",
       "public-neutral",
       "public-engaging",
       "private-neutral",
