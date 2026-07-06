@@ -1,142 +1,45 @@
 # GDM Platform
 
-AI-supported group decision-making study platform for a master's project.
+A study platform for researching AI-supported group decision-making. Groups discuss a shared task in a real-time chat environment while a rule-based bot monitors contribution balance and intervenes when participation becomes uneven.
 
-The current branch is a local, Docker-first pilot stack:
+The project investigates whether in-the-moment AI nudges can improve both decision quality and group experience, using a 2x2 between-subjects design (public/private x neutral/engaging interventions).
 
-- `packages/shared` - shared TypeScript domain models, DTOs, bot config, and mock Expedition Mars task
-- `backend/session-manager` - NestJS API for matchmaking, session state, condition config, surveys, and Matrix room provisioning
-- `backend/chat-service` - NestJS bot runtime that joins Matrix rooms, records messages/reactions/ranking edits, and emits rule-based interventions
-- `frontend/participant` - React participant flow: study link, survey, waiting room, chat, shared ranking, exit survey
-- `frontend/admin-dashboard` - React researcher dashboard for condition settings and progress
-- `infra` - Docker Compose stack with Synapse, Synapse Postgres, research Postgres, backends, and frontends
+## Repository Structure
 
-## Local Run
+```
+packages/shared/          Shared TypeScript types, DTOs, and defaults
+backend/session-manager/  Matchmaking, session state, conditions, surveys, exports (NestJS + Prisma)
+backend/chat-service/     Bot runtime: Matrix sync, message recording, intervention rules (NestJS)
+frontend/participant/     Participant study flow: recruiting, survey, chat, exit survey (React)
+frontend/admin-dashboard/ Researcher dashboard for conditions and exports (React)
+infra/                    Docker Compose stack, Synapse config, env, start/stop scripts
+docs/                     Architecture, bot rulebook, pilot checklist
+```
 
-No host Node or pnpm setup is required for the app stack.
+## Quick Start
 
 ```bash
 cd infra
-docker compose up --build
+sh start.sh
 ```
 
-Or use the helper scripts:
+Open http://localhost:3000 (participant) or http://localhost:3003 (admin dashboard).
 
-```bash
-./infra/start.sh
-./infra/stop.sh
-```
+See [docs/getting-started.md](docs/getting-started.md) for prerequisites, ports, and a full pilot walkthrough.
 
-To wipe local Docker volumes, including Synapse and research Postgres data:
+## Documentation
 
-```bash
-./infra/stop.sh --volumes
-```
-
-Open:
-
-- Participant app: http://localhost:3000/?p=p1
-- More participants: http://localhost:3000/?p=p2 and http://localhost:3000/?p=p3
-- Admin dashboard: http://localhost:3003
-- Session Manager API: http://localhost:3001/api/conditions/progress
-- Synapse: http://localhost:8010
-- Research Postgres on host: `localhost:5433`
-
-The default local group size is `3` so a test group can fill quickly. Conditions are assigned across the four bot intervention methods by least-claimed condition.
-
-For forced-condition pilot runs, use the pilot links in the admin dashboard or pass a condition explicitly:
-
-```text
-http://localhost:3000/?p=pilot-private-engaging-1&conditionId=private-engaging
-```
-
-## Bot Conditions
-
-The current study model has four intervention methods:
-
-| Condition | Audience | Behavior |
-|---|---|---|
-| Public Neutral | group | show current participation split |
-| Public Engaging | group | show participation split and prompt the top contributor to include quieter members |
-| Private Neutral | dominating member(s) | privately show current participation split |
-| Private Engaging | dominating member(s) | privately show participation split and prompt them to include quieter members |
-
-The rule engine uses a configurable contribution score:
-
-```text
-score = messageCount * messageWeight + characterCount * characterWeight
-```
-
-Defaults live in `packages/shared/src/interventions.ts`. Condition instances are seeded by the Session Manager into the research database when `DATABASE_URL` is configured.
-
-## Admin And Export
-
-The admin dashboard works against the Session Manager API. In Docker, sessions, participants, surveys, ranking history, messages, reactions, interventions, and condition settings are persisted in the dedicated research Postgres database.
-It supports:
-
-- condition settings and progress
-- forced-condition pilot links
-- session list and raw session detail
-- intervention audit log
-- JSON export at `/api/export/sessions`
-- CSV summary export at `/api/export/sessions.csv`
-
-Use `docs/pilot-checklist.md` for a repeatable local pilot flow.
-
-## Useful Commands
-
-Reset all local Matrix data:
-
-```bash
-cd infra
-docker compose down -v
-docker compose up --build
-```
-
-Reset only research data:
-
-```bash
-cd infra
-docker compose down
-docker volume rm infra_research-db-data
-docker compose up --build
-```
-
-Inspect Synapse Postgres:
-
-```bash
-cd infra
-docker compose exec synapse-db psql -U synapse -d synapse
-```
-
-Inspect research Postgres:
-
-```bash
-cd infra
-docker compose exec research-db psql -U gdm -d gdm_research
-```
-
-Run local Prisma commands from the repo root after the Docker DB is up:
-
-```bash
-DATABASE_URL=postgresql://gdm:gdm_secret@localhost:5433/gdm_research?schema=public \
-  pnpm --filter session-manager db:migrate
-```
-
-Run workspace tests on a machine with Node/Corepack available:
-
-```bash
-corepack prepare pnpm@11.8.0 --activate
-pnpm install --frozen-lockfile
-pnpm test
-```
+| Document | Description |
+|---|---|
+| [Getting Started](docs/getting-started.md) | Prerequisites, running locally, configuration, useful commands |
+| [Architecture](docs/architecture.md) | Services, data flow, session lifecycle, design decisions |
+| [Bot Rulebook](docs/bot-rulebook.md) | Intervention logic: 2x2 conditions, contribution scoring, thresholds, message templates |
+| [Pilot Checklist](docs/pilot-checklist.md) | Step-by-step verification for local pilot runs |
 
 ## Current Deferrals
 
-These are intentionally not implemented yet:
-
-- final NASA/Mars task specification and scoring
-- standalone export service, if later needed beyond the current DB-backed API endpoints
-- semantic/LLM contribution classifier
-- typing-speed and tab-visibility telemetry
+- Final task specification and scoring (NASA/Mars exercise)
+- Semantic/LLM-based contribution classifier
+- No-intervention baseline condition (5th arm)
+- Typing-speed and tab-visibility telemetry
 - Matrix appservice registration for the bot

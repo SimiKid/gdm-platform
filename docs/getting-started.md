@@ -1,0 +1,146 @@
+# Getting Started
+
+How to run the GDM platform locally for development and pilot testing.
+
+## Prerequisites
+
+- **Docker Desktop** (or Docker Engine + Compose plugin) running on your machine
+- No host-level Node.js or pnpm installation is required for running the app stack
+- For running tests or Prisma commands locally: Node.js 20+ and `corepack prepare pnpm@11.8.0 --activate`
+
+## Start the Stack
+
+```bash
+cd infra
+sh start.sh
+```
+
+This builds and starts all services via Docker Compose. On first run, expect a longer build as Docker pulls base images and compiles the backends.
+
+Alternatively, run directly:
+
+```bash
+cd infra
+docker compose --env-file .env up --build
+```
+
+## Stop the Stack
+
+```bash
+cd infra
+sh stop.sh              # stop containers, keep data
+sh stop.sh --volumes    # stop containers and wipe all data (clean slate)
+```
+
+## Services and Ports
+
+| Service | URL | Description |
+|---|---|---|
+| Participant frontend | http://localhost:3000 | The study UI participants interact with |
+| Admin dashboard | http://localhost:3003 | Researcher-facing condition management and exports |
+| Session Manager API | http://localhost:3001/api | Backend REST API for sessions, conditions, surveys |
+| Chat Service | http://localhost:3002 | Bot runtime that monitors Matrix rooms |
+| Synapse (Matrix) | http://localhost:8010 | Matrix homeserver |
+| Research Postgres | `localhost:5433` | Study data (sessions, surveys, interventions) |
+
+The participant frontend's nginx reverse-proxies `/api/` to the session manager and `/_matrix/` to Synapse, so the browser only talks to `localhost:3000`.
+
+## Running a Pilot Session
+
+### 1. Open the admin dashboard
+
+Go to http://localhost:3003. Confirm that the four conditions are listed and at least one is **active**. The default group size is **3**.
+
+### 2. Open participant links
+
+Use the **Pilot Link** for a condition (visible in the admin dashboard), or construct one manually:
+
+```
+http://localhost:3000/?p=pilot-public-neutral-1&conditionId=public-neutral
+```
+
+- `?p=` is the tracking token (any unique string per participant)
+- `?conditionId=` forces assignment to a specific condition
+
+Open this in **3 separate browser tabs** (one per participant, matching the group size). Each tab represents a different participant.
+
+### 3. Walk through the flow
+
+In each tab:
+
+1. **Recruiting** — click "Start"
+2. **Survey** — fill in the pre-study questionnaire, submit
+3. **Waiting Room** — shows "N / 3 people joined", waits for all tabs to arrive
+4. **Chat** — once the group is full, a Matrix room is created and all participants enter the chat. A timer counts down based on `durationMinutes`.
+5. **Exit Survey** — after the timer expires, participants complete a post-study questionnaire
+6. **Done** — thank-you screen
+
+### 4. Observe bot behavior
+
+To trigger an intervention:
+- Have one participant send several long messages
+- Keep at least one participant silent
+- Wait until the protected start window passes (default: 3 minutes)
+- The bot should post a nudge based on the condition's intervention mode
+
+See [docs/bot-rulebook.md](bot-rulebook.md) for the full intervention logic and [docs/pilot-checklist.md](pilot-checklist.md) for a step-by-step verification list.
+
+## Useful Commands
+
+### Reset all data (Synapse + research DB)
+
+```bash
+cd infra
+docker compose down -v
+docker compose up --build
+```
+
+### Reset only research data
+
+```bash
+cd infra
+docker compose down
+docker volume rm infra_research-db-data
+docker compose up --build
+```
+
+### Inspect databases
+
+```bash
+# Synapse Postgres
+docker compose exec synapse-db psql -U synapse -d synapse
+
+# Research Postgres
+docker compose exec research-db psql -U gdm -d gdm_research
+```
+
+### Run Prisma migrations locally
+
+With the Docker stack running:
+
+```bash
+DATABASE_URL=postgresql://gdm:gdm_secret@localhost:5433/gdm_research?schema=public \
+  pnpm --filter session-manager db:migrate
+```
+
+### Run tests
+
+```bash
+corepack prepare pnpm@11.8.0 --activate
+pnpm install --frozen-lockfile
+pnpm test
+```
+
+## Configuration
+
+All environment variables live in `infra/.env`. Key settings:
+
+| Variable | Purpose |
+|---|---|
+| `SYNAPSE_HTTP_PORT` | Host port for Synapse (default `8010`) |
+| `SYNAPSE_DB_*` | Synapse Postgres credentials |
+| `RESEARCH_DB_*` | Research Postgres credentials |
+| `DATABASE_URL` | Host-side connection string for local Prisma commands |
+| `MATRIX_PUBLIC_URL` | Browser-facing Matrix URL returned to participants (default `http://localhost:3000`) |
+
+The Synapse `homeserver.yaml` at `infra/synapse/homeserver.yaml` has its own DB credentials that must match the `.env` values (Synapse reads static YAML, not environment variables).
