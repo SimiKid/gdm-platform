@@ -11,6 +11,12 @@ describe("SessionsController", () => {
     listInterventions: vi.fn(async () => [{ sessionId: "s" }]),
     exportBundle: vi.fn(async () => ({ generatedAt: "now", sessions: [] })),
     exportCsv: vi.fn(async () => "session_id\n"),
+    exportMessages: vi.fn(async () => ({ generatedAt: "now", messages: [] })),
+    exportMessagesCsv: vi.fn(async () => "message_id\n"),
+    exportInterventions: vi.fn(async () => ({ generatedAt: "now", interventions: [] })),
+    exportInterventionsCsv: vi.fn(async () => "mode\n"),
+    exportSurveys: vi.fn(async () => ({ generatedAt: "now", surveys: [] })),
+    exportSurveysCsv: vi.fn(async () => "kind\n"),
     submitSurvey: vi.fn(async () => undefined),
     completeSession: vi.fn(async () => ({ id: "s", status: "completed" })),
     finalizeSession: vi.fn(async () => ({ id: "s" })),
@@ -102,5 +108,22 @@ describe("SessionsController", () => {
 
     await expect(ctrl.exportSessionsCsv("public-neutral")).resolves.toBe("session_id\n");
     expect(sessions.exportCsv).toHaveBeenCalledWith(["public-neutral"]);
+  });
+
+  it("exports chat logs, nudge events, and surveys per data set", async () => {
+    await ctrl.exportMessages("public-neutral");
+    expect(sessions.exportMessages).toHaveBeenCalledWith(["public-neutral"]);
+    await expect(ctrl.exportMessagesCsv(undefined)).resolves.toBe("message_id\n");
+    expect(sessions.exportMessagesCsv).toHaveBeenCalledWith([]);
+
+    await ctrl.exportInterventions(undefined);
+    expect(sessions.exportInterventions).toHaveBeenCalledWith([]);
+    await expect(ctrl.exportInterventionsCsv("private-engaging")).resolves.toBe("mode\n");
+    expect(sessions.exportInterventionsCsv).toHaveBeenCalledWith(["private-engaging"]);
+
+    await ctrl.exportSurveys(undefined);
+    expect(sessions.exportSurveys).toHaveBeenCalledWith([]);
+    await expect(ctrl.exportSurveysCsv(undefined)).resolves.toBe("kind\n");
+    expect(sessions.exportSurveysCsv).toHaveBeenCalledWith([]);
   });
 });
