@@ -68,3 +68,9 @@ rc_login:
   account:
     per_second: 5
     burst_count: 20
+
+# Participants register in bursts when a group forms; relax the default
+# (0.17/s, burst 3) so simultaneous joins don't hit M_LIMIT_EXCEEDED.
+rc_registration:
+  per_second: 5
+  burst_count: 30

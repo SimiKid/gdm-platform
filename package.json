@@ -5,6 +5,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
+    "test:cov": "pnpm -r test:cov",
     "dev": "pnpm -r --parallel dev"
   }
 }

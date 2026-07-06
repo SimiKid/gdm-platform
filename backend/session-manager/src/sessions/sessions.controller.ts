@@ -1,0 +1,129 @@
+import {
+  Body,
+  Controller,
+  Get,
+  Header,
+  Param,
+  Post,
+  Put,
+  Query,
+} from "@nestjs/common";
+import type {
+  ConditionProgress,
+  FinalizeSessionRequest,
+  OpenSessionRequest,
+  OpenSessionResponse,
+  Session,
+  SessionSummary,
+  SubmitSurveyRequest,
+  UpsertConditionRequest,
+} from "@gdm/shared";
+import { SessionsService } from "./sessions.service";
+import { StoreService } from "../store/store.service";
+
+@Controller()
+export class SessionsController {
+  constructor(
+    private readonly sessions: SessionsService,
+    private readonly store: StoreService,
+  ) {}
+
+  @Post("sessions")
+  openSession(@Body() body: OpenSessionRequest): Promise<OpenSessionResponse> {
+    return this.sessions.openSession(body);
+  }
+
+  /** Admin/debug: list all sessions. */
+  @Get("sessions")
+  listSessions(): Promise<SessionSummary[]> {
+    return this.sessions.listSessions();
+  }
+
+  /** Waiting Room polls this for the live count and the roomId once ready. */
+  @Get("sessions/:id")
+  getSession(@Param("id") id: string): Promise<Session> {
+    return this.sessions.getSession(id);
+  }
+
+  @Post("surveys")
+  async submitSurvey(@Body() body: SubmitSurveyRequest): Promise<{ ok: true }> {
+    await this.sessions.submitSurvey(body);
+    return { ok: true };
+  }
+
+  /** Mark the discussion finished (called when the timer runs out). */
+  @Post("sessions/:id/complete")
+  complete(@Param("id") id: string): Promise<Session> {
+    return this.sessions.completeSession(id);
+  }
+
+  /** Chat Service hands back the collected discussion at session end. */
+  @Post("sessions/:id/finalize")
+  finalize(
+    @Param("id") id: string,
+    @Body() body: FinalizeSessionRequest,
+  ): Promise<Session> {
+    return this.sessions.finalizeSession(
+      id,
+      body.messages,
+      body.rankingHistory,
+      body.interventions ?? [],
+    );
+  }
+
+  /** Admin: list editable study conditions. */
+  @Get("conditions")
+  conditions() {
+    return this.store.listConditions();
+  }
+
+  /** Admin: per-condition progress (how many done vs. goal). */
+  @Get("conditions/progress")
+  async progress(): Promise<ConditionProgress[]> {
+    const conditions = await this.store.listConditions();
+    return Promise.all(
+      conditions.map(async (condition) => ({
+        condition,
+        completed: await this.store.completedCount(condition.id),
+        goal: condition.goal,
+      })),
+    );
+  }
+
+  /** Admin: update a condition in the current store. */
+  @Put("conditions/:id")
+  upsertCondition(
+    @Param("id") id: string,
+    @Body() body: UpsertConditionRequest,
+  ) {
+    return this.store.upsertCondition({ ...body.condition, id });
+  }
+
+  /** Admin/debug: newest interventions across all sessions. */
+  @Get("interventions")
+  interventions() {
+    return this.sessions.listInterventions();
+  }
+
+  /** JSON export for currently persisted research sessions. */
+  @Get("export/sessions")
+  exportSessions(@Query("conditionIds") conditionIds?: string) {
+    return this.sessions.exportBundle(parseConditionIds(conditionIds));
+  }
+
+  /** CSV summary export for currently persisted research sessions. */
+  @Get("export/sessions.csv")
+  @Header("Content-Type", "text/csv; charset=utf-8")
+  exportSessionsCsv(@Query("conditionIds") conditionIds?: string): Promise<string> {
+    return this.sessions.exportCsv(parseConditionIds(conditionIds));
+  }
+}
+
+function parseConditionIds(conditionIds?: string): string[] {
+  return conditionIds
+    ? conditionIds
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean)
+    : [];
+}

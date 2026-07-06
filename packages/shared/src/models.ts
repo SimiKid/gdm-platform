@@ -1,17 +1,23 @@
+import type { InterventionConfig, InterventionLog } from "./interventions.js";
+
 /**
  * Domain models for the GDM Study Platform.
  *
- * These mirror the entities in the architecture sketch (Session, Chat,
- * Nachricht/Message, Participant) and are the shared contract between the
- * backend services and the frontends. Persistence shape (columns, relations)
- * is owned by the Session Manager's repository layer; these are the
- * transport/domain types everyone codes against.
+ * These mirror the entities in the architecture sketch and wireframe
+ * (Session, Chat, Message, Participant, Condition, the Expedition-Mars
+ * ranking task) and are the shared contract between the backend services
+ * and the frontends. Persistence shape (columns, relations) is owned by the
+ * Session Manager's repository layer; these are the transport/domain types
+ * everyone codes against.
  */
 
-/** A named survey answer set (entry or exit questionnaire). */
+/** A named survey answer set (in-app entry or exit questionnaire). */
 export interface Survey {
-  /** Question id -> answer. Kept generic until the instruments are fixed. */
-  answers: Record<string, string | number | boolean>;
+  /**
+   * Question id -> answer. Kept generic until the instruments are fixed.
+   * `string[]` carries the individual Expedition-Mars ranking (ordered ids).
+   */
+  answers: Record<string, string | number | boolean | string[]>;
   submittedAt: string; // ISO 8601
 }
 
@@ -19,6 +25,8 @@ export interface Survey {
 export interface Participant {
   id: string;
   name: string;
+  /** Per-participant tracking URL token (the "individual URL" in the wireframe). */
+  trackingToken: string;
   entrySurvey?: Survey;
   exitSurvey?: Survey;
 }
@@ -32,8 +40,11 @@ export interface Reaction {
 
 /**
  * A single chat message (sketch: "Nachricht").
- * recipientId is set only for private messages (e.g. a private bot nudge);
- * omit / null for messages sent to the whole group room.
+ *
+ * Participants CANNOT private-message each other (wireframe: "No private
+ * messages"). recipientId is therefore bot-only: set when the *bot* sends a
+ * private nudge visible to a single participant; omit / null for normal
+ * messages sent to the whole group room.
  */
 export interface Message {
   id: string;
@@ -49,16 +60,68 @@ export interface Chat {
   messages: Message[];
 }
 
+/** Static briefing shown alongside the chat (wireframe: "Briefing" panel). */
+export interface Briefing {
+  title: string;
+  /** Rendered as HTML in the chat room. */
+  html: string;
+}
+
+/** One rankable item in the Expedition-Mars exercise. */
+export interface RankingItem {
+  id: string;
+  label: string;
+}
+
 /**
- * An experimental condition assigned to a session. The concrete knobs
- * (bot behavior, nudge rules, resources shown) are filled in as the study
- * design firms up; id + name are the stable contract for now.
+ * The Expedition-Mars task: the fixed set of items the group ranks.
+ * (Replaces the earlier "shared Etherpad" resource idea.)
+ */
+export interface RankingTask {
+  id: string;
+  title: string;
+  items: RankingItem[];
+}
+
+/**
+ * The group's live shared ranking — a single ordered list of item ids that
+ * every participant can edit, synced in real time to the others over Matrix.
+ * `order[0]` is rank #1.
+ */
+export interface Ranking {
+  taskId: string;
+  order: string[]; // RankingItem ids, best-to-worst
+  updatedAt: string; // ISO 8601
+  updatedBy: string; // participant/bot id of the last editor
+}
+
+/** A poll, initialized by the bot (wireframe: "Polls initialized by bot"). */
+export interface Poll {
+  id: string;
+  question: string;
+  options: string[];
+  /** option index -> voter ids. */
+  votes: Record<number, string[]>;
+  closed: boolean;
+}
+
+/**
+ * An experimental condition (wireframe: Settings — Condition 1/2/3 with an
+ * Active toggle, a Goal, discussion time and group size).
  */
 export interface Condition {
   id: string;
   name: string;
-  /** Opaque, condition-specific configuration consumed by the bot. */
-  config: Record<string, unknown>;
+  /** Whether the Waiting Room may still assign this condition. */
+  active: boolean;
+  /** Target number of completed sessions before auto-off. */
+  goal: number;
+  /** Discussion time budget for the chat room. */
+  durationMinutes: number;
+  /** Required participants per session ("# People"). */
+  groupSize: number;
+  /** Condition-specific knobs consumed by the bot. */
+  config: InterventionConfig & Record<string, unknown>;
 }
 
 /** Which nudge behavior the bot runs for a session. */
@@ -68,11 +131,16 @@ export interface BotConfig {
   condition: Condition;
 }
 
-export type SessionStatus = "open" | "running" | "completed" | "aborted";
+export type SessionStatus =
+  | "waiting" // in the waiting room, gathering participants
+  | "running" // chat room live
+  | "completed"
+  | "aborted";
 
 /**
  * A single run of a group decision-making session (sketch: "Session").
- * Owns its participants, the chat log, the assigned condition and bot config.
+ * Owns its participants, the chat log, the assigned condition, the shared
+ * ranking and bot config.
  */
 export interface Session {
   id: string;
@@ -81,8 +149,20 @@ export interface Session {
   bot: BotConfig;
   participants: Participant[];
   chat: Chat;
+  briefing: Briefing;
+  rankingTask: RankingTask;
+  /** The group's current shared ranking (evolves live during the session). */
+  ranking: Ranking;
+  /** Every shared-ranking state during the session, oldest → newest. */
+  rankingHistory?: Ranking[];
+  /** Bot interventions emitted during the live session. */
+  interventions: InterventionLog[];
+  polls: Poll[];
+  /** Copied from the condition at assignment time; drives the chat timer. */
+  durationMinutes: number;
   /** Matrix room id backing this session, once provisioned. */
   roomId?: string;
   createdAt: string; // ISO 8601
+  startedAt?: string; // ISO 8601 — chat room opened; timer start
   completedAt?: string; // ISO 8601
 }

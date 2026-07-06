@@ -2,20 +2,18 @@ services:
   # ── Matrix Synapse ────────────────────────────────────
   synapse:
     image: matrixdotorg/synapse:latest
-    container_name: gdm-synapse
     restart: unless-stopped
     volumes:
       - synapse-data:/data
       - ./synapse/homeserver.yaml:/data/homeserver.yaml:ro
       - ./synapse/log.config:/data/log.config:ro
-      # STUB: uncomment when the bot appservice lands (pair with the
-      # app_service_config_files entry in homeserver.yaml).
+      # STUB: uncomment when the bot appservice lands
       # - ./appservice/registration.yaml:/data/appservice-registration.yaml:ro
     environment:
       UID: "0"
       GID: "0"
     ports:
-      - "8008:8008"
+      - "${SYNAPSE_HTTP_PORT:-8008}:8008"
     depends_on:
       synapse-db:
         condition: service_healthy
@@ -28,7 +26,6 @@ services:
   # ── Synapse PostgreSQL ────────────────────────────────
   synapse-db:
     image: postgres:16-alpine
-    container_name: gdm-synapse-db
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${SYNAPSE_DB_NAME}
@@ -43,19 +40,93 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── Research PostgreSQL ──────────────────────────────
+  research-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${RESEARCH_DB_NAME}
+      POSTGRES_USER: ${RESEARCH_DB_USER}
+      POSTGRES_PASSWORD: ${RESEARCH_DB_PASSWORD}
+    ports:
+      - "5433:5432"
+    volumes:
+      - research-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${RESEARCH_DB_USER} -d ${RESEARCH_DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Session Manager ───────────────────────────────────
+  session-manager:
+    build:
+      context: ..
+      dockerfile: backend/session-manager/Dockerfile
+    restart: unless-stopped
+    environment:
+      PORT: "3001"
+      MATRIX_INTERNAL_URL: http://synapse:8008
+      MATRIX_PUBLIC_URL: ${MATRIX_PUBLIC_URL:-http://localhost:3000}
+      CHAT_SERVICE_URL: http://chat-service:3002
+      DATABASE_URL: postgresql://${RESEARCH_DB_USER}:${RESEARCH_DB_PASSWORD}@research-db:5432/${RESEARCH_DB_NAME}?schema=public
+    ports:
+      - "3001:3001"
+    depends_on:
+      synapse:
+        condition: service_healthy
+      research-db:
+        condition: service_healthy
+
+  # ── Chat Service / Bot Runtime ────────────────────────
+  chat-service:
+    build:
+      context: ..
+      dockerfile: backend/chat-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      PORT: "3002"
+      MATRIX_INTERNAL_URL: http://synapse:8008
+      SESSION_MANAGER_URL: http://session-manager:3001/api
+    ports:
+      - "3002:3002"
+    depends_on:
+      synapse:
+        condition: service_healthy
+
   # ── Participant Frontend ──────────────────────────────
   participant:
     build:
       context: ..
       dockerfile: frontend/participant/Dockerfile
-    container_name: gdm-participant
+      args:
+        VITE_MATRIX_HOMESERVER: /
+        VITE_SESSION_MANAGER_URL: /api
     restart: unless-stopped
     ports:
       - "3000:80"
     depends_on:
       synapse:
         condition: service_healthy
+      session-manager:
+        condition: service_started
+
+  # ── Researcher Admin Dashboard ────────────────────────
+  admin-dashboard:
+    build:
+      context: ..
+      dockerfile: frontend/admin-dashboard/Dockerfile
+      args:
+        VITE_SESSION_MANAGER_URL: /api
+        VITE_PARTICIPANT_URL: http://localhost:3000
+    restart: unless-stopped
+    ports:
+      - "3003:80"
+    depends_on:
+      session-manager:
+        condition: service_started
 
 volumes:
   synapse-data:
   synapse-db-data:
+  research-db-data:
