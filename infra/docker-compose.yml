@@ -1,3 +1,8 @@
+## Base stack — no host port mappings here.
+## Dev ports live in docker-compose.override.yml (picked up automatically);
+## production runs `docker compose -f docker-compose.yml -f docker-compose.prod.yml`
+## and exposes only the Caddy reverse proxy on 80/443.
+
 services:
   # ── Matrix Synapse ────────────────────────────────────
   synapse:
@@ -12,8 +17,6 @@ services:
     environment:
       UID: "0"
       GID: "0"
-    ports:
-      - "${SYNAPSE_HTTP_PORT:-8008}:8008"
     depends_on:
       synapse-db:
         condition: service_healthy
@@ -48,8 +51,6 @@ services:
       POSTGRES_DB: ${RESEARCH_DB_NAME}
       POSTGRES_USER: ${RESEARCH_DB_USER}
       POSTGRES_PASSWORD: ${RESEARCH_DB_PASSWORD}
-    ports:
-      - "5433:5432"
     volumes:
       - research-db-data:/var/lib/postgresql/data
     healthcheck:
@@ -74,13 +75,17 @@ services:
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
       WAITING_TIMEOUT_MINUTES: ${WAITING_TIMEOUT_MINUTES:-30}
-    ports:
-      - "3001:3001"
     depends_on:
       synapse:
         condition: service_healthy
       research-db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   # ── Chat Service / Bot Runtime ────────────────────────
   chat-service:
@@ -94,11 +99,15 @@ services:
       MATRIX_INTERNAL_URL: http://synapse:8008
       SESSION_MANAGER_URL: http://session-manager:3001/api
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
-    ports:
-      - "3002:3002"
     depends_on:
       synapse:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3002/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   # ── Participant Frontend ──────────────────────────────
   participant:
@@ -109,13 +118,11 @@ services:
         VITE_MATRIX_HOMESERVER: /
         VITE_SESSION_MANAGER_URL: /api
     restart: unless-stopped
-    ports:
-      - "3000:80"
     depends_on:
       synapse:
         condition: service_healthy
       session-manager:
-        condition: service_started
+        condition: service_healthy
 
   # ── Researcher Admin Dashboard ────────────────────────
   admin-dashboard:
@@ -128,11 +135,9 @@ services:
         # recruiting link in the dashboard.
         VITE_PARTICIPANT_URL: ${PARTICIPANT_PUBLIC_URL:-http://localhost:3000}
     restart: unless-stopped
-    ports:
-      - "3003:80"
     depends_on:
       session-manager:
-        condition: service_started
+        condition: service_healthy
 
 volumes:
   synapse-data:

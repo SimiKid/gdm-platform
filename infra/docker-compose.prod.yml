@@ -1,0 +1,47 @@
+## Production overlay for gdmproject.ifi.uzh.ch.
+##
+##   docker compose --env-file .env \
+##     -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+##
+## Only Caddy is publicly exposed (80/443, auto-TLS via Let's Encrypt).
+## The admin dashboard binds to localhost only — researchers reach it via
+## an SSH tunnel: ssh -L 3003:localhost:3003 deployer@gdmproject.ifi.uzh.ch
+##
+## Before first start: render the Synapse config (sh render-homeserver.sh) —
+## server_name is immutable once Synapse has started.
+
+services:
+  # ── Reverse Proxy / TLS termination ───────────────────
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:?set PUBLIC_HOST in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      participant:
+        condition: service_started
+      session-manager:
+        condition: service_healthy
+
+  # ── Synapse: use the rendered production config ───────
+  # (same target path as the dev mount in docker-compose.yml → replaces it)
+  synapse:
+    volumes:
+      - ./synapse/homeserver.prod.yaml:/data/homeserver.yaml:ro
+
+  # ── Admin dashboard: SSH-tunnel access only ───────────
+  admin-dashboard:
+    ports:
+      - "127.0.0.1:3003:80"
+
+volumes:
+  caddy-data:
+  caddy-config:

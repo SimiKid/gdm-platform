@@ -1,0 +1,30 @@
+# Public entry point for the study platform. TLS certificates come from
+# Let's Encrypt automatically (requires ports 80+443 reachable from the
+# internet). PUBLIC_HOST and ACME_EMAIL are injected via docker-compose.prod.yml.
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$PUBLIC_HOST} {
+	# Participant accounts are registered server-side by the Session Manager
+	# over the internal Docker network — Matrix registration must never be
+	# reachable from the internet (homeserver.yaml keeps it enabled).
+	@register path_regexp ^/_matrix/client/[^/]+/register
+	respond @register 403
+
+	handle /_matrix/* {
+		reverse_proxy synapse:8008
+	}
+
+	handle /api/* {
+		reverse_proxy session-manager:3001
+	}
+
+	# Everything else is the participant SPA (its nginx serves the static
+	# build). The admin dashboard is intentionally NOT routed here — it is
+	# only reachable via SSH tunnel (see docker-compose.prod.yml).
+	handle {
+		reverse_proxy participant:80
+	}
+}
