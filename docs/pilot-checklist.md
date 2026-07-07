@@ -1,44 +1,41 @@
 # Pilot Checklist
 
-Use this checklist for local pilot runs before the final Mars task
-specification is available. The Docker stack includes a dedicated research
-Postgres database, so pilot data survives backend restarts unless the Docker
-volume is removed.
+Step-by-step verification for local pilot runs. For setup instructions see [getting-started.md](getting-started.md). For intervention logic details see [bot-rulebook.md](bot-rulebook.md).
 
 ## 1. Start Fresh
 
 ```bash
 cd infra
-docker compose down -v
-docker compose up --build
+sh stop.sh --volumes
+sh start.sh
 ```
 
-Open the admin dashboard:
-
-```text
-http://localhost:3003
-```
+Open the admin dashboard at http://localhost:3003.
 
 Confirm:
 
-- all four conditions are visible
+- all five conditions are visible (baseline + 4 intervention arms)
 - desired pilot condition is active
-- group size is small enough for the run, usually `3`
-- protected start/end and score/rate windows are set as intended
+- group size is set appropriately (default `3`)
 - `research-db` is healthy in `docker compose ps`
 
-## 2. Create A Forced-Condition Group
+## 2. Create a Forced-Condition Group
 
-Use the pilot links in the admin dashboard, or open participant links manually:
+For auto-assigned conditions, open the generic study link in 3 tabs:
 
-```text
-http://localhost:3000/?p=pilot-public-neutral-1&conditionId=public-neutral
-http://localhost:3000/?p=pilot-public-neutral-2&conditionId=public-neutral
-http://localhost:3000/?p=pilot-public-neutral-3&conditionId=public-neutral
+```
+http://localhost:3000/
 ```
 
-Repeat with:
+To force a specific condition, use a pilot link from the admin dashboard or manually:
 
+```
+http://localhost:3000/?conditionId=public-neutral
+```
+
+Open in 3 tabs (one per participant). Repeat for each condition:
+
+- `baseline`
 - `public-neutral`
 - `public-engaging`
 - `private-neutral`
@@ -46,52 +43,59 @@ Repeat with:
 
 ## 3. Verify Participant Flow
 
-For each participant:
+For each participant tab:
 
-- tracking token is removed from the browser URL
-- entry survey completes
-- waiting room count increments
-- chat opens once the group is full
-- shared ranking edits sync across participants
-- reactions sync across participants
-- timer ends the discussion and opens the exit survey
-- exit survey can submit
+- [ ] Tracking token is removed from the browser URL
+- [ ] Consent page accepts and advances
+- [ ] About You questionnaire completes
+- [ ] Individual Moon Survival ranking completes (10-min timer)
+- [ ] Group Intro page advances to waiting room
+- [ ] Waiting room count increments
+- [ ] Chat opens once the group is full
+- [ ] Shared ranking edits sync across participants
+- [ ] Reactions sync across participants
+- [ ] Timer ends the discussion and opens the exit survey
+- [ ] Exit survey can submit
+- [ ] Debriefing page shows study explanation and compensation link
 
 ## 4. Trigger Bot Behavior
 
-For intervention conditions:
+To trigger an intervention:
 
-- have one participant send several longer messages
-- keep at least one participant quiet
-- wait until outside the protected start window
-- confirm the bot message appears
+- Have one participant send several longer messages
+- Keep at least one participant quiet
+- Wait until outside the protected start window (default: 3 minutes)
+- Confirm the bot message appears
 
-Expected behavior:
+Expected behavior per condition:
 
-- public neutral: group sees participation split
-- public engaging: group sees split plus top-contributor prompt
-- private neutral: only dominating participant sees split
-- private engaging: only dominating participant sees split plus prompt
+| Condition | What to verify |
+|---|---|
+| `baseline` | No bot messages appear at all |
+| `public-neutral` | Whole group sees participation split |
+| `public-engaging` | Whole group sees split + top-contributor prompt naming quiet members |
+| `private-neutral` | Only dominant participant sees the split |
+| `private-engaging` | Only dominant participant sees split + prompt |
 
 ## 5. Verify Admin Data
 
 In the admin dashboard:
 
-- sessions list updates after refresh
-- selected session detail contains participants, surveys, messages, ranking data, and interventions
-- intervention audit shows mode, targets, quiet members, contribution split, and message text
-- JSON export opens
-- CSV export opens
-- exports still contain the session after restarting only `session-manager`
+- [ ] Sessions list updates after refresh
+- [ ] Session detail contains participants, surveys, messages, ranking data, and interventions
+- [ ] Intervention audit shows mode, targets, quiet members, contribution split, and message text
+- [ ] JSON export downloads
+- [ ] CSV export downloads
+- [ ] Data survives a `session-manager` container restart (without `--volumes`)
 
 ## 6. Capture Issues
 
-Record:
+Record any of the following:
 
-- unexpected bot timing
-- confusing wording
-- wrong public/private visibility
-- contribution split that does not match the conversation
+- Unexpected bot timing or repeated interventions
+- Confusing intervention wording
+- Wrong public/private visibility
+- Contribution split that does not match the conversation
 - Matrix sync delays
-- participant flow blockers
-- admin/export gaps
+- Participant flow blockers
+- Admin dashboard or export gaps
