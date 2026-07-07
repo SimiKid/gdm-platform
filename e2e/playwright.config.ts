@@ -16,7 +16,9 @@ export default defineConfig({
   retries: 0,
   timeout: 300_000,
   expect: { timeout: 15_000 },
-  reporter: [["list"]],
+  // printSteps: each test.step() prints as it passes, so a run shows WHAT
+  // was verified, not just one green line at the end.
+  reporter: [["list", { printSteps: true }]],
   use: {
     baseURL: process.env.E2E_PARTICIPANT_URL ?? "http://localhost:3000",
     trace: "retain-on-failure",

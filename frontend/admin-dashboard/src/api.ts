@@ -42,6 +42,15 @@ export function apiFetch(path: string, init: RequestInit = {}): Promise<Response
 }
 
 /**
+ * Conditions created by the automated E2E suite (unique `e2e-…` id per run).
+ * They are test residue, not study arms — the UI groups them separately and
+ * flags them when active (an active test arm would recruit real participants).
+ */
+export function isTestCondition(conditionId: string): boolean {
+  return conditionId.startsWith("e2e-");
+}
+
+/**
  * Download links can't carry headers, so exports accept the token as a query
  * parameter instead.
  */

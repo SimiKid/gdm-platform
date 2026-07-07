@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Condition, ConditionProgress, StudySettings } from "@gdm/shared";
-import { apiFetch } from "../api";
+import { apiFetch, isTestCondition } from "../api";
 
 interface Props {
   rows: ConditionProgress[];
@@ -98,6 +98,10 @@ function CompensationCard() {
 }
 
 function ConditionsCard({ rows, onSaved }: Props) {
+  const studyRows = rows.filter((row) => !isTestCondition(row.condition.id));
+  const testRows = rows.filter((row) => isTestCondition(row.condition.id));
+  const activeTestCount = testRows.filter((row) => row.condition.active).length;
+
   return (
     <section className="section">
       <h2>Conditions</h2>
@@ -106,27 +110,57 @@ function ConditionsCard({ rows, onSaved }: Props) {
         when you switch it off. Changes apply to newly formed sessions —
         already running ones keep their settings.
       </p>
-      <div className="table-wrap" aria-label="Condition settings">
-        <table>
-          <thead>
-            <tr>
-              <th>Condition</th>
-              <th>Active</th>
-              <th>Goal</th>
-              <th>Discussion time (min)</th>
-              <th># People</th>
-              <th>Progress</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <ConditionRow key={row.condition.id} row={row} onSaved={onSaved} />
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <ConditionsTable rows={studyRows} onSaved={onSaved} />
+
+      {testRows.length > 0 && (
+        <details className="test-conditions" open={activeTestCount > 0}>
+          <summary>
+            Test conditions from E2E runs ({testRows.length})
+            {activeTestCount > 0 && (
+              <strong className="bad">
+                {" "}
+                — {activeTestCount} still active! Switch off, or real
+                participants can be matched into a test session.
+              </strong>
+            )}
+          </summary>
+          <p className="hint">
+            Each automated end-to-end run creates its own throwaway arm
+            (baseline, 1-minute discussion) and switches it off afterwards.
+            These are kept for inspecting the test data and are safe to ignore
+            — as long as they stay off.
+          </p>
+          <ConditionsTable rows={testRows} onSaved={onSaved} />
+        </details>
+      )}
     </section>
+  );
+}
+
+function ConditionsTable({ rows, onSaved }: Props) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="table-wrap" aria-label="Condition settings">
+      <table>
+        <thead>
+          <tr>
+            <th>Condition</th>
+            <th>Bot mode</th>
+            <th>Active</th>
+            <th>Goal</th>
+            <th>Discussion time (min)</th>
+            <th># People</th>
+            <th>Progress</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <ConditionRow key={row.condition.id} row={row} onSaved={onSaved} />
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -178,6 +212,11 @@ function ConditionRow({ row, onSaved }: { row: ConditionProgress; onSaved: () =>
       <td>
         <strong>{draft.name}</strong>
         <span className="muted">{draft.id}</span>
+      </td>
+      <td>
+        {/* Read-only: which nudge behavior the bot runs (baseline = none).
+            Tuning stays backend-only by design. */}
+        <span className="bot-mode">{draft.config.interventionMode}</span>
       </td>
       <td>
         <label className="switch">

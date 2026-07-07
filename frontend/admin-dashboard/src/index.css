@@ -448,3 +448,27 @@ tbody tr:last-child td {
   color: #65758c;
   padding: 12px 0;
 }
+
+/* Collapsed group for E2E test-run conditions (Settings + tracking). */
+.test-conditions {
+  margin-top: 14px;
+  padding-top: 4px;
+  border-top: 1px dashed #d4dbe6;
+}
+
+.test-conditions summary strong.bad {
+  display: inline;
+  font-size: inherit;
+  margin-top: 0;
+}
+
+/* Read-only bot-mode tag in the conditions table (baseline = no nudges). */
+.bot-mode {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: #45566e;
+  font-size: 0.76rem;
+  white-space: nowrap;
+}

@@ -5,7 +5,7 @@ import type {
   SessionStatus,
   SessionSummary,
 } from "@gdm/shared";
-import { PARTICIPANT_BASE, apiFetch, exportUrl } from "../api";
+import { PARTICIPANT_BASE, apiFetch, exportUrl, isTestCondition } from "../api";
 
 /** Researcher-facing wording for backend session states (wireframe: lobby/active). */
 const STATUS_LABEL: Record<SessionStatus, string> = {
@@ -28,14 +28,23 @@ interface Props {
 }
 
 export default function Overview({ rows, sessions }: Props) {
+  // Test residue (E2E arms) stays out of the study numbers and lists below.
+  const studyRows = useMemo(
+    () => rows.filter((row) => !isTestCondition(row.condition.id)),
+    [rows],
+  );
+  const testRows = useMemo(
+    () => rows.filter((row) => isTestCondition(row.condition.id)),
+    [rows],
+  );
   const liveCount = sessions.filter((s) => s.status === "running").length;
   const lobbyCount = sessions.filter((s) => s.status === "waiting").length;
   const totals = useMemo(
     () => ({
-      completed: rows.reduce((sum, row) => sum + row.completed, 0),
-      goal: rows.reduce((sum, row) => sum + row.goal, 0),
+      completed: studyRows.reduce((sum, row) => sum + row.completed, 0),
+      goal: studyRows.reduce((sum, row) => sum + row.goal, 0),
     }),
-    [rows],
+    [studyRows],
   );
 
   return (
@@ -52,11 +61,11 @@ export default function Overview({ rows, sessions }: Props) {
       </section>
 
       <div className="two-col">
-        <StudyLinkCard rows={rows} />
-        <ExportCard rows={rows} />
+        <StudyLinkCard rows={studyRows} />
+        <ExportCard rows={studyRows} />
       </div>
 
-      <ConditionTracking rows={rows} />
+      <ConditionTracking rows={studyRows} testRows={testRows} />
       <SessionsTable sessions={sessions} />
     </>
   );
@@ -197,33 +206,62 @@ function ExportCard({ rows }: { rows: ConditionProgress[] }) {
 }
 
 /** "# Completed per condition" — the wireframe's tracking block. */
-function ConditionTracking({ rows }: { rows: ConditionProgress[] }) {
+function ConditionTracking({
+  rows,
+  testRows,
+}: {
+  rows: ConditionProgress[];
+  testRows: ConditionProgress[];
+}) {
+  const activeTestCount = testRows.filter((row) => row.condition.active).length;
   return (
     <section className="section">
       <h2>Completed per Condition</h2>
       <div className="tracking">
-        {rows.map((row) => {
-          const pct =
-            row.goal > 0 ? Math.min(100, (row.completed / row.goal) * 100) : 0;
-          const remaining = Math.max(0, row.goal - row.completed);
-          return (
-            <div key={row.condition.id} className="tracking-row">
-              <span className="tracking-name">
-                {row.condition.name}
-                {!row.condition.active && <em className="off"> (off)</em>}
-              </span>
-              <div className="bar">
-                <span style={{ width: `${pct}%` }} />
-              </div>
-              <span className="tracking-count">
-                {row.completed} / {row.goal}
-                <span className="muted">{remaining} remaining</span>
-              </span>
-            </div>
-          );
-        })}
+        {rows.map((row) => (
+          <TrackingRow key={row.condition.id} row={row} />
+        ))}
       </div>
+      {testRows.length > 0 && (
+        <details className="test-conditions" open={activeTestCount > 0}>
+          <summary>
+            Test conditions from E2E runs ({testRows.length})
+            {activeTestCount > 0 && (
+              <strong className="bad">
+                {" "}
+                — {activeTestCount} still active! Switch off in Settings.
+              </strong>
+            )}
+          </summary>
+          <div className="tracking">
+            {testRows.map((row) => (
+              <TrackingRow key={row.condition.id} row={row} />
+            ))}
+          </div>
+        </details>
+      )}
     </section>
+  );
+}
+
+function TrackingRow({ row }: { row: ConditionProgress }) {
+  const pct =
+    row.goal > 0 ? Math.min(100, (row.completed / row.goal) * 100) : 0;
+  const remaining = Math.max(0, row.goal - row.completed);
+  return (
+    <div className="tracking-row">
+      <span className="tracking-name">
+        {row.condition.name}
+        {!row.condition.active && <em className="off"> (off)</em>}
+      </span>
+      <div className="bar">
+        <span style={{ width: `${pct}%` }} />
+      </div>
+      <span className="tracking-count">
+        {row.completed} / {row.goal}
+        <span className="muted">{remaining} remaining</span>
+      </span>
+    </div>
   );
 }
 
@@ -306,6 +344,7 @@ function SessionDetail({ session }: { session: Session }) {
     <div className="session-detail">
       <div className="detail">
         <Fact label="Condition" value={session.condition.name} />
+        <Fact label="Bot mode" value={session.condition.config.interventionMode} />
         <Fact
           label="Participants"
           value={
