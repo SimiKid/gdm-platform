@@ -27,6 +27,12 @@ export class SessionsService {
     process.env.SESSION_MANAGER_URL ?? "http://localhost:3001/api";
   /** roomId -> live runtime. */
   private readonly runtimes = new Map<string, SessionRuntime>();
+  /**
+   * roomId -> tail of the rule-evaluation chain. Rules await network calls
+   * mid-evaluation, so events must be processed one at a time per room or
+   * the intervention-window bookkeeping races (double nudges on a burst).
+   */
+  private readonly ruleChains = new Map<string, Promise<void>>();
 
   constructor(
     private readonly bot: MatrixBotService,
@@ -104,8 +110,14 @@ export class SessionsService {
       }
     }
 
-    // Hand off to the (teammate-implemented) rules.
-    void this.rules.onEvent(runtime, event);
+    // Hand off to the (teammate-implemented) rules, serialized per room.
+    const chain = this.ruleChains.get(event.roomId) ?? Promise.resolve();
+    this.ruleChains.set(
+      event.roomId,
+      chain
+        .then(() => this.rules.onEvent(runtime, event))
+        .catch((err) => this.log.error(`rules failed: ${String(err)}`)),
+    );
   }
 
   /** Finalise: send the collected discussion back to the Session Manager. */
@@ -134,5 +146,6 @@ export class SessionsService {
       this.log.error(`finalize failed: ${String(err)}`);
     }
     this.runtimes.delete(roomId);
+    this.ruleChains.delete(roomId);
   }
 }

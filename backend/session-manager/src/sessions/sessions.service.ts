@@ -33,6 +33,13 @@ export class SessionsService {
   private readonly chatServiceUrl =
     process.env.CHAT_SERVICE_URL ?? "http://localhost:3002";
 
+  /**
+   * Joins must not interleave: find-or-create of the forming session races
+   * otherwise, and simultaneous joiners each open their own group that then
+   * never fills. In-process serialization suffices for a single instance.
+   */
+  private openChain: Promise<unknown> = Promise.resolve();
+
   constructor(
     private readonly store: StoreService,
     private readonly matrix: MatrixService,
@@ -43,7 +50,13 @@ export class SessionsService {
    * their Matrix user, and — once the group is full — provision the room and
    * flip the session to "running".
    */
-  async openSession(req: OpenSessionRequest): Promise<OpenSessionResponse> {
+  openSession(req: OpenSessionRequest): Promise<OpenSessionResponse> {
+    const run = this.openChain.then(() => this.doOpenSession(req));
+    this.openChain = run.catch(() => undefined); // a failed join must not jam the queue
+    return run;
+  }
+
+  private async doOpenSession(req: OpenSessionRequest): Promise<OpenSessionResponse> {
     let session =
       (await this.findForming(req.conditionId)) ??
       (await this.store.createForming(await this.assignCondition(req.conditionId)));

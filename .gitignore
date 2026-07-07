@@ -13,3 +13,7 @@ infra/data/
 
 # Claude Code local context
 .claude/
+
+# Playwright artifacts
+e2e/test-results/
+e2e/playwright-report/
