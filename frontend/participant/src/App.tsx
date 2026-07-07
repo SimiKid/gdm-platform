@@ -3,7 +3,6 @@ import Recruiting from "./components/Recruiting";
 import Survey from "./components/Survey";
 import WaitingRoom from "./components/WaitingRoom";
 import ExitSurvey from "./components/ExitSurvey";
-import Login from "./components/Login";
 import Chat from "./components/Chat";
 import DebriefingPage from "./components/DebriefingPage";
 import { createClient, ClientEvent } from "matrix-js-sdk";
@@ -20,8 +19,6 @@ const HOMESERVER =
 /**
  * The participant journey from the wireframe:
  *   recruiting → survey → waiting → chat → (exit survey)
- * `devlogin` is the developer fast-path (username/password), separate from the
- * real study flow which is driven by the individual tracking link.
  */
 type Stage =
   | "recruiting"
@@ -29,8 +26,7 @@ type Stage =
   | "waiting"
   | "chat"
   | "exit"
-  | "done"
-  | "devlogin";
+  | "done";
 
 /** Start a Matrix client from stored credentials and wait for the first sync. */
 async function startMatrixClient(matrix: {
@@ -212,12 +208,8 @@ export default function App() {
             setConditionId(forcedConditionId);
             setStage("survey");
           }}
-          onDevLogin={() => setStage("devlogin")}
         />
       );
-
-    case "devlogin":
-      return <Login onLogin={setClient} />;
 
     case "survey":
       return (
