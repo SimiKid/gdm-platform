@@ -37,8 +37,16 @@ export default function Overview({ rows, sessions }: Props) {
     () => rows.filter((row) => isTestCondition(row.condition.id)),
     [rows],
   );
-  const liveCount = sessions.filter((s) => s.status === "running").length;
-  const lobbyCount = sessions.filter((s) => s.status === "waiting").length;
+  const studySessions = useMemo(
+    () => sessions.filter((s) => !isTestCondition(s.conditionId)),
+    [sessions],
+  );
+  const testSessions = useMemo(
+    () => sessions.filter((s) => isTestCondition(s.conditionId)),
+    [sessions],
+  );
+  const liveCount = studySessions.filter((s) => s.status === "running").length;
+  const lobbyCount = studySessions.filter((s) => s.status === "waiting").length;
   const totals = useMemo(
     () => ({
       completed: studyRows.reduce((sum, row) => sum + row.completed, 0),
@@ -57,7 +65,7 @@ export default function Overview({ rows, sessions }: Props) {
           live={liveCount > 0}
         />
         <Metric label="In lobby" value={String(lobbyCount)} />
-        <Metric label="Sessions total" value={String(sessions.length)} />
+        <Metric label="Sessions total" value={String(studySessions.length)} />
       </section>
 
       <div className="two-col">
@@ -66,7 +74,7 @@ export default function Overview({ rows, sessions }: Props) {
       </div>
 
       <ConditionTracking rows={studyRows} testRows={testRows} />
-      <SessionsTable sessions={sessions} />
+      <SessionsTable sessions={studySessions} testSessions={testSessions} />
     </>
   );
 }
@@ -265,7 +273,13 @@ function TrackingRow({ row }: { row: ConditionProgress }) {
   );
 }
 
-function SessionsTable({ sessions }: { sessions: SessionSummary[] }) {
+function SessionsTable({
+  sessions,
+  testSessions,
+}: {
+  sessions: SessionSummary[];
+  testSessions: SessionSummary[];
+}) {
   const [detail, setDetail] = useState<Session | null>(null);
 
   // Keep an open detail in sync with the dashboard poll (e.g. message counts
@@ -287,54 +301,95 @@ function SessionsTable({ sessions }: { sessions: SessionSummary[] }) {
     if (res.ok) setDetail((await res.json()) as Session);
   }
 
+  const activeTestCount = testSessions.filter(
+    (s) => s.status === "running" || s.status === "waiting",
+  ).length;
+
   return (
     <section className="section">
       <h2>Sessions</h2>
       {sessions.length === 0 && <p className="empty">No sessions yet.</p>}
       {sessions.length > 0 && (
-        <div className="table-wrap compact" aria-label="Sessions">
-          <table>
-            <thead>
-              <tr>
-                <th>Session</th>
-                <th>Condition</th>
-                <th>Status</th>
-                <th>People</th>
-                <th>Started</th>
-                <th>Completed</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sessions.map((session) => (
-                <tr
-                  key={session.id}
-                  className={
-                    detail?.id === session.id ? "clickable selected" : "clickable"
-                  }
-                  onClick={() => void open(session.id)}
-                >
-                  <td>
-                    <strong>{session.id.slice(0, 8)}</strong>
-                  </td>
-                  <td>{session.conditionName}</td>
-                  <td>
-                    <span className={`status ${session.status}`}>
-                      {STATUS_LABEL[session.status]}
-                    </span>
-                  </td>
-                  <td>
-                    {session.participantCount} / {session.groupSize}
-                  </td>
-                  <td>{formatTime(session.startedAt)}</td>
-                  <td>{formatTime(session.completedAt)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <SessionRows
+          sessions={sessions}
+          selectedId={detail?.id}
+          onOpen={open}
+          label="Sessions"
+        />
+      )}
+      {testSessions.length > 0 && (
+        <details className="test-conditions" open={activeTestCount > 0}>
+          <summary>
+            Sessions from E2E runs ({testSessions.length})
+            {activeTestCount > 0 && (
+              <strong className="bad"> — {activeTestCount} still open!</strong>
+            )}
+          </summary>
+          <SessionRows
+            sessions={testSessions}
+            selectedId={detail?.id}
+            onOpen={open}
+            label="E2E sessions"
+          />
+        </details>
       )}
       {detail && <SessionDetail session={detail} />}
     </section>
+  );
+}
+
+function SessionRows({
+  sessions,
+  selectedId,
+  onOpen,
+  label,
+}: {
+  sessions: SessionSummary[];
+  selectedId?: string;
+  onOpen: (id: string) => Promise<void>;
+  label: string;
+}) {
+  return (
+    <div className="table-wrap compact" aria-label={label}>
+      <table>
+        <thead>
+          <tr>
+            <th>Session</th>
+            <th>Condition</th>
+            <th>Status</th>
+            <th>People</th>
+            <th>Started</th>
+            <th>Completed</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sessions.map((session) => (
+            <tr
+              key={session.id}
+              className={
+                selectedId === session.id ? "clickable selected" : "clickable"
+              }
+              onClick={() => void onOpen(session.id)}
+            >
+              <td>
+                <strong>{session.id.slice(0, 8)}</strong>
+              </td>
+              <td>{session.conditionName}</td>
+              <td>
+                <span className={`status ${session.status}`}>
+                  {STATUS_LABEL[session.status]}
+                </span>
+              </td>
+              <td>
+                {session.participantCount} / {session.groupSize}
+              </td>
+              <td>{formatTime(session.startedAt)}</td>
+              <td>{formatTime(session.completedAt)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
