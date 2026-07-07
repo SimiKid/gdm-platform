@@ -14,6 +14,7 @@ import type {
   OpenSessionRequest,
   OpenSessionResponse,
   Participant,
+  PublicSession,
   Ranking,
   Session,
   SessionSummary,
@@ -32,6 +33,14 @@ export class SessionsService {
   /** Chat Service that runs the live session (bot rules). */
   private readonly chatServiceUrl =
     process.env.CHAT_SERVICE_URL ?? "http://localhost:3002";
+  /**
+   * Waiting sessions older than this are considered abandoned (no-shows) and
+   * are aborted so they stop counting against the condition goal. Participants
+   * still actively polling an aborted session rejoin automatically.
+   */
+  private readonly waitingTimeoutMinutes = Number(
+    process.env.WAITING_TIMEOUT_MINUTES ?? 30,
+  );
 
   /**
    * Joins must not interleave: find-or-create of the forming session races
@@ -57,7 +66,14 @@ export class SessionsService {
   }
 
   private async doOpenSession(req: OpenSessionRequest): Promise<OpenSessionResponse> {
-    let session =
+    await this.abortStaleWaiting();
+
+    // A token that already holds a seat gets that seat back (browser refresh,
+    // duplicate tab) instead of claiming a second slot and ghosting the first.
+    const existing = await this.findByTrackingToken(req.trackingToken);
+    if (existing) return this.rejoinResponse(existing.session, existing.participant);
+
+    const session =
       (await this.findForming(req.conditionId)) ??
       (await this.store.createForming(await this.assignCondition(req.conditionId)));
 
@@ -82,7 +98,69 @@ export class SessionsService {
     );
 
     return {
-      session,
+      session: toPublicSession(session),
+      participantId: participant.id,
+      matrix: {
+        homeserverUrl: this.publicUrl,
+        userId: creds.userId,
+        accessToken: creds.accessToken,
+        roomId: session.roomId ?? "",
+      },
+    };
+  }
+
+  /** Mark abandoned waiting groups aborted so they free their condition slot. */
+  private async abortStaleWaiting(): Promise<void> {
+    const cutoff = Date.now() - this.waitingTimeoutMinutes * 60_000;
+    const stale = (await this.store.allSessions()).filter(
+      (s) =>
+        s.status === "waiting" && new Date(s.createdAt).getTime() < cutoff,
+    );
+    for (const session of stale) {
+      session.status = "aborted";
+      await this.store.saveSession(session);
+      this.log.log(
+        `aborted stale waiting session ${session.id} ` +
+          `(${session.participants.length}/${session.condition.groupSize} after ${this.waitingTimeoutMinutes}min)`,
+      );
+    }
+  }
+
+  /** The non-aborted session already holding this tracking token, if any. */
+  private async findByTrackingToken(
+    token: string,
+  ): Promise<{ session: Session; participant: Participant } | undefined> {
+    if (!token) return undefined;
+    for (const session of await this.store.allSessions()) {
+      if (session.status === "aborted") continue;
+      const participant = session.participants.find(
+        (p) => p.trackingToken === token,
+      );
+      if (participant) return { session, participant };
+    }
+    return undefined;
+  }
+
+  /** Hand a returning participant their existing seat and credentials. */
+  private async rejoinResponse(
+    session: Session,
+    participant: Participant,
+  ): Promise<OpenSessionResponse> {
+    let creds = await this.store.getParticipantCreds(participant.id);
+    if (!creds) {
+      // Creds lost (should not happen) — issue fresh ones so they can rejoin.
+      creds = await this.matrix.registerUser("gdm");
+      await this.store.setParticipantCreds(participant.id, creds);
+      if (session.roomId) {
+        await this.matrix.invite(session.roomId, creds.userId);
+        await this.matrix.joinRoom(creds.accessToken, session.roomId);
+      }
+    }
+    this.log.log(
+      `openSession: rejoin ${participant.id} -> session ${session.id} (${session.status})`,
+    );
+    return {
+      session: toPublicSession(session),
       participantId: participant.id,
       matrix: {
         homeserverUrl: this.publicUrl,
@@ -97,6 +175,14 @@ export class SessionsService {
     const session = await this.store.getSession(id);
     if (!session) throw new NotFoundException(`Unknown session ${id}`);
     return session;
+  }
+
+  /**
+   * The participant-facing view of a session (polled by the Waiting Room):
+   * no tracking tokens, no survey answers.
+   */
+  async getPublicSession(id: string): Promise<PublicSession> {
+    return toPublicSession(await this.getSession(id));
   }
 
   async listSessions(): Promise<SessionSummary[]> {
@@ -408,15 +494,21 @@ export class SessionsService {
   }
 
   private async findForming(conditionId?: string): Promise<Session | undefined> {
-    const forming = await this.store.findForming();
-    if (!conditionId || forming?.condition.id === conditionId) return forming;
+    // session.condition is a snapshot; check the researcher's CURRENT active
+    // flag so a deactivated arm stops recruiting even mid-formation.
+    const activeIds = new Set(
+      (await this.store.listConditions())
+        .filter((c) => c.active)
+        .map((c) => c.id),
+    );
     return (await this.store
       .allSessions())
       .filter(
         (session) =>
           session.status === "waiting" &&
-          session.condition.id === conditionId &&
-          session.participants.length < session.condition.groupSize,
+          activeIds.has(session.condition.id) &&
+          session.participants.length < session.condition.groupSize &&
+          (!conditionId || session.condition.id === conditionId),
       )
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
   }
@@ -425,17 +517,39 @@ export class SessionsService {
     const roomId = await this.matrix.createRoom(
       `GDM ${session.condition.name} · ${session.id.slice(0, 8)}`,
     );
+    // Rooms are invite-only: with open registration on the homeserver, a
+    // public_chat preset would let anyone with the room id join a live study.
     for (const p of session.participants) {
       const creds = await this.store.getParticipantCreds(p.id);
-      if (creds) await this.matrix.joinRoom(creds.accessToken, roomId);
+      if (!creds) continue;
+      await this.matrix.invite(roomId, creds.userId);
+      await this.matrix.joinRoom(creds.accessToken, roomId);
     }
+    // Invite the Chat Service bot so it can join when it takes the session
+    // over (best-effort — the chat still works client-side without the bot).
+    const botUserId = await this.fetchBotUserId();
+    if (botUserId) await this.matrix.invite(roomId, botUserId);
+
     session.roomId = roomId;
     session.status = "running";
     session.startedAt = new Date().toISOString();
     this.log.log(`provisioned room ${roomId} for session ${session.id}`);
-    // Hand the live session to the Chat Service (best-effort — the chat still
-    // works client-side if the Chat Service isn't running).
     void this.notifyChatService(session);
+  }
+
+  /** Ask the Chat Service which Matrix user its bot runs as. */
+  private async fetchBotUserId(): Promise<string | undefined> {
+    try {
+      const res = await fetch(`${this.chatServiceUrl}/internal/bot`, {
+        headers: internalHeaders(),
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const data = (await res.json()) as { userId?: string };
+      return data.userId || undefined;
+    } catch (err) {
+      this.log.warn(`could not resolve bot user (chat service down?): ${String(err)}`);
+      return undefined;
+    }
   }
 
   private async notifyChatService(session: Session): Promise<void> {
@@ -448,13 +562,30 @@ export class SessionsService {
     try {
       await fetch(`${this.chatServiceUrl}/internal/sessions/start`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: internalHeaders(),
         body: JSON.stringify(payload),
       });
     } catch (err) {
       this.log.warn(`chat service notify failed (is it running?): ${String(err)}`);
     }
   }
+}
+
+/** Headers for service-to-service calls (shared INTERNAL_API_TOKEN, if set). */
+function internalHeaders(): Record<string, string> {
+  const token = process.env.INTERNAL_API_TOKEN;
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { "x-internal-token": token } : {}),
+  };
+}
+
+/** Strip per-participant secrets before a session leaves the participant API. */
+function toPublicSession(session: Session): PublicSession {
+  return {
+    ...session,
+    participants: session.participants.map((p) => ({ id: p.id, name: p.name })),
+  };
 }
 
 function toSummary(session: Session): SessionSummary {
@@ -480,6 +611,9 @@ function toCsv(rows: string[][]): string {
 }
 
 function csvCell(value: string): string {
-  if (!/[",\n]/.test(value)) return value;
-  return `"${value.replaceAll('"', '""')}"`;
+  // Guard against spreadsheet formula injection: participant-authored text
+  // starting with = + - @ would execute when the CSV is opened in Excel.
+  const guarded = /^[=+\-@]/.test(value) ? `'${value}` : value;
+  if (!/[",\n]/.test(guarded)) return guarded;
+  return `"${guarded.replaceAll('"', '""')}"`;
 }

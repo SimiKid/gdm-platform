@@ -44,6 +44,10 @@ export class SessionsService {
   /** Take over a freshly-provisioned session. */
   async startSession(note: StartSessionNotification): Promise<void> {
     if (this.runtimes.has(note.roomId)) return;
+    // Join BEFORE registering the runtime: if the join fails, the dedupe
+    // guard above must not block the Session Manager's retry, or the session
+    // would be orphaned (no bot, no timer, never finalized).
+    await this.bot.join(note.roomId);
     const runtime = new SessionRuntime(
       note.sessionId,
       note.roomId,
@@ -52,7 +56,6 @@ export class SessionsService {
       this.bot,
     );
     this.runtimes.set(note.roomId, runtime);
-    await this.bot.join(note.roomId);
     this.log.log(
       `managing session ${note.sessionId} in ${note.roomId} (${note.condition.name})`,
     );
@@ -134,7 +137,7 @@ export class SessionsService {
         `${this.sessionManagerUrl}/sessions/${runtime.sessionId}/finalize`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: internalHeaders(),
           body: JSON.stringify({
             messages: runtime.messages,
             rankingHistory: runtime.rankingHistory,
@@ -148,4 +151,13 @@ export class SessionsService {
     this.runtimes.delete(roomId);
     this.ruleChains.delete(roomId);
   }
+}
+
+/** Headers for service-to-service calls (shared INTERNAL_API_TOKEN, if set). */
+function internalHeaders(): Record<string, string> {
+  const token = process.env.INTERNAL_API_TOKEN;
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { "x-internal-token": token } : {}),
+  };
 }

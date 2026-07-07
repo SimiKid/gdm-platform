@@ -9,8 +9,8 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 if [ ! -f .env ]; then
-  echo "Missing infra/.env." >&2
-  exit 1
+  echo "No infra/.env found — creating one from .env.example (dev defaults)."
+  cp .env.example .env
 fi
 
 echo "Stopping any existing GDM stack containers..."

@@ -13,10 +13,16 @@ function fakeMatrix(): MatrixService {
     }),
     createRoom: vi.fn(async () => "!room:localhost"),
     joinRoom: vi.fn(async () => undefined),
+    invite: vi.fn(async () => undefined),
   } as unknown as MatrixService;
 }
 
-const open = { trackingToken: "t", participantName: "" };
+/** Each caller is a distinct participant (unique per-participant token). */
+let tokenCounter = 0;
+function open() {
+  tokenCounter += 1;
+  return { trackingToken: `tt-${tokenCounter}`, participantName: "" };
+}
 
 describe("SessionsService (session-manager)", () => {
   let store: StoreService;
@@ -27,15 +33,21 @@ describe("SessionsService (session-manager)", () => {
     store = new StoreService();
     matrix = fakeMatrix();
     svc = new SessionsService(store, matrix);
-    // chat-service notify + any other network is stubbed.
+    // chat-service notify/bot-lookup + any other network is stubbed.
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => ({ ok: true, json: async () => ({}) })),
+      vi.fn(async (url: string) => ({
+        ok: true,
+        json: async () =>
+          String(url).includes("/internal/bot")
+            ? { userId: "@bot:localhost" }
+            : {},
+      })),
     );
   });
 
   it("openSession registers a Matrix user and assigns the least-completed condition", async () => {
-    const res = await svc.openSession(open);
+    const res = await svc.openSession(open());
     expect(res.session.condition.id).toBe("baseline");
     expect(res.participantId).toBeTruthy();
     expect(res.matrix.accessToken).toMatch(/^tok/);
@@ -45,16 +57,16 @@ describe("SessionsService (session-manager)", () => {
 
   it("openSession can force a condition for pilot testing", async () => {
     const res = await svc.openSession({
-      ...open,
+      ...open(),
       conditionId: "private-engaging",
     });
     expect(res.session.condition.id).toBe("private-engaging");
   });
 
   it("provisions the room once the group is full and notifies the chat service", async () => {
-    const a = await svc.openSession(open);
-    await svc.openSession(open);
-    const c = await svc.openSession(open);
+    const a = await svc.openSession(open());
+    await svc.openSession(open());
+    const c = await svc.openSession(open());
 
     expect(a.session.id).toBe(c.session.id); // filled the same forming session
     const session = await svc.getSession(a.session.id);
@@ -75,7 +87,7 @@ describe("SessionsService (session-manager)", () => {
       session.status = "completed";
       await store.saveSession(session);
     }
-    const res = await svc.openSession(open);
+    const res = await svc.openSession(open());
     expect(res.session.condition.id).toBe("public-neutral");
   });
 
@@ -87,7 +99,7 @@ describe("SessionsService (session-manager)", () => {
         await store.saveSession(session);
       }
     }
-    await expect(svc.openSession(open)).rejects.toThrow(/full/i);
+    await expect(svc.openSession(open())).rejects.toThrow(/full/i);
   });
 
   it("getSession throws NotFound for an unknown id", async () => {
@@ -95,7 +107,7 @@ describe("SessionsService (session-manager)", () => {
   });
 
   it("lists sessions and interventions for admin/debug views", async () => {
-    const res = await svc.openSession(open);
+    const res = await svc.openSession(open());
     const summaries = await svc.listSessions();
     expect(summaries[0]).toMatchObject({
       id: res.session.id,
@@ -131,7 +143,7 @@ describe("SessionsService (session-manager)", () => {
   });
 
   it("submitSurvey attaches entry and exit surveys to the participant", async () => {
-    const res = await svc.openSession(open);
+    const res = await svc.openSession(open());
     await svc.submitSurvey({
       sessionId: res.session.id,
       participantId: res.participantId,
@@ -145,7 +157,7 @@ describe("SessionsService (session-manager)", () => {
   });
 
   it("finalizeSession stores messages + ranking history and completes", async () => {
-    const res = await svc.openSession(open);
+    const res = await svc.openSession(open());
     const ranking: Ranking = {
       taskId: "expedition-mars",
       order: ["water", "oxygen"],
@@ -174,7 +186,7 @@ describe("SessionsService (session-manager)", () => {
   });
 
   it("completeSession is idempotent", async () => {
-    const res = await svc.openSession(open);
+    const res = await svc.openSession(open());
     const first = await svc.completeSession(res.session.id);
     expect(first.status).toBe("completed");
     const second = await svc.completeSession(res.session.id);
@@ -182,7 +194,7 @@ describe("SessionsService (session-manager)", () => {
   });
 
   it("exports sessions as JSON bundle and CSV summary", async () => {
-    await svc.openSession(open);
+    await svc.openSession(open());
     expect((await svc.exportBundle()).sessions).toHaveLength(1);
     expect((await svc.exportBundle(["private-neutral"])).sessions).toHaveLength(0);
 
@@ -192,7 +204,7 @@ describe("SessionsService (session-manager)", () => {
   });
 
   it("exports chat logs, nudge events, and surveys with condition filters", async () => {
-    const res = await svc.openSession(open);
+    const res = await svc.openSession(open());
     await svc.submitSurvey({
       sessionId: res.session.id,
       participantId: res.participantId,
@@ -269,5 +281,109 @@ describe("SessionsService (session-manager)", () => {
     const surveysCsv = await svc.exportSurveysCsv();
     expect(surveysCsv).toContain("participant_id,participant_name");
     expect(surveysCsv).toContain('""age"":30');
+  });
+
+  it("hands the same seat back when a tracking token rejoins (refresh/dup tab)", async () => {
+    const req = open();
+    const first = await svc.openSession(req);
+    const again = await svc.openSession(req);
+
+    expect(again.session.id).toBe(first.session.id);
+    expect(again.participantId).toBe(first.participantId);
+    expect(again.matrix.accessToken).toBe(first.matrix.accessToken);
+    // No second seat was claimed.
+    expect(again.session.participants).toHaveLength(1);
+    expect(matrix.registerUser).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejoin returns the provisioned room once the group is running", async () => {
+    const req = open();
+    const first = await svc.openSession(req);
+    await svc.openSession(open());
+    await svc.openSession(open());
+
+    const again = await svc.openSession(req);
+    expect(again.session.id).toBe(first.session.id);
+    expect(again.session.status).toBe("running");
+    expect(again.matrix.roomId).toBe("!room:localhost");
+  });
+
+  it("aborts stale waiting sessions so no-shows free their condition slot", async () => {
+    const ghost = await svc.openSession(open());
+    // Age the forming session past the waiting timeout.
+    const stale = await svc.getSession(ghost.session.id);
+    stale.createdAt = new Date(Date.now() - 31 * 60_000).toISOString();
+    await store.saveSession(stale);
+
+    const next = await svc.openSession(open());
+    expect((await svc.getSession(ghost.session.id)).status).toBe("aborted");
+    // The newcomer got a fresh session, not the stale one.
+    expect(next.session.id).not.toBe(ghost.session.id);
+    expect(next.session.participants).toHaveLength(1);
+  });
+
+  it("never exposes tracking tokens or surveys through participant responses", async () => {
+    const res = await svc.openSession(open());
+    await svc.submitSurvey({
+      sessionId: res.session.id,
+      participantId: res.participantId,
+      kind: "entry",
+      survey: { answers: { age: 30 }, submittedAt: "now" },
+    });
+
+    // Another participant joining sees the first one — sanitized.
+    const second = await svc.openSession(open());
+    for (const view of [
+      res.session,
+      second.session,
+      await svc.getPublicSession(res.session.id),
+    ]) {
+      expect(view.participants.length).toBeGreaterThan(0);
+      for (const p of view.participants) {
+        expect(p).not.toHaveProperty("trackingToken");
+        expect(p).not.toHaveProperty("entrySurvey");
+        expect(p).not.toHaveProperty("exitSurvey");
+      }
+    }
+  });
+
+  it("does not seat new joiners into a forming session of a deactivated condition", async () => {
+    const first = await svc.openSession(open());
+    expect(first.session.condition.id).toBe("baseline");
+
+    const baseline = (await store.listConditions()).find((c) => c.id === "baseline")!;
+    await store.upsertCondition({ ...baseline, active: false });
+
+    const next = await svc.openSession(open());
+    expect(next.session.id).not.toBe(first.session.id);
+    expect(next.session.condition.id).not.toBe("baseline");
+  });
+
+  it("invites participants and the bot into the invite-only room", async () => {
+    await svc.openSession(open());
+    await svc.openSession(open());
+    await svc.openSession(open());
+
+    // 3 participants + the chat-service bot.
+    expect(matrix.invite).toHaveBeenCalledTimes(4);
+    expect(matrix.invite).toHaveBeenCalledWith("!room:localhost", "@bot:localhost");
+  });
+
+  it("escapes spreadsheet formula prefixes in CSV exports", async () => {
+    const res = await svc.openSession(open());
+    await svc.finalizeSession(res.session.id, [
+      {
+        id: "m1",
+        timestamp: "now",
+        senderId: "u1",
+        recipientId: null,
+        text: "=HYPERLINK(\"http://evil\")",
+        reactions: [],
+      },
+    ], []);
+
+    const csv = await svc.exportMessagesCsv();
+    expect(csv).not.toContain(",\"=HYPERLINK");
+    expect(csv).toContain("'=HYPERLINK");
   });
 });

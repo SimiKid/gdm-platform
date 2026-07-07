@@ -25,6 +25,7 @@ export class FakeMatrixService {
   registered: MatrixCreds[] = [];
   createdRooms: string[] = [];
   joins: { accessToken: string; roomId: string }[] = [];
+  invites: { roomId: string; userId: string }[] = [];
 
   async registerUser(localpartHint: string): Promise<MatrixCreds> {
     const creds = {
@@ -39,6 +40,10 @@ export class FakeMatrixService {
     const roomId = `!room-${this.createdRooms.length + 1}:test`;
     this.createdRooms.push(roomId);
     return roomId;
+  }
+
+  async invite(roomId: string, userId: string): Promise<void> {
+    this.invites.push({ roomId, userId });
   }
 
   async joinRoom(accessToken: string, roomId: string): Promise<void> {
@@ -66,6 +71,12 @@ function installFetchRecorder(): void {
   fetchInstalled = true;
   globalThis.fetch = (async (input: unknown, init?: { body?: unknown }) => {
     const url = String(input);
+    if (url === `${CHAT_SERVICE_URL}/internal/bot`) {
+      return new Response(JSON.stringify({ userId: "@gdm_bot:test" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     if (url.startsWith(CHAT_SERVICE_URL)) {
       chatServiceCalls.push({
         url,

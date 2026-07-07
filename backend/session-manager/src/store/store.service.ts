@@ -516,6 +516,11 @@ function seedConditions(): Condition[] {
 function normalizeCondition(condition: Condition): Condition {
   return {
     ...condition,
+    // Admin input can arrive empty/NaN — clamp to values a session can run
+    // with (duration 0 would mean a countdown that never starts).
+    goal: clampInt(condition.goal, 0),
+    durationMinutes: clampInt(condition.durationMinutes, 1),
+    groupSize: clampInt(condition.groupSize, 2),
     config: {
       ...DEFAULT_INTERVENTION_CONFIG,
       ...condition.config,
@@ -528,6 +533,12 @@ function normalizeCondition(condition: Condition): Condition {
         DEFAULT_INTERVENTION_CONFIG.contributionWindowMinutes,
     },
   };
+}
+
+/** Round to an integer and enforce a lower bound (NaN → the bound). */
+function clampInt(value: number, min: number): number {
+  const rounded = Math.round(value);
+  return Number.isFinite(rounded) ? Math.max(min, rounded) : min;
 }
 
 function conditionData(condition: Condition): Prisma.ConditionRecordCreateInput {

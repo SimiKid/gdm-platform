@@ -7,12 +7,14 @@ import {
   Post,
   Put,
   Query,
+  UseGuards,
 } from "@nestjs/common";
 import type {
   ConditionProgress,
   FinalizeSessionRequest,
   OpenSessionRequest,
   OpenSessionResponse,
+  PublicSession,
   Session,
   SessionSummary,
   StudySettings,
@@ -22,6 +24,8 @@ import type {
 } from "@gdm/shared";
 import { SessionsService } from "./sessions.service";
 import { StoreService } from "../store/store.service";
+import { AdminGuard } from "../auth/admin.guard";
+import { InternalGuard } from "../auth/internal.guard";
 
 @Controller()
 export class SessionsController {
@@ -35,15 +39,26 @@ export class SessionsController {
     return this.sessions.openSession(body);
   }
 
-  /** Admin/debug: list all sessions. */
+  /** Admin: list all sessions. */
   @Get("sessions")
+  @UseGuards(AdminGuard)
   listSessions(): Promise<SessionSummary[]> {
     return this.sessions.listSessions();
   }
 
-  /** Waiting Room polls this for the live count and the roomId once ready. */
+  /**
+   * Waiting Room polls this for the live count and the roomId once ready.
+   * Participant-facing: tracking tokens and survey answers are stripped.
+   */
   @Get("sessions/:id")
-  getSession(@Param("id") id: string): Promise<Session> {
+  getSession(@Param("id") id: string): Promise<PublicSession> {
+    return this.sessions.getPublicSession(id);
+  }
+
+  /** Admin: one session with full participant data (tokens, surveys). */
+  @Get("admin/sessions/:id")
+  @UseGuards(AdminGuard)
+  getSessionFull(@Param("id") id: string): Promise<Session> {
     return this.sessions.getSession(id);
   }
 
@@ -61,6 +76,7 @@ export class SessionsController {
 
   /** Chat Service hands back the collected discussion at session end. */
   @Post("sessions/:id/finalize")
+  @UseGuards(InternalGuard)
   finalize(
     @Param("id") id: string,
     @Body() body: FinalizeSessionRequest,
@@ -75,12 +91,14 @@ export class SessionsController {
 
   /** Admin: list editable study conditions. */
   @Get("conditions")
+  @UseGuards(AdminGuard)
   conditions() {
     return this.store.listConditions();
   }
 
   /** Admin: per-condition progress (how many done vs. goal). */
   @Get("conditions/progress")
+  @UseGuards(AdminGuard)
   async progress(): Promise<ConditionProgress[]> {
     const conditions = await this.store.listConditions();
     return Promise.all(
@@ -94,6 +112,7 @@ export class SessionsController {
 
   /** Admin: update a condition in the current store. */
   @Put("conditions/:id")
+  @UseGuards(AdminGuard)
   upsertCondition(
     @Param("id") id: string,
     @Body() body: UpsertConditionRequest,
@@ -109,6 +128,7 @@ export class SessionsController {
 
   /** Admin: update study-wide settings (e.g. the compensation link). */
   @Put("settings")
+  @UseGuards(AdminGuard)
   updateSettings(
     @Body() body: UpdateStudySettingsRequest,
   ): Promise<StudySettings> {
@@ -117,18 +137,21 @@ export class SessionsController {
 
   /** Admin/debug: newest interventions across all sessions. */
   @Get("interventions")
+  @UseGuards(AdminGuard)
   interventions() {
     return this.sessions.listInterventions();
   }
 
   /** JSON export for currently persisted research sessions. */
   @Get("export/sessions")
+  @UseGuards(AdminGuard)
   exportSessions(@Query("conditionIds") conditionIds?: string) {
     return this.sessions.exportBundle(parseConditionIds(conditionIds));
   }
 
   /** CSV summary export for currently persisted research sessions. */
   @Get("export/sessions.csv")
+  @UseGuards(AdminGuard)
   @Header("Content-Type", "text/csv; charset=utf-8")
   exportSessionsCsv(@Query("conditionIds") conditionIds?: string): Promise<string> {
     return this.sessions.exportCsv(parseConditionIds(conditionIds));
@@ -136,11 +159,13 @@ export class SessionsController {
 
   /** Chat logs export (one row per message). */
   @Get("export/messages")
+  @UseGuards(AdminGuard)
   exportMessages(@Query("conditionIds") conditionIds?: string) {
     return this.sessions.exportMessages(parseConditionIds(conditionIds));
   }
 
   @Get("export/messages.csv")
+  @UseGuards(AdminGuard)
   @Header("Content-Type", "text/csv; charset=utf-8")
   exportMessagesCsv(@Query("conditionIds") conditionIds?: string): Promise<string> {
     return this.sessions.exportMessagesCsv(parseConditionIds(conditionIds));
@@ -148,11 +173,13 @@ export class SessionsController {
 
   /** Bot nudge events export (one row per intervention). */
   @Get("export/interventions")
+  @UseGuards(AdminGuard)
   exportInterventions(@Query("conditionIds") conditionIds?: string) {
     return this.sessions.exportInterventions(parseConditionIds(conditionIds));
   }
 
   @Get("export/interventions.csv")
+  @UseGuards(AdminGuard)
   @Header("Content-Type", "text/csv; charset=utf-8")
   exportInterventionsCsv(
     @Query("conditionIds") conditionIds?: string,
@@ -162,11 +189,13 @@ export class SessionsController {
 
   /** Survey responses export (one row per participant and kind). */
   @Get("export/surveys")
+  @UseGuards(AdminGuard)
   exportSurveys(@Query("conditionIds") conditionIds?: string) {
     return this.sessions.exportSurveys(parseConditionIds(conditionIds));
   }
 
   @Get("export/surveys.csv")
+  @UseGuards(AdminGuard)
   @Header("Content-Type", "text/csv; charset=utf-8")
   exportSurveysCsv(@Query("conditionIds") conditionIds?: string): Promise<string> {
     return this.sessions.exportSurveysCsv(parseConditionIds(conditionIds));

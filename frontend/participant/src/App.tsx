@@ -8,7 +8,10 @@ import Chat from "./components/Chat";
 import DebriefingPage from "./components/DebriefingPage";
 import { createClient, ClientEvent } from "matrix-js-sdk";
 import type { MatrixClient } from "matrix-js-sdk";
-import type { Session, Survey as SurveyData } from "@gdm/shared";
+import type { PublicSession, Survey as SurveyData } from "@gdm/shared";
+import { httpSessionManager } from "./study/sessionClient";
+import { loadProgress, updateStage, TOKEN_STORAGE_KEY } from "./study/progress";
+import type { StudyProgress } from "./study/progress";
 import "./App.css";
 
 const HOMESERVER =
@@ -29,29 +32,111 @@ type Stage =
   | "done"
   | "devlogin";
 
+/** Start a Matrix client from stored credentials and wait for the first sync. */
+async function startMatrixClient(matrix: {
+  homeserverUrl: string;
+  userId: string;
+  accessToken: string;
+}): Promise<MatrixClient> {
+  const client = createClient({
+    baseUrl: matrix.homeserverUrl,
+    accessToken: matrix.accessToken,
+    userId: matrix.userId,
+  });
+  await client.startClient({ initialSyncLimit: 20 });
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("Sync timed out")), 15000);
+    client.once(ClientEvent.Sync, (state: string) => {
+      clearTimeout(timeout);
+      if (state === "PREPARED") resolve();
+      else reject(new Error(`Sync failed: ${state}`));
+    });
+  });
+  return client;
+}
+
 export default function App() {
   const [stage, setStage] = useState<Stage>("recruiting");
   const [trackingToken, setTrackingToken] = useState<string | null>(null);
   const [conditionId, setConditionId] = useState<string | undefined>();
   const [entrySurvey, setEntrySurvey] = useState<SurveyData | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSession] = useState<PublicSession | null>(null);
   const [participantId, setParticipantId] = useState("");
   const [client, setClient] = useState<MatrixClient | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [booting, setBooting] = useState(true);
 
-  // Dev fast-path: ?token=<matrix access token> jumps straight into chat,
-  // bypassing the study flow. Handy for testing the chat room in isolation.
+  // Boot order: dev fast-path (?token=), then resume a refreshed study tab
+  // from persisted progress, else start fresh at recruiting.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const token = params.get("token");
     if (token) {
-      loginWithToken(token);
-    } else {
-      setBooting(false);
+      void loginWithToken(token);
+      return;
     }
+    const progress = loadProgress();
+    if (progress) {
+      void resume(progress);
+      return;
+    }
+    setBooting(false);
   }, []);
 
+  /**
+   * A refresh must not restart the flow: the participant already holds a seat
+   * (and their group would wait for a ghost). Waiting resumes via openSession
+   * (the backend hands the same seat back for the same tracking token); chat
+   * and exit resume from the stored session + Matrix credentials.
+   */
+  async function resume(progress: StudyProgress) {
+    try {
+      switch (progress.stage) {
+        case "done":
+          setStage("done");
+          break;
+        case "waiting": {
+          // Re-enter the waiting room; WaitingRoom re-runs openSession and
+          // the backend hands back the seat this token already holds.
+          const token = sessionStorage.getItem(TOKEN_STORAGE_KEY);
+          if (token) {
+            setTrackingToken(token);
+            setStage("waiting");
+          } else {
+            setStage("recruiting");
+          }
+          break;
+        }
+        case "exit": {
+          const refreshed = await httpSessionManager.getSession(progress.sessionId);
+          setSession(refreshed);
+          setParticipantId(progress.participantId);
+          setStage("exit");
+          break;
+        }
+        case "chat": {
+          const refreshed = await httpSessionManager.getSession(progress.sessionId);
+          const matrixClient = await startMatrixClient(progress.matrix);
+          setSession(refreshed);
+          setParticipantId(progress.participantId);
+          setClient(matrixClient);
+          setStage("chat");
+          break;
+        }
+      }
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error
+          ? `Could not resume your session: ${err.message}`
+          : "Could not resume your session",
+      );
+    } finally {
+      setBooting(false);
+    }
+  }
+
+  // Dev fast-path: ?token=<matrix access token> jumps straight into chat,
+  // bypassing the study flow. Handy for testing the chat room in isolation.
   async function loginWithToken(token: string) {
     try {
       setBooting(true);
@@ -59,24 +144,10 @@ export default function App() {
 
       const tempClient = createClient({ baseUrl: HOMESERVER, accessToken: token });
       const whoami = await tempClient.whoami();
-
-      const matrixClient = createClient({
-        baseUrl: HOMESERVER,
+      const matrixClient = await startMatrixClient({
+        homeserverUrl: HOMESERVER,
         accessToken: token,
         userId: whoami.user_id,
-      });
-
-      await matrixClient.startClient({ initialSyncLimit: 20 });
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(
-          () => reject(new Error("Sync timed out")),
-          15000,
-        );
-        matrixClient.once(ClientEvent.Sync, (state: string) => {
-          clearTimeout(timeout);
-          if (state === "PREPARED") resolve();
-          else reject(new Error(`Sync failed: ${state}`));
-        });
       });
 
       const url = new URL(window.location.href);
@@ -106,6 +177,13 @@ export default function App() {
       <div className="loading-container">
         <p className="error">{error}</p>
         <p>Please check your study link or contact the researcher.</p>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => window.location.reload()}
+        >
+          Try again
+        </button>
       </div>
     );
   }
@@ -117,7 +195,10 @@ export default function App() {
       <Chat
         client={client}
         session={session}
-        onTimeUp={() => setStage("exit")}
+        onTimeUp={() => {
+          updateStage("exit");
+          setStage("exit");
+        }}
       />
     );
   }
@@ -159,6 +240,7 @@ export default function App() {
             setSession(readySession);
             setParticipantId(readyParticipantId);
             setClient(readyClient);
+            updateStage("chat");
             setStage("chat");
           }}
         />
@@ -170,7 +252,10 @@ export default function App() {
         <ExitSurvey
           session={session}
           participantId={participantId}
-          onDone={() => setStage("done")}
+          onDone={() => {
+            updateStage("done");
+            setStage("done");
+          }}
         />
       );
 

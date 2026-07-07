@@ -4,6 +4,7 @@ import { SessionsService } from "./sessions/sessions.service";
 import { MatrixBotService } from "./matrix/matrix-bot.service";
 import { ContributionBotRules } from "./rules/bot-rules";
 import { BOT_RULES } from "./rules/bot-rules.token";
+import { InternalGuard } from "./auth/internal.guard";
 
 @Module({
   controllers: [SessionsController],
@@ -11,6 +12,7 @@ import { BOT_RULES } from "./rules/bot-rules.token";
     SessionsService,
     MatrixBotService,
     { provide: BOT_RULES, useClass: ContributionBotRules },
+    InternalGuard,
   ],
 })
 export class AppModule {}

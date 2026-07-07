@@ -5,7 +5,7 @@ import type {
   SessionStatus,
   SessionSummary,
 } from "@gdm/shared";
-import { API_BASE, PARTICIPANT_BASE } from "../App";
+import { PARTICIPANT_BASE, apiFetch, exportUrl } from "../api";
 
 /** Researcher-facing wording for backend session states (wireframe: lobby/active). */
 const STATUS_LABEL: Record<SessionStatus, string> = {
@@ -173,7 +173,7 @@ function ExportCard({ rows }: { rows: ConditionProgress[] }) {
               <td>
                 <a
                   className="link-button"
-                  href={`${API_BASE}/export/${key}${query}`}
+                  href={exportUrl(`/export/${key}`, query)}
                   target="_blank"
                   rel="noreferrer"
                 >
@@ -181,7 +181,7 @@ function ExportCard({ rows }: { rows: ConditionProgress[] }) {
                 </a>
                 <a
                   className="link-button"
-                  href={`${API_BASE}/export/${key}.csv${query}`}
+                  href={exportUrl(`/export/${key}.csv`, query)}
                   target="_blank"
                   rel="noreferrer"
                 >
@@ -235,7 +235,7 @@ function SessionsTable({ sessions }: { sessions: SessionSummary[] }) {
   const detailId = detail?.id;
   useEffect(() => {
     if (!detailId) return;
-    void fetch(`${API_BASE}/sessions/${detailId}`).then(async (res) => {
+    void apiFetch(`/admin/sessions/${detailId}`).then(async (res) => {
       if (res.ok) setDetail((await res.json()) as Session);
     });
   }, [detailId, sessions]);
@@ -245,7 +245,7 @@ function SessionsTable({ sessions }: { sessions: SessionSummary[] }) {
       setDetail(null); // click again to close
       return;
     }
-    const res = await fetch(`${API_BASE}/sessions/${id}`);
+    const res = await apiFetch(`/admin/sessions/${id}`);
     if (res.ok) setDetail((await res.json()) as Session);
   }
 

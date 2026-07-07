@@ -1,7 +1,7 @@
 import type {
   OpenSessionRequest,
   OpenSessionResponse,
-  Session,
+  PublicSession,
   StudySettings,
   SubmitSurveyRequest,
 } from "@gdm/shared";
@@ -19,7 +19,7 @@ export interface SessionManagerClient {
   /** Assign a condition & session for a validated participant (Waiting Room). */
   openSession(req: OpenSessionRequest): Promise<OpenSessionResponse>;
   /** Poll a session for its live participant count and roomId once ready. */
-  getSession(id: string): Promise<Session>;
+  getSession(id: string): Promise<PublicSession>;
   /** Persist an entry/exit survey. */
   submitSurvey(req: SubmitSurveyRequest): Promise<void>;
   /** Mark the session completed when the discussion timer ends. */
@@ -49,7 +49,7 @@ export const httpSessionManager: SessionManagerClient = {
   async getSession(id) {
     const res = await fetch(`${API_BASE}/sessions/${id}`);
     if (!res.ok) throw new Error(`getSession failed: ${res.status}`);
-    return (await res.json()) as Session;
+    return (await res.json()) as PublicSession;
   },
   async submitSurvey(req) {
     const res = await fetch(`${API_BASE}/surveys`, {

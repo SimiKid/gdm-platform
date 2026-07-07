@@ -84,4 +84,35 @@ describe("ExitSurvey", () => {
     expect(body.survey.answers.fairness).toBe(5);
     expect(body.survey.answers.feltHeard).toBe(7);
   });
+
+  it("keeps the participant on a failed submit and retries successfully", async () => {
+    const fetchMock = fetch as ReturnType<typeof vi.fn>;
+    fetchMock.mockRejectedValueOnce(new Error("network down"));
+
+    const onDone = vi.fn();
+    render(<ExitSurvey session={session} participantId="p" onDone={onDone} />);
+
+    await rankAllItems();
+    for (const [group, rating] of [
+      [/satisfied are you with the group's final ranking/, "6"],
+      [/reached its decision fairly/, "5"],
+      [/views were heard/, "7"],
+    ] as const) {
+      await userEvent.click(
+        within(screen.getByRole("group", { name: group })).getByRole("radio", {
+          name: rating,
+        }),
+      );
+    }
+
+    await userEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    // Failed submit: the answers are NOT dropped and the flow does not end.
+    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn't submit/i);
+    expect(onDone).not.toHaveBeenCalled();
+
+    // Retry goes through (fetch is ok again) and finishes the flow.
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await vi.waitFor(() => expect(onDone).toHaveBeenCalled());
+  });
 });

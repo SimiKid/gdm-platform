@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Condition, ConditionProgress, StudySettings } from "@gdm/shared";
-import { API_BASE } from "../App";
+import { apiFetch } from "../api";
 
 interface Props {
   rows: ConditionProgress[];
@@ -34,7 +34,7 @@ function CompensationCard() {
   const [state, setState] = useState<SaveState>("idle");
 
   useEffect(() => {
-    void fetch(`${API_BASE}/settings`).then(async (res) => {
+    void apiFetch("/settings").then(async (res) => {
       if (!res.ok) return;
       const settings = (await res.json()) as StudySettings;
       setUrl(settings.compensationUrl);
@@ -46,7 +46,7 @@ function CompensationCard() {
   async function save() {
     setState("saving");
     try {
-      const res = await fetch(`${API_BASE}/settings`, {
+      const res = await apiFetch("/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ settings: { compensationUrl: url.trim() } }),
@@ -156,7 +156,7 @@ function ConditionRow({ row, onSaved }: { row: ConditionProgress; onSaved: () =>
   async function save() {
     setState("saving");
     try {
-      const res = await fetch(`${API_BASE}/conditions/${draft.id}`, {
+      const res = await apiFetch(`/conditions/${draft.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ condition: draft }),

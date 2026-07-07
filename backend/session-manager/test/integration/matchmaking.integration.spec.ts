@@ -63,13 +63,18 @@ describe("matchmaking & lifecycle (integration)", () => {
     expect(third.session.startedAt).toBeDefined();
     expect(third.matrix.roomId).toBe("!room-1:test");
 
-    // Provisioning: one room, every participant joined with their own token.
+    // Provisioning: one room, every participant invited + joined with their
+    // own token, plus an invite for the chat-service bot (invite-only room).
     expect(t.matrix.createdRooms).toEqual(["!room-1:test"]);
     expect(t.matrix.joins.map((j) => j.accessToken).sort()).toEqual([
       "token-1",
       "token-2",
       "token-3",
     ]);
+    expect(t.matrix.invites).toContainEqual({
+      roomId: "!room-1:test",
+      userId: "@gdm_bot:test",
+    });
 
     // The Chat Service was handed the live session.
     expect(t.chatServiceCalls).toHaveLength(1);
@@ -121,6 +126,37 @@ describe("matchmaking & lifecycle (integration)", () => {
     expect(sessionIds.size).toBe(1);
     expect(t.matrix.createdRooms).toHaveLength(1);
     expect(responses.some((r) => r.session.status === "running")).toBe(true);
+  });
+
+  it("hands the same seat back when a token rejoins (browser refresh)", async () => {
+    const first = await openSession(t, "Anna", "baseline");
+    const again = await openSession(t, "Anna", "baseline");
+
+    expect(again.session.id).toBe(first.session.id);
+    expect(again.participantId).toBe(first.participantId);
+    expect(again.matrix.accessToken).toBe(first.matrix.accessToken);
+    expect(again.session.participants).toHaveLength(1);
+  });
+
+  it("does not leak tracking tokens or surveys through participant endpoints", async () => {
+    const first = await openSession(t, "Anna", "baseline");
+    await request(t.http)
+      .post("/api/surveys")
+      .send({
+        sessionId: first.session.id,
+        participantId: first.participantId,
+        kind: "entry",
+        survey: { answers: { secret: "yes" }, submittedAt: "now" },
+      })
+      .expect(201);
+
+    const polled = await request(t.http)
+      .get(`/api/sessions/${first.session.id}`)
+      .expect(200);
+    const raw = JSON.stringify(polled.body);
+    expect(raw).not.toContain("tt-Anna");
+    expect(raw).not.toContain("secret");
+    expect(polled.body.participants).toHaveLength(1);
   });
 
   it("returns 404 for an unknown condition", async () => {

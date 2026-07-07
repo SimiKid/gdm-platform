@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { createClient, ClientEvent } from "matrix-js-sdk";
 import type { MatrixClient } from "matrix-js-sdk";
-import type { Session, Survey } from "@gdm/shared";
+import type { PublicSession, Survey } from "@gdm/shared";
 import { httpSessionManager } from "../study/sessionClient";
+import { saveProgress } from "../study/progress";
 import StudyShell from "./StudyShell";
 
 interface Props {
@@ -12,7 +13,7 @@ interface Props {
   /** Called with a synced Matrix client, the session, and our participant id. */
   onReady: (
     client: MatrixClient,
-    session: Session,
+    session: PublicSession,
     participantId: string,
   ) => void;
 }
@@ -24,6 +25,9 @@ interface Props {
  * a real Matrix client against local Synapse, and polls the session until the
  * Session Manager provisions the room (i.e. the group is full). Then it hands
  * the live client up to the chat room.
+ *
+ * openSession is idempotent per tracking token (the backend returns the seat
+ * the token already holds), so re-running after an error or refresh is safe.
  */
 export default function WaitingRoom({
   trackingToken,
@@ -34,9 +38,11 @@ export default function WaitingRoom({
   const [count, setCount] = useState(0);
   const [groupSize, setGroupSize] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // Bumping this re-runs the join flow (manual retry, aborted-session rejoin).
+  const [attempt, setAttempt] = useState(0);
 
-  // Run the join flow exactly once, even under StrictMode's double-invoke.
-  const didRun = useRef(false);
+  // Run one join flow per attempt, even under StrictMode's double-invoke.
+  const ranAttempt = useRef(-1);
   // `alive` is reset to true on (re)mount and set false only on real unmount,
   // so the single in-flight run survives StrictMode's mount→cleanup→mount.
   const alive = useRef(true);
@@ -47,8 +53,8 @@ export default function WaitingRoom({
 
   useEffect(() => {
     alive.current = true;
-    if (didRun.current) return;
-    didRun.current = true;
+    if (ranAttempt.current === attempt) return;
+    ranAttempt.current = attempt;
 
     async function run() {
       try {
@@ -61,6 +67,15 @@ export default function WaitingRoom({
 
         setCount(res.session.participants.length);
         setGroupSize(res.session.condition.groupSize);
+
+        // Survive a refresh: with the seat and credentials stored, F5 lands
+        // back here (or straight in the chat) instead of at recruiting.
+        saveProgress({
+          stage: "waiting",
+          sessionId: res.session.id,
+          participantId: res.participantId,
+          matrix: res.matrix,
+        });
 
         if (entrySurvey) {
           await httpSessionManager.submitSurvey({
@@ -77,16 +92,32 @@ export default function WaitingRoom({
           userId: res.matrix.userId,
         });
         await client.startClient({ initialSyncLimit: 20 });
-        await new Promise<void>((resolve) => {
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error("Could not connect to the chat server")),
+            15000,
+          );
           client.once(ClientEvent.Sync, (state: string) => {
+            clearTimeout(timeout);
             if (state === "PREPARED") resolve();
+            else reject(new Error(`Chat connection failed (${state})`));
           });
         });
         if (!alive.current) return;
 
+        const ready = (session: PublicSession) => {
+          saveProgress({
+            stage: "chat",
+            sessionId: session.id,
+            participantId: res.participantId,
+            matrix: { ...res.matrix, roomId: session.roomId ?? "" },
+          });
+          onReadyRef.current(client, session, res.participantId);
+        };
+
         // If our own join already completed the group, go straight in.
         if (res.matrix.roomId) {
-          onReadyRef.current(client, res.session, res.participantId);
+          ready(res.session);
           return;
         }
 
@@ -95,11 +126,18 @@ export default function WaitingRoom({
           try {
             const session = await httpSessionManager.getSession(res.session.id);
             if (!alive.current) return;
+            if (session.status === "aborted") {
+              // Our forming group timed out (no-shows). Rejoin a fresh one.
+              clearInterval(pollRef.current);
+              client.stopClient();
+              setAttempt((a) => a + 1);
+              return;
+            }
             setCount(session.participants.length);
             setGroupSize(session.condition.groupSize);
             if (session.roomId) {
               clearInterval(pollRef.current);
-              onReadyRef.current(client, session, res.participantId);
+              ready(session);
             }
           } catch {
             /* transient — keep polling */
@@ -116,7 +154,7 @@ export default function WaitingRoom({
       alive.current = false;
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [trackingToken, conditionId, entrySurvey]);
+  }, [attempt, trackingToken, conditionId, entrySurvey]);
 
   if (error) {
     return (
@@ -125,6 +163,18 @@ export default function WaitingRoom({
           <h1>Waiting room</h1>
           <p className="error">{error}</p>
           <p>The study may be full, or the servers aren't running.</p>
+          <div className="card-actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                setError(null);
+                setAttempt((a) => a + 1);
+              }}
+            >
+              Try again
+            </button>
+          </div>
         </div>
       </StudyShell>
     );

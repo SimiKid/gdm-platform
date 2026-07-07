@@ -10,9 +10,9 @@ export interface MatrixCreds {
  * is enabled in homeserver.yaml, so no admin token is needed for dev).
  *
  * Registers participant users, and uses a lazily-created "orchestrator"
- * service account to create study rooms. Participants are joined server-side
- * with their own tokens (public_chat preset), so their synced clients see the
- * room appear the moment the group is complete.
+ * service account to create study rooms. Rooms are invite-only; participants
+ * are invited and then joined server-side with their own tokens, so their
+ * synced clients see the room appear the moment the group is complete.
  */
 @Injectable()
 export class MatrixService {
@@ -52,7 +52,11 @@ export class MatrixService {
     return this.orchestrator;
   }
 
-  /** Create a study room and return its id. */
+  /**
+   * Create a study room and return its id. Invite-only (private_chat): with
+   * open registration on the homeserver, a joinable-by-id room would let
+   * outsiders enter a live study session.
+   */
   async createRoom(name: string): Promise<string> {
     const orch = await this.getOrchestrator();
     const res = await fetch(`${this.internalUrl}/_matrix/client/v3/createRoom`, {
@@ -61,13 +65,32 @@ export class MatrixService {
         "Content-Type": "application/json",
         Authorization: `Bearer ${orch.accessToken}`,
       },
-      body: JSON.stringify({ name, preset: "public_chat", visibility: "private" }),
+      body: JSON.stringify({ name, preset: "private_chat", visibility: "private" }),
     });
     if (!res.ok) {
       throw new Error(`createRoom failed (${res.status}): ${await res.text()}`);
     }
     const data = (await res.json()) as { room_id: string };
     return data.room_id;
+  }
+
+  /** Invite a user into a room (sent by the room-owning orchestrator). */
+  async invite(roomId: string, userId: string): Promise<void> {
+    const orch = await this.getOrchestrator();
+    const res = await fetch(
+      `${this.internalUrl}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/invite`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${orch.accessToken}`,
+        },
+        body: JSON.stringify({ user_id: userId }),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`invite failed (${res.status}): ${await res.text()}`);
+    }
   }
 
   /** Join a user (by their own token) into a room. */
