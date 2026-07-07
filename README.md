@@ -12,8 +12,9 @@ backend/session-manager/  Matchmaking, session state, conditions, surveys, expor
 backend/chat-service/     Bot runtime: Matrix sync, message recording, intervention rules (NestJS)
 frontend/participant/     Participant study flow: recruiting, survey, chat, exit survey (React)
 frontend/admin-dashboard/ Researcher dashboard for conditions and exports (React)
+e2e/                      Playwright end-to-end suite against the compose stack
 infra/                    Docker Compose stack, Synapse config, env, start/stop scripts
-docs/                     Architecture, bot rulebook, pilot checklist
+docs/                     Architecture, bot rulebook, testing, pilot checklist
 ```
 
 ## Quick Start
@@ -34,6 +35,7 @@ See [docs/getting-started.md](docs/getting-started.md) for prerequisites, ports,
 | [Getting Started](docs/getting-started.md) | Prerequisites, running locally, configuration, useful commands |
 | [Architecture](docs/architecture.md) | Services, data flow, session lifecycle, design decisions |
 | [Bot Rulebook](docs/bot-rulebook.md) | Intervention logic: 2x2 conditions + baseline, contribution scoring, thresholds, message templates |
+| [Testing](docs/testing.md) | Test strategy: unit / integration / e2e layers, how to run them, conventions |
 | [Pilot Checklist](docs/pilot-checklist.md) | Step-by-step verification for local pilot runs |
 
 ## Current Deferrals
