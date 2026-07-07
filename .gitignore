@@ -11,6 +11,9 @@ docs/architecture/workspace.json
 # Synapse/Postgres runtime data
 infra/data/
 
+# Rendered Synapse prod config (contains DB password; see render-homeserver.sh)
+infra/synapse/homeserver.prod.yaml
+
 # Claude Code local context
 .claude/
 

@@ -65,6 +65,7 @@ services:
       dockerfile: backend/session-manager/Dockerfile
     restart: unless-stopped
     environment:
+      GDM_ENV: ${GDM_ENV:-development}
       PORT: "3001"
       MATRIX_INTERNAL_URL: http://synapse:8008
       MATRIX_PUBLIC_URL: ${MATRIX_PUBLIC_URL:-http://localhost:3000}
@@ -88,6 +89,7 @@ services:
       dockerfile: backend/chat-service/Dockerfile
     restart: unless-stopped
     environment:
+      GDM_ENV: ${GDM_ENV:-development}
       PORT: "3002"
       MATRIX_INTERNAL_URL: http://synapse:8008
       SESSION_MANAGER_URL: http://session-manager:3001/api
@@ -122,7 +124,9 @@ services:
       dockerfile: frontend/admin-dashboard/Dockerfile
       args:
         VITE_SESSION_MANAGER_URL: /api
-        VITE_PARTICIPANT_URL: http://localhost:3000
+        # Absolute URL participants use to reach the study; shown as the
+        # recruiting link in the dashboard.
+        VITE_PARTICIPANT_URL: ${PARTICIPANT_PUBLIC_URL:-http://localhost:3000}
     restart: unless-stopped
     ports:
       - "3003:80"
