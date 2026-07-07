@@ -124,6 +124,10 @@ Notes:
   `ADMIN_API_TOKEN` is set (attached as `x-admin-token` to API calls and
   pre-seeded into the dashboard's localStorage). See the smoke-test section
   in [deployment.md](deployment.md) for the ready-made production command.
+- `--repeat-each=N --workers=W` turns one run into N sessions, W in
+  parallel — usable as a light load probe (client-bound: 3 Chromium
+  contexts per session). Safe to parallelise: each worker provisions its
+  own condition, so concurrent sessions never cross-match.
 
 ## Which Layer Does a New Test Belong In?
 

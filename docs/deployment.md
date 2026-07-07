@@ -89,6 +89,18 @@ The run provisions its own `e2e-…` condition (grouped as test residue in the
 dashboard, deactivated afterwards) and leaves its session data in the research
 DB — exclude `e2e-` conditions when exporting study data.
 
+For a light load probe before opening recruitment, repeat and parallelise the
+run — each worker provisions its own condition, so parallel sessions cannot
+cross-match:
+
+```bash
+E2E_… pnpm --dir e2e exec playwright test --repeat-each=10 --workers=5
+```
+
+This is bounded by the machine running the browsers (3 Chromium contexts per
+session), not the server — beyond ~5–10 parallel sessions you are measuring
+your laptop. Every run leaves one more test session in the research DB.
+
 ## Updating
 
 Merge to `main` → the workflow pushes fresh images → then, on the VM:
