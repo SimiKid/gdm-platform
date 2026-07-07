@@ -13,7 +13,7 @@ backend/chat-service/     Bot runtime: Matrix sync, message recording, intervent
 frontend/participant/     Participant study flow: recruiting, survey, chat, exit survey (React)
 frontend/admin-dashboard/ Researcher dashboard for conditions and exports (React)
 e2e/                      Playwright end-to-end suite against the compose stack
-infra/                    Docker Compose stack, Synapse config, env, start/stop scripts
+infra/                    Docker Compose stack (dev + prod), Synapse config, Caddyfile, deploy script
 docs/                     Architecture, bot rulebook, testing, pilot checklist
 ```
 

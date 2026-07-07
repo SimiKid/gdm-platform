@@ -2,6 +2,10 @@ import { expect, test, type APIRequestContext, type Page } from "@playwright/tes
 
 const API = process.env.E2E_SESSION_MANAGER_URL ?? "http://localhost:3001/api";
 const ADMIN = process.env.E2E_ADMIN_URL ?? "http://localhost:3003";
+// Required when the target stack sets ADMIN_API_TOKEN (production smoke test);
+// locally the guards are open and this stays empty.
+const ADMIN_TOKEN = process.env.E2E_ADMIN_TOKEN ?? "";
+const API_HEADERS = ADMIN_TOKEN ? { "x-admin-token": ADMIN_TOKEN } : undefined;
 
 /**
  * The test provisions its own condition so it never touches the study's real
@@ -33,6 +37,7 @@ test.afterAll(async ({ request }) => {
 
 async function upsertCondition(request: APIRequestContext, active: boolean) {
   const res = await request.put(`${API}/conditions/${CONDITION_ID}`, {
+    headers: API_HEADERS,
     data: {
       condition: {
         id: CONDITION_ID,
@@ -194,7 +199,9 @@ test("three participants run a full study session end to end", async ({
 
   let sessionId = "";
   await test.step("the research record is complete: session, chat log, ranking history, 3+3 surveys", async () => {
-    const sessions = (await (await request.get(`${API}/sessions`)).json()) as Array<{
+    const sessions = (await (
+      await request.get(`${API}/sessions`, { headers: API_HEADERS })
+    ).json()) as Array<{
       id: string;
       conditionId: string;
       status: string;
@@ -210,13 +217,15 @@ test("three participants run a full study session end to end", async ({
     sessionId = session!.id;
     await expect
       .poll(async () => {
-        const res = await request.get(`${API}/sessions/${sessionId}`);
+        const res = await request.get(`${API}/sessions/${sessionId}`, {
+          headers: API_HEADERS,
+        });
         return ((await res.json()) as { status: string }).status;
       })
       .toBe("completed");
 
     const detail = (await (
-      await request.get(`${API}/sessions/${sessionId}`)
+      await request.get(`${API}/sessions/${sessionId}`, { headers: API_HEADERS })
     ).json()) as {
       participants: unknown[];
       chat: { messages: { text: string }[] };
@@ -228,7 +237,9 @@ test("three participants run a full study session end to end", async ({
     expect(detail.rankingHistory?.length ?? 0).toBeGreaterThanOrEqual(1);
 
     const surveys = (await (
-      await request.get(`${API}/export/surveys?conditionIds=${CONDITION_ID}`)
+      await request.get(`${API}/export/surveys?conditionIds=${CONDITION_ID}`, {
+        headers: API_HEADERS,
+      })
     ).json()) as { surveys: { sessionId: string; kind: string }[] };
     const ours = surveys.surveys.filter((s) => s.sessionId === sessionId);
     expect(ours.filter((s) => s.kind === "entry")).toHaveLength(GROUP_SIZE);
@@ -236,7 +247,16 @@ test("three participants run a full study session end to end", async ({
   });
 
   await test.step("the researcher sees the session as completed in the dashboard", async () => {
-    const admin = await (await browser.newContext()).newPage();
+    const adminContext = await browser.newContext();
+    if (ADMIN_TOKEN) {
+      // Pre-seed the token the dashboard keeps in localStorage so the run
+      // lands on the session table instead of the token gate.
+      await adminContext.addInitScript(
+        (token) => localStorage.setItem("gdm-admin-token", token),
+        ADMIN_TOKEN,
+      );
+    }
+    const admin = await adminContext.newPage();
     await admin.goto(ADMIN);
     await expect(admin.getByRole("heading", { name: "Study Admin" })).toBeVisible();
     const row = admin.locator("tr", { hasText: sessionId.slice(0, 8) });

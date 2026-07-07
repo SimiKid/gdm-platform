@@ -118,6 +118,12 @@ Notes:
   `pnpm --filter @gdm/e2e exec playwright show-trace test-results/<run>/trace.zip`.
 - The e2e tests the images the stack is running — rebuild after backend
   changes (`docker compose up -d --build session-manager chat-service`).
+- The suite can target any deployed stack: `E2E_PARTICIPANT_URL`,
+  `E2E_SESSION_MANAGER_URL` and `E2E_ADMIN_URL` override the localhost
+  defaults, and `E2E_ADMIN_TOKEN` authenticates against a stack whose
+  `ADMIN_API_TOKEN` is set (attached as `x-admin-token` to API calls and
+  pre-seeded into the dashboard's localStorage). See the smoke-test section
+  in [deployment.md](deployment.md) for the ready-made production command.
 
 ## Which Layer Does a New Test Belong In?
 

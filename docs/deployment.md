@@ -71,6 +71,24 @@ VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (never public)
    Then open https://gdmproject.ifi.uzh.ch and run one manual session against
    the [pilot checklist](pilot-checklist.md).
 
+## Smoke test (e2e against production)
+
+The Playwright golden path can run against the live stack — after a deploy or
+before opening recruitment. With the SSH tunnel (below) open, from your
+machine:
+
+```bash
+E2E_PARTICIPANT_URL=https://gdmproject.ifi.uzh.ch \
+E2E_SESSION_MANAGER_URL=https://gdmproject.ifi.uzh.ch/api \
+E2E_ADMIN_URL=http://localhost:3003 \
+E2E_ADMIN_TOKEN=<ADMIN_API_TOKEN from the server .env> \
+pnpm --dir e2e exec playwright test
+```
+
+The run provisions its own `e2e-…` condition (grouped as test residue in the
+dashboard, deactivated afterwards) and leaves its session data in the research
+DB — exclude `e2e-` conditions when exporting study data.
+
 ## Updating
 
 Merge to `main` → the workflow pushes fresh images → then, on the VM:
