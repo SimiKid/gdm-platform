@@ -9,6 +9,10 @@
 ##
 ## Before first start: render the Synapse config (sh render-homeserver.sh) —
 ## server_name is immutable once Synapse has started.
+##
+## App images come from GHCR (built by .github/workflows/build-images.yml);
+## the VM never builds. deploy.sh runs `pull` + `up -d --no-build`.
+## IMAGE_TAG pins a build (git sha) for rollbacks; defaults to latest.
 
 services:
   # ── Reverse Proxy / TLS termination ───────────────────
@@ -37,8 +41,19 @@ services:
     volumes:
       - ./synapse/homeserver.prod.yaml:/data/homeserver.yaml:ro
 
+  # ── App services: pull prebuilt images from GHCR ──────
+  session-manager:
+    image: ${IMAGE_PREFIX:-ghcr.io/simikid/gdm-platform}/session-manager:${IMAGE_TAG:-latest}
+
+  chat-service:
+    image: ${IMAGE_PREFIX:-ghcr.io/simikid/gdm-platform}/chat-service:${IMAGE_TAG:-latest}
+
+  participant:
+    image: ${IMAGE_PREFIX:-ghcr.io/simikid/gdm-platform}/participant:${IMAGE_TAG:-latest}
+
   # ── Admin dashboard: SSH-tunnel access only ───────────
   admin-dashboard:
+    image: ${IMAGE_PREFIX:-ghcr.io/simikid/gdm-platform}/admin-dashboard:${IMAGE_TAG:-latest}
     ports:
       - "127.0.0.1:3003:80"
 
