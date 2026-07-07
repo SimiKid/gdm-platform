@@ -7,13 +7,16 @@
 }
 
 {$PUBLIC_HOST} {
-	# Participant accounts are registered server-side by the Session Manager
-	# over the internal Docker network — Matrix registration must never be
-	# reachable from the internet (homeserver.yaml keeps it enabled).
-	@register path_regexp ^/_matrix/client/[^/]+/register
-	respond @register 403
-
 	handle /_matrix/* {
+		# Participant accounts are registered server-side by the Session
+		# Manager over the internal Docker network — Matrix registration must
+		# never be reachable from the internet (homeserver.yaml keeps it
+		# enabled). The matcher must live INSIDE this handle block: a
+		# top-level respond sorts after handle in Caddy's directive order
+		# and would never run for /_matrix/* requests.
+		@register path_regexp ^/_matrix/client/[^/]+/register
+		respond @register 403
+
 		reverse_proxy synapse:8008
 	}
 

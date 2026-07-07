@@ -115,10 +115,11 @@ data lives in named volumes and survives all of this.
 
 ## Rollback
 
-Every workflow run also tags images with the git sha:
+Every workflow run also tags images with the **short** commit sha (7 chars,
+`git rev-parse --short=7 <commit>`, shown in the Actions run):
 
 ```bash
-IMAGE_TAG=<git-sha> sh infra/deploy.sh
+IMAGE_TAG=<short-sha> sh infra/deploy.sh
 ```
 
 If a migration was involved, restore the matching DB backup first (below).

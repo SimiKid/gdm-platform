@@ -6,7 +6,7 @@
 # Pulls the app images built by GitHub Actions from GHCR — nothing is built
 # on the VM (keeps /var small). Pin a specific build for rollback:
 #
-#   IMAGE_TAG=<git-sha> sh infra/deploy.sh
+#   IMAGE_TAG=<short-sha> sh infra/deploy.sh   # 7-char sha, see Actions run
 #
 # See docs/deployment.md for first-time setup, backup and troubleshooting.
 set -eu

@@ -23,11 +23,22 @@ set +a
 for var in SYNAPSE_SERVER_NAME SYNAPSE_DB_NAME SYNAPSE_DB_USER SYNAPSE_DB_PASSWORD MATRIX_PUBLIC_URL; do
   eval "value=\${$var:-}"
   [ -n "$value" ] || { echo "ERROR: $var is not set in infra/.env" >&2; exit 1; }
+  # sed would silently mangle these in the replacement text.
+  case "$value" in
+    *'&'* | *'|'* | *'\'*)
+      echo "ERROR: $var contains &, | or \\ — unsupported by this script; pick a value without them." >&2
+      exit 1
+      ;;
+  esac
 done
 
 if [ "$SYNAPSE_SERVER_NAME" = "localhost" ]; then
+  if [ "${GDM_ENV:-}" = "production" ]; then
+    echo "ERROR: SYNAPSE_SERVER_NAME is 'localhost' with GDM_ENV=production." >&2
+    echo "       server_name is immutable after Synapse's first start — fix infra/.env now." >&2
+    exit 1
+  fi
   echo "WARNING: SYNAPSE_SERVER_NAME is 'localhost' — fine locally, wrong in production." >&2
-  echo "         server_name is immutable after Synapse's first start." >&2
 fi
 
 sed \
