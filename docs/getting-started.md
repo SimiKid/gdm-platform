@@ -134,8 +134,13 @@ DATABASE_URL=postgresql://gdm:gdm_secret@localhost:5433/gdm_research?schema=publ
 ```bash
 corepack prepare pnpm@11.8.0 --activate
 pnpm install --frozen-lockfile
-pnpm test
+
+pnpm test              # unit tests (seconds, no Docker)
+pnpm test:integration  # backend integration tests (needs Docker; starts throwaway Postgres/Synapse)
+pnpm test:e2e          # Playwright golden path (needs the compose stack running)
 ```
+
+See [testing.md](testing.md) for what each layer covers and its conventions.
 
 ## Configuration
 

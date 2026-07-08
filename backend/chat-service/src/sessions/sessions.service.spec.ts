@@ -77,7 +77,8 @@ describe("SessionsService (chat-service)", () => {
     emit({ roomId: "!r", type: "m.room.redaction", sender: "@u2:localhost", eventId: "rd1", ts: 1003, content: {}, redacts: "re1" });
     emit({ roomId: "!r", type: "m.room.message", sender: "@bot:localhost", eventId: "b1", ts: 1004, content: { body: "own" } });
 
-    // rules run for every non-own event (4 of the 5 above)
+    // rules run (serialized per room) for every non-own event (4 of the 5 above)
+    await vi.advanceTimersByTimeAsync(0);
     expect(rules.onEvent).toHaveBeenCalledTimes(4);
 
     await svc.endSession("!r");

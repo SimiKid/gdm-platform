@@ -6,6 +6,8 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "test:cov": "pnpm -r test:cov",
-    "dev": "pnpm -r --parallel dev"
+    "test:integration": "pnpm -r test:integration",
+    "dev": "pnpm -r --parallel dev",
+    "test:e2e": "pnpm -r test:e2e"
   }
 }

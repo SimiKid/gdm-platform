@@ -17,7 +17,15 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
-      exclude: ["src/main.ts", "src/**/*.module.ts", "src/**/*.spec.ts"],
+      exclude: [
+        "src/main.ts",
+        "src/**/*.module.ts",
+        "src/**/*.spec.ts",
+        // The Prisma/Postgres paths are exercised for real by the
+        // Testcontainers suite (pnpm test:integration), not these unit tests.
+        "src/store/store.service.ts",
+        "src/prisma/prisma.service.ts",
+      ],
       reporter: ["text", "text-summary"],
       thresholds: {
         lines: 80,
