@@ -148,10 +148,19 @@ All environment variables live in `infra/.env`. Key settings:
 
 | Variable | Purpose |
 |---|---|
+| `GDM_ENV` | `development` (default) or `production` — in production the backends refuse to start with missing tokens or localhost URLs |
 | `SYNAPSE_HTTP_PORT` | Host port for Synapse (default `8010`) |
 | `SYNAPSE_DB_*` | Synapse Postgres credentials |
 | `RESEARCH_DB_*` | Research Postgres credentials |
 | `DATABASE_URL` | Host-side connection string for local Prisma commands |
 | `MATRIX_PUBLIC_URL` | Browser-facing Matrix URL returned to participants (default `http://localhost:3000`) |
+| `PARTICIPANT_PUBLIC_URL` | Recruiting link shown in the admin dashboard (baked into its image at build time) |
+| `ADMIN_API_TOKEN` | Protects researcher endpoints; empty = open (dev only) |
+| `INTERNAL_API_TOKEN` | Shared secret between Session Manager and Chat Service; empty = open (dev only) |
 
-The Synapse `homeserver.yaml` at `infra/synapse/homeserver.yaml` has its own DB credentials that must match the `.env` values (Synapse reads static YAML, not environment variables).
+The Synapse `homeserver.yaml` at `infra/synapse/homeserver.yaml` has its own DB credentials that must match the `.env` values (Synapse reads static YAML, not environment variables). Production uses `homeserver.prod.yaml` instead, rendered from a template by `infra/render-homeserver.sh`.
+
+The compose setup is split across three files in `infra/`: `docker-compose.yml`
+(services, no host ports), `docker-compose.override.yml` (dev port mappings,
+merged automatically by `docker compose up`) and `docker-compose.prod.yml`
+(reverse proxy, prebuilt images — see [deployment.md](deployment.md)).

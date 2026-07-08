@@ -11,7 +11,7 @@ beforeEach(() => {
 describe("Recruiting", () => {
   it("self-issues a tracking token for the generic link (no ?p=)", async () => {
     const onEnter = vi.fn();
-    render(<Recruiting onEnter={onEnter} onDevLogin={vi.fn()} />);
+    render(<Recruiting onEnter={onEnter} />);
     expect(screen.getByText(/Welcome to the study/)).toBeInTheDocument();
     await userEvent.click(screen.getByText("Start"));
     const token = onEnter.mock.calls[0][0] as string;
@@ -23,16 +23,9 @@ describe("Recruiting", () => {
   it("reuses the stored token on a refresh instead of minting a new one", async () => {
     sessionStorage.setItem("gdm-tracking-token", "kept-token");
     const onEnter = vi.fn();
-    render(<Recruiting onEnter={onEnter} onDevLogin={vi.fn()} />);
+    render(<Recruiting onEnter={onEnter} />);
     await userEvent.click(screen.getByText("Start"));
     expect(onEnter).toHaveBeenCalledWith("kept-token", undefined);
-  });
-
-  it("still offers developer login", async () => {
-    const onDevLogin = vi.fn();
-    render(<Recruiting onEnter={vi.fn()} onDevLogin={onDevLogin} />);
-    await userEvent.click(screen.getByText(/Developer login/));
-    expect(onDevLogin).toHaveBeenCalled();
   });
 
   it("reads the tracking token from ?p= and enters the flow directly", () => {
@@ -42,7 +35,7 @@ describe("Recruiting", () => {
       "/?p=abc123&conditionId=private-engaging",
     );
     const onEnter = vi.fn();
-    render(<Recruiting onEnter={onEnter} onDevLogin={vi.fn()} />);
+    render(<Recruiting onEnter={onEnter} />);
     expect(onEnter).toHaveBeenCalledWith("abc123", "private-engaging");
     // token stripped from the URL
     expect(window.location.search).toBe("?conditionId=private-engaging");

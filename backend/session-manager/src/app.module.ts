@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { HealthController } from "./health/health.controller";
 import { SessionsController } from "./sessions/sessions.controller";
 import { SessionsService } from "./sessions/sessions.service";
 import { MatrixService } from "./matrix/matrix.service";
@@ -8,7 +9,7 @@ import { AdminGuard } from "./auth/admin.guard";
 import { InternalGuard } from "./auth/internal.guard";
 
 @Module({
-  controllers: [SessionsController],
+  controllers: [HealthController, SessionsController],
   providers: [
     SessionsService,
     MatrixService,

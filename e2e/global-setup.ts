@@ -1,8 +1,10 @@
 const TARGETS = [
   ["participant app", process.env.E2E_PARTICIPANT_URL ?? "http://localhost:3000"],
   [
+    // /health is unauthenticated — /conditions would 401 against a stack
+    // with ADMIN_API_TOKEN set (production smoke test).
     "session-manager API",
-    `${process.env.E2E_SESSION_MANAGER_URL ?? "http://localhost:3001/api"}/conditions`,
+    `${process.env.E2E_SESSION_MANAGER_URL ?? "http://localhost:3001/api"}/health`,
   ],
   ["admin dashboard", process.env.E2E_ADMIN_URL ?? "http://localhost:3003"],
 ] as const;

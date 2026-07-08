@@ -119,14 +119,6 @@ export interface InterventionSummary {
 
 // ── Admin Dashboard -> Export Service ────────────────────────────
 
-export type ExportFormat = "json" | "csv";
-
-export interface ExportRequest {
-  format: ExportFormat;
-  /** Restrict to specific conditions; empty / omitted = everything. */
-  conditionIds?: string[];
-}
-
 export interface ExportBundle {
   generatedAt: string;
   sessions: Session[];

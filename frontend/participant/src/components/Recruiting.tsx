@@ -5,8 +5,6 @@ import { TOKEN_STORAGE_KEY } from "../study/progress";
 interface Props {
   /** Called with the tracking token once a valid individual link is detected. */
   onEnter: (trackingToken: string, conditionId?: string) => void;
-  /** Fallback for developers testing without a real study link. */
-  onDevLogin: () => void;
 }
 
 /**
@@ -19,13 +17,13 @@ interface Props {
  * - Generic link (no `?p=`): the researcher shares one URL with everyone;
  *   the app self-issues a random tracking token, kept in sessionStorage so a
  *   refresh in the same tab doesn't mint a second identity. A short welcome
- *   screen with a Start button renders here (also the developer-login entry).
+ *   screen with a Start button renders here.
  *
  * The token only *identifies* the participant to the Session Manager —
  * condition assignment happens later, in the Waiting Room, once the survey
  * is done.
  */
-export default function Recruiting({ onEnter, onDevLogin }: Props) {
+export default function Recruiting({ onEnter }: Props) {
   const [trackingToken, setTrackingToken] = useState<string | null>(null);
   const [conditionId, setConditionId] = useState<string | undefined>();
   const entered = useRef(false);
@@ -74,9 +72,6 @@ export default function Recruiting({ onEnter, onDevLogin }: Props) {
             onClick={() => onEnter(trackingToken, conditionId)}
           >
             Start
-          </button>
-          <button type="button" className="btn-link" onClick={onDevLogin}>
-            Developer login
           </button>
         </div>
       </div>

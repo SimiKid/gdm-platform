@@ -1,0 +1,28 @@
+## Dev-only host port mappings. `docker compose up` merges this file into
+## docker-compose.yml automatically; production uses docker-compose.prod.yml
+## instead and exposes nothing but the reverse proxy.
+
+services:
+  synapse:
+    ports:
+      - "${SYNAPSE_HTTP_PORT:-8008}:8008"
+
+  research-db:
+    ports:
+      - "5433:5432"
+
+  session-manager:
+    ports:
+      - "3001:3001"
+
+  chat-service:
+    ports:
+      - "3002:3002"
+
+  participant:
+    ports:
+      - "3000:80"
+
+  admin-dashboard:
+    ports:
+      - "3003:80"

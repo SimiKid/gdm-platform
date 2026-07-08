@@ -1,0 +1,70 @@
+# Builds the four service images and pushes them to GHCR. The production VM
+# cannot be reached from GitHub-hosted runners, so deployment is a separate
+# manual step: ssh to the VM and run infra/deploy.sh, which pulls these images.
+#
+# Every push to main produces :latest plus an immutable :<git-sha> tag —
+# deploy.sh pins a sha via IMAGE_TAG for rollbacks.
+
+name: Build & push images
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  # Baked into the admin dashboard at build time (recruiting link shown to
+  # researchers). Must match PUBLIC_HOST in the server's infra/.env.
+  PARTICIPANT_PUBLIC_URL: https://gdmproject.ifi.uzh.ch
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: session-manager
+            dockerfile: backend/session-manager/Dockerfile
+          - service: chat-service
+            dockerfile: backend/chat-service/Dockerfile
+          - service: participant
+            dockerfile: frontend/participant/Dockerfile
+          - service: admin-dashboard
+            dockerfile: frontend/admin-dashboard/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/${{ matrix.service }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Only the frontends consume these; the backend builds ignore them.
+          build-args: |
+            VITE_MATRIX_HOMESERVER=/
+            VITE_SESSION_MANAGER_URL=/api
+            VITE_PARTICIPANT_URL=${{ env.PARTICIPANT_PUBLIC_URL }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
