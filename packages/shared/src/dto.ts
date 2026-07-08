@@ -33,9 +33,24 @@ export interface OpenSessionRequest {
   conditionId?: string;
 }
 
+/**
+ * A participant as exposed to *other* participants: identity only, never the
+ * tracking token or survey answers (the Waiting Room polls the session, so
+ * anything in here is visible in every participant's network tab).
+ */
+export interface PublicParticipant {
+  id: string;
+  name: string;
+}
+
+/** A session as returned to participant clients — participants sanitized. */
+export type PublicSession = Omit<Session, "participants"> & {
+  participants: PublicParticipant[];
+};
+
 /** The "session object" returned to the client (sketch: "return session object"). */
 export interface OpenSessionResponse {
-  session: Session;
+  session: PublicSession;
   participantId: string;
   /** Matrix credentials the client uses to join the room in real time. */
   matrix: {
@@ -139,11 +154,6 @@ export const MATRIX_EVENT_TYPES = {
  * research record).
  */
 export const GDM_RECIPIENT_KEY = "de.gdm.recipient";
-
-/** Payload of a `de.gdm.ranking` event (one participant reordered the list). */
-export interface RankingUpdateEvent {
-  ranking: Ranking;
-}
 
 // ── Session Manager <-> Chat Service ─────────────────────────────
 

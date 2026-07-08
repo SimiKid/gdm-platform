@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Session, Survey } from "@gdm/shared";
+import type { PublicSession, Survey } from "@gdm/shared";
 import { httpSessionManager } from "../study/sessionClient";
 import StudyShell from "./StudyShell";
 import RankingBoard from "./RankingBoard";
@@ -14,7 +14,7 @@ function numericScale(n: number) {
 }
 
 interface Props {
-  session: Session;
+  session: PublicSession;
   participantId: string;
   /** Called once the exit survey is submitted and the session is completed. */
   onDone: () => void;
@@ -35,9 +35,11 @@ export default function ExitSurvey({ session, participantId, onDone }: Props) {
   const [fairness, setFairness] = useState("");
   const [feltHeard, setFeltHeard] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(false);
 
   async function submit() {
     setSubmitting(true);
+    setSubmitError(false);
     const survey: Survey = {
       answers: {
         finalRanking: ranked,
@@ -56,7 +58,11 @@ export default function ExitSurvey({ session, participantId, onDone }: Props) {
       });
       await httpSessionManager.completeSession(session.id);
     } catch {
-      /* best-effort; still end the flow for the participant */
+      // These answers are the primary post-discussion measure — never drop
+      // them silently. Keep the participant here and let them retry.
+      setSubmitError(true);
+      setSubmitting(false);
+      return;
     }
     onDone();
   }
@@ -119,8 +125,14 @@ export default function ExitSurvey({ session, participantId, onDone }: Props) {
             onClick={submit}
             disabled={!ready || submitting}
           >
-            {submitting ? "Submitting…" : "Submit"}
+            {submitting ? "Submitting…" : submitError ? "Try again" : "Submit"}
           </button>
+          {submitError && (
+            <p className="error" role="alert">
+              We couldn't submit your answers — please check your connection
+              and try again. Your input is still here.
+            </p>
+          )}
           {!ready && (
             <p className="action-hint">
               {allRanked

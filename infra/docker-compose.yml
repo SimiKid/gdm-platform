@@ -70,6 +70,9 @@ services:
       MATRIX_PUBLIC_URL: ${MATRIX_PUBLIC_URL:-http://localhost:3000}
       CHAT_SERVICE_URL: http://chat-service:3002
       DATABASE_URL: postgresql://${RESEARCH_DB_USER}:${RESEARCH_DB_PASSWORD}@research-db:5432/${RESEARCH_DB_NAME}?schema=public
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
+      WAITING_TIMEOUT_MINUTES: ${WAITING_TIMEOUT_MINUTES:-30}
     ports:
       - "3001:3001"
     depends_on:
@@ -88,6 +91,7 @@ services:
       PORT: "3002"
       MATRIX_INTERNAL_URL: http://synapse:8008
       SESSION_MANAGER_URL: http://session-manager:3001/api
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
     ports:
       - "3002:3002"
     depends_on:

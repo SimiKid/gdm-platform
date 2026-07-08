@@ -5,7 +5,7 @@ import type {
   SessionStatus,
   SessionSummary,
 } from "@gdm/shared";
-import { API_BASE, PARTICIPANT_BASE } from "../App";
+import { PARTICIPANT_BASE, apiFetch, exportUrl, isTestCondition } from "../api";
 
 /** Researcher-facing wording for backend session states (wireframe: lobby/active). */
 const STATUS_LABEL: Record<SessionStatus, string> = {
@@ -28,14 +28,31 @@ interface Props {
 }
 
 export default function Overview({ rows, sessions }: Props) {
-  const liveCount = sessions.filter((s) => s.status === "running").length;
-  const lobbyCount = sessions.filter((s) => s.status === "waiting").length;
+  // Test residue (E2E arms) stays out of the study numbers and lists below.
+  const studyRows = useMemo(
+    () => rows.filter((row) => !isTestCondition(row.condition.id)),
+    [rows],
+  );
+  const testRows = useMemo(
+    () => rows.filter((row) => isTestCondition(row.condition.id)),
+    [rows],
+  );
+  const studySessions = useMemo(
+    () => sessions.filter((s) => !isTestCondition(s.conditionId)),
+    [sessions],
+  );
+  const testSessions = useMemo(
+    () => sessions.filter((s) => isTestCondition(s.conditionId)),
+    [sessions],
+  );
+  const liveCount = studySessions.filter((s) => s.status === "running").length;
+  const lobbyCount = studySessions.filter((s) => s.status === "waiting").length;
   const totals = useMemo(
     () => ({
-      completed: rows.reduce((sum, row) => sum + row.completed, 0),
-      goal: rows.reduce((sum, row) => sum + row.goal, 0),
+      completed: studyRows.reduce((sum, row) => sum + row.completed, 0),
+      goal: studyRows.reduce((sum, row) => sum + row.goal, 0),
     }),
-    [rows],
+    [studyRows],
   );
 
   return (
@@ -48,16 +65,16 @@ export default function Overview({ rows, sessions }: Props) {
           live={liveCount > 0}
         />
         <Metric label="In lobby" value={String(lobbyCount)} />
-        <Metric label="Sessions total" value={String(sessions.length)} />
+        <Metric label="Sessions total" value={String(studySessions.length)} />
       </section>
 
       <div className="two-col">
-        <StudyLinkCard rows={rows} />
-        <ExportCard rows={rows} />
+        <StudyLinkCard rows={studyRows} />
+        <ExportCard rows={studyRows} />
       </div>
 
-      <ConditionTracking rows={rows} />
-      <SessionsTable sessions={sessions} />
+      <ConditionTracking rows={studyRows} testRows={testRows} />
+      <SessionsTable sessions={studySessions} testSessions={testSessions} />
     </>
   );
 }
@@ -173,7 +190,7 @@ function ExportCard({ rows }: { rows: ConditionProgress[] }) {
               <td>
                 <a
                   className="link-button"
-                  href={`${API_BASE}/export/${key}${query}`}
+                  href={exportUrl(`/export/${key}`, query)}
                   target="_blank"
                   rel="noreferrer"
                 >
@@ -181,7 +198,7 @@ function ExportCard({ rows }: { rows: ConditionProgress[] }) {
                 </a>
                 <a
                   className="link-button"
-                  href={`${API_BASE}/export/${key}.csv${query}`}
+                  href={exportUrl(`/export/${key}.csv`, query)}
                   target="_blank"
                   rel="noreferrer"
                 >
@@ -197,37 +214,72 @@ function ExportCard({ rows }: { rows: ConditionProgress[] }) {
 }
 
 /** "# Completed per condition" — the wireframe's tracking block. */
-function ConditionTracking({ rows }: { rows: ConditionProgress[] }) {
+function ConditionTracking({
+  rows,
+  testRows,
+}: {
+  rows: ConditionProgress[];
+  testRows: ConditionProgress[];
+}) {
+  const activeTestCount = testRows.filter((row) => row.condition.active).length;
   return (
     <section className="section">
       <h2>Completed per Condition</h2>
       <div className="tracking">
-        {rows.map((row) => {
-          const pct =
-            row.goal > 0 ? Math.min(100, (row.completed / row.goal) * 100) : 0;
-          const remaining = Math.max(0, row.goal - row.completed);
-          return (
-            <div key={row.condition.id} className="tracking-row">
-              <span className="tracking-name">
-                {row.condition.name}
-                {!row.condition.active && <em className="off"> (off)</em>}
-              </span>
-              <div className="bar">
-                <span style={{ width: `${pct}%` }} />
-              </div>
-              <span className="tracking-count">
-                {row.completed} / {row.goal}
-                <span className="muted">{remaining} remaining</span>
-              </span>
-            </div>
-          );
-        })}
+        {rows.map((row) => (
+          <TrackingRow key={row.condition.id} row={row} />
+        ))}
       </div>
+      {testRows.length > 0 && (
+        <details className="test-conditions" open={activeTestCount > 0}>
+          <summary>
+            Test conditions from E2E runs ({testRows.length})
+            {activeTestCount > 0 && (
+              <strong className="bad">
+                {" "}
+                — {activeTestCount} still active! Switch off in Settings.
+              </strong>
+            )}
+          </summary>
+          <div className="tracking">
+            {testRows.map((row) => (
+              <TrackingRow key={row.condition.id} row={row} />
+            ))}
+          </div>
+        </details>
+      )}
     </section>
   );
 }
 
-function SessionsTable({ sessions }: { sessions: SessionSummary[] }) {
+function TrackingRow({ row }: { row: ConditionProgress }) {
+  const pct =
+    row.goal > 0 ? Math.min(100, (row.completed / row.goal) * 100) : 0;
+  const remaining = Math.max(0, row.goal - row.completed);
+  return (
+    <div className="tracking-row">
+      <span className="tracking-name">
+        {row.condition.name}
+        {!row.condition.active && <em className="off"> (off)</em>}
+      </span>
+      <div className="bar">
+        <span style={{ width: `${pct}%` }} />
+      </div>
+      <span className="tracking-count">
+        {row.completed} / {row.goal}
+        <span className="muted">{remaining} remaining</span>
+      </span>
+    </div>
+  );
+}
+
+function SessionsTable({
+  sessions,
+  testSessions,
+}: {
+  sessions: SessionSummary[];
+  testSessions: SessionSummary[];
+}) {
   const [detail, setDetail] = useState<Session | null>(null);
 
   // Keep an open detail in sync with the dashboard poll (e.g. message counts
@@ -235,7 +287,7 @@ function SessionsTable({ sessions }: { sessions: SessionSummary[] }) {
   const detailId = detail?.id;
   useEffect(() => {
     if (!detailId) return;
-    void fetch(`${API_BASE}/sessions/${detailId}`).then(async (res) => {
+    void apiFetch(`/admin/sessions/${detailId}`).then(async (res) => {
       if (res.ok) setDetail((await res.json()) as Session);
     });
   }, [detailId, sessions]);
@@ -245,58 +297,99 @@ function SessionsTable({ sessions }: { sessions: SessionSummary[] }) {
       setDetail(null); // click again to close
       return;
     }
-    const res = await fetch(`${API_BASE}/sessions/${id}`);
+    const res = await apiFetch(`/admin/sessions/${id}`);
     if (res.ok) setDetail((await res.json()) as Session);
   }
+
+  const activeTestCount = testSessions.filter(
+    (s) => s.status === "running" || s.status === "waiting",
+  ).length;
 
   return (
     <section className="section">
       <h2>Sessions</h2>
       {sessions.length === 0 && <p className="empty">No sessions yet.</p>}
       {sessions.length > 0 && (
-        <div className="table-wrap compact" aria-label="Sessions">
-          <table>
-            <thead>
-              <tr>
-                <th>Session</th>
-                <th>Condition</th>
-                <th>Status</th>
-                <th>People</th>
-                <th>Started</th>
-                <th>Completed</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sessions.map((session) => (
-                <tr
-                  key={session.id}
-                  className={
-                    detail?.id === session.id ? "clickable selected" : "clickable"
-                  }
-                  onClick={() => void open(session.id)}
-                >
-                  <td>
-                    <strong>{session.id.slice(0, 8)}</strong>
-                  </td>
-                  <td>{session.conditionName}</td>
-                  <td>
-                    <span className={`status ${session.status}`}>
-                      {STATUS_LABEL[session.status]}
-                    </span>
-                  </td>
-                  <td>
-                    {session.participantCount} / {session.groupSize}
-                  </td>
-                  <td>{formatTime(session.startedAt)}</td>
-                  <td>{formatTime(session.completedAt)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <SessionRows
+          sessions={sessions}
+          selectedId={detail?.id}
+          onOpen={open}
+          label="Sessions"
+        />
+      )}
+      {testSessions.length > 0 && (
+        <details className="test-conditions" open={activeTestCount > 0}>
+          <summary>
+            Sessions from E2E runs ({testSessions.length})
+            {activeTestCount > 0 && (
+              <strong className="bad"> — {activeTestCount} still open!</strong>
+            )}
+          </summary>
+          <SessionRows
+            sessions={testSessions}
+            selectedId={detail?.id}
+            onOpen={open}
+            label="E2E sessions"
+          />
+        </details>
       )}
       {detail && <SessionDetail session={detail} />}
     </section>
+  );
+}
+
+function SessionRows({
+  sessions,
+  selectedId,
+  onOpen,
+  label,
+}: {
+  sessions: SessionSummary[];
+  selectedId?: string;
+  onOpen: (id: string) => Promise<void>;
+  label: string;
+}) {
+  return (
+    <div className="table-wrap compact" aria-label={label}>
+      <table>
+        <thead>
+          <tr>
+            <th>Session</th>
+            <th>Condition</th>
+            <th>Status</th>
+            <th>People</th>
+            <th>Started</th>
+            <th>Completed</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sessions.map((session) => (
+            <tr
+              key={session.id}
+              className={
+                selectedId === session.id ? "clickable selected" : "clickable"
+              }
+              onClick={() => void onOpen(session.id)}
+            >
+              <td>
+                <strong>{session.id.slice(0, 8)}</strong>
+              </td>
+              <td>{session.conditionName}</td>
+              <td>
+                <span className={`status ${session.status}`}>
+                  {STATUS_LABEL[session.status]}
+                </span>
+              </td>
+              <td>
+                {session.participantCount} / {session.groupSize}
+              </td>
+              <td>{formatTime(session.startedAt)}</td>
+              <td>{formatTime(session.completedAt)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -306,6 +399,7 @@ function SessionDetail({ session }: { session: Session }) {
     <div className="session-detail">
       <div className="detail">
         <Fact label="Condition" value={session.condition.name} />
+        <Fact label="Bot mode" value={session.condition.config.interventionMode} />
         <Fact
           label="Participants"
           value={

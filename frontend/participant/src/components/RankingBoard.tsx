@@ -28,9 +28,13 @@ export default function RankingBoard({ items, ranked, onChange }: Props) {
   const [dropIndex, setDropIndex] = useState<number | null>(null);
 
   function placeInRanking(id: string, index: number | null) {
+    // Anchor on the item we drop before, not its index: removing the dragged
+    // item first shifts indices, which landed downward drags one slot low.
+    const anchor = index === null ? null : ranked[index];
+    if (anchor === id) return;
     const without = ranked.filter((x) => x !== id);
-    const at = index === null ? without.length : Math.min(index, without.length);
-    without.splice(at, 0, id);
+    const at = anchor === null ? without.length : without.indexOf(anchor);
+    without.splice(at < 0 ? without.length : at, 0, id);
     onChange(without);
   }
 

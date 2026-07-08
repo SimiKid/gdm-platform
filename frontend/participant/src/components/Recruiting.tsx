@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import StudyShell from "./StudyShell";
+import { TOKEN_STORAGE_KEY } from "../study/progress";
 
 interface Props {
   /** Called with the tracking token once a valid individual link is detected. */
@@ -7,9 +8,6 @@ interface Props {
   /** Fallback for developers testing without a real study link. */
   onDevLogin: () => void;
 }
-
-/** Per-tab storage key for a self-issued tracking token (generic link). */
-const TOKEN_STORAGE_KEY = "gdm-tracking-token";
 
 /**
  * Recruiting landing (wireframe: Recruiting → Link).

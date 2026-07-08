@@ -69,6 +69,23 @@ describe("SessionsService (chat-service)", () => {
     expect(bot.join).toHaveBeenCalledTimes(1);
   });
 
+  it("a failed join does not orphan the session — the next start retries", async () => {
+    (bot.join as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error("synapse hiccup"));
+    await expect(svc.startSession(note)).rejects.toThrow("synapse hiccup");
+
+    // The dedupe guard must not have swallowed the room: a retry joins.
+    await svc.startSession(note);
+    expect(bot.join).toHaveBeenCalledTimes(2);
+
+    // And the retried session runs normally (timer finalizes it).
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/finalize"),
+      expect.any(Object),
+    );
+  });
+
   it("collects messages, reactions and ranking; runs rules; ignores its own events", async () => {
     await svc.startSession(note);
     emit({ roomId: "!r", type: "m.room.message", sender: "@u:localhost", eventId: "m1", ts: 1000, content: { body: "hi" } });

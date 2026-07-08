@@ -2,7 +2,7 @@ node_modules/
 dist/
 .env
 .env.*
-!infra/.env
+!infra/.env.example
 
 # Structurizr Lite working files
 .structurizr/

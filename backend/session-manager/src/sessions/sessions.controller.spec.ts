@@ -8,6 +8,7 @@ describe("SessionsController", () => {
     openSession: vi.fn(async () => ({ session: { id: "s" } })),
     listSessions: vi.fn(async () => [{ id: "s" }]),
     getSession: vi.fn(async () => ({ id: "s" })),
+    getPublicSession: vi.fn(async () => ({ id: "s" })),
     listInterventions: vi.fn(async () => [{ sessionId: "s" }]),
     exportBundle: vi.fn(async () => ({ generatedAt: "now", sessions: [] })),
     exportCsv: vi.fn(async () => "session_id\n"),
@@ -33,8 +34,14 @@ describe("SessionsController", () => {
     expect(sessions.openSession).toHaveBeenCalled();
   });
 
-  it("getSession delegates by id", async () => {
+  it("getSession returns the sanitized participant view", async () => {
     await ctrl.getSession("s");
+    expect(sessions.getPublicSession).toHaveBeenCalledWith("s");
+    expect(sessions.getSession).not.toHaveBeenCalled();
+  });
+
+  it("getSessionFull (admin) returns the full session", async () => {
+    await ctrl.getSessionFull("s");
     expect(sessions.getSession).toHaveBeenCalledWith("s");
   });
 

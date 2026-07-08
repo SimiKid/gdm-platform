@@ -3,7 +3,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import type { MatrixClient } from "matrix-js-sdk";
 import { ClientEvent, RoomEvent } from "matrix-js-sdk";
 import { GDM_RECIPIENT_KEY } from "@gdm/shared";
-import type { Session } from "@gdm/shared";
+import type { PublicSession } from "@gdm/shared";
 import SharedRanking from "./SharedRanking";
 import { buildIdentities, identityFor, isBot } from "../study/identity";
 
@@ -17,6 +17,8 @@ interface Message {
   fromBot: boolean;
   /** Set when this is a private nudge for a single participant. */
   recipient: string | null;
+  /** Local echo not yet confirmed by the server (its id is temporary). */
+  pending: boolean;
 }
 
 /** targetEventId -> emoji -> { count, mine: my reaction event id if reacted }. */
@@ -25,7 +27,7 @@ type Reactions = Record<string, Record<string, { count: number; mine?: string }>
 interface Props {
   client: MatrixClient;
   /** The study session (briefing, ranking, timer). Null on the dev fast-path. */
-  session: Session | null;
+  session: PublicSession | null;
   /** Fired once when the discussion timer reaches zero. */
   onTimeUp?: () => void;
 }
@@ -158,6 +160,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
             ts: e.getTs(),
             fromBot: isBot(sender),
             recipient,
+            pending: e.status !== null,
           });
         } else if (type === "m.reaction") {
           const rel = e.getContent()["m.relates_to"] as
@@ -178,9 +181,12 @@ export default function Chat({ client, session, onTimeUp }: Props) {
     refresh();
     client.on(RoomEvent.Timeline, refresh);
     client.on(RoomEvent.Redaction, refresh);
+    // Fired when a local echo is confirmed and swaps to its real event id.
+    client.on(RoomEvent.LocalEchoUpdated, refresh);
     return () => {
       client.off(RoomEvent.Timeline, refresh);
       client.off(RoomEvent.Redaction, refresh);
+      client.off(RoomEvent.LocalEchoUpdated, refresh);
     };
   }, [client, activeRoomId, userId]);
 
@@ -197,11 +203,20 @@ export default function Chat({ client, session, onTimeUp }: Props) {
     }
   }, [remaining, onTimeUp]);
 
+  const [sendError, setSendError] = useState(false);
+
   async function sendMessage() {
     if (!input.trim() || !activeRoomId) return;
     const body = input.trim();
     setInput("");
-    await client.sendTextMessage(activeRoomId, body);
+    setSendError(false);
+    try {
+      await client.sendTextMessage(activeRoomId, body);
+    } catch {
+      // Don't lose the participant's words: restore them and say so.
+      setInput((current) => current || body);
+      setSendError(true);
+    }
   }
 
   async function toggleReaction(targetId: string, key: string) {
@@ -276,16 +291,20 @@ export default function Chat({ client, session, onTimeUp }: Props) {
                     <div className="body">{msg.body}</div>
                     <span className="meta">{formatClock(msg.ts)}</span>
 
-                    <button
-                      type="button"
-                      className="react-btn"
-                      aria-label="Add reaction"
-                      onClick={() =>
-                        setPickerFor((cur) => (cur === msg.id ? null : msg.id))
-                      }
-                    >
-                      +
-                    </button>
+                    {/* Reactions target the event id, which is temporary
+                        until the server confirms the message. */}
+                    {!msg.pending && (
+                      <button
+                        type="button"
+                        className="react-btn"
+                        aria-label="Add reaction"
+                        onClick={() =>
+                          setPickerFor((cur) => (cur === msg.id ? null : msg.id))
+                        }
+                      >
+                        +
+                      </button>
+                    )}
                     {pickerFor === msg.id && (
                       <div className="emoji-picker">
                         {QUICK_EMOJI.map((em) => (
@@ -319,15 +338,20 @@ export default function Chat({ client, session, onTimeUp }: Props) {
               })}
               <div ref={messagesEndRef} />
             </div>
+            {sendError && (
+              <p className="error" role="alert">
+                Message not sent — please try again.
+              </p>
+            )}
             <div className="message-input">
               <input
                 placeholder="Type a message"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+                onKeyDown={(e) => e.key === "Enter" && void sendMessage()}
                 autoFocus
               />
-              <button onClick={sendMessage} aria-label="Send">
+              <button onClick={() => void sendMessage()} aria-label="Send">
                 ➤
               </button>
             </div>
