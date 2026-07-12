@@ -1,10 +1,13 @@
 import { GDM_RECIPIENT_KEY, isServiceUser } from "@gdm/shared";
 import type {
+  BehavioralEvent,
   Condition,
+  ContributionClassification,
   InterventionLog,
   Message,
   Ranking,
   Reaction,
+  RuntimeCheckpoint,
 } from "@gdm/shared";
 import type { MatrixBotService } from "../matrix/matrix-bot.service";
 
@@ -22,6 +25,8 @@ export class SessionRuntime {
   readonly rankingHistory: Ranking[] = [];
   /** Every bot intervention emitted this session. */
   readonly interventions: InterventionLog[] = [];
+  readonly behavioralEvents: BehavioralEvent[] = [];
+  readonly contributionClassifications: ContributionClassification[] = [];
   /** Rules may stash arbitrary per-session bookkeeping here. */
   readonly state: Record<string, unknown> = {};
 
@@ -33,6 +38,7 @@ export class SessionRuntime {
     string,
     { message: Message; reaction: Reaction }
   >();
+  private readonly processedEventIds = new Set<string>();
 
   constructor(
     readonly sessionId: string,
@@ -40,8 +46,11 @@ export class SessionRuntime {
     readonly condition: Condition,
     readonly durationMinutes: number,
     private readonly bot: MatrixBotService,
+    startedAt?: string,
+    checkpoint?: RuntimeCheckpoint,
   ) {
-    this.startedAtMs = Date.now();
+    this.startedAtMs = startedAt ? new Date(startedAt).getTime() : Date.now();
+    if (checkpoint) this.restore(checkpoint);
   }
 
   recordMessage(message: Message): void {
@@ -74,6 +83,38 @@ export class SessionRuntime {
     this.rankingHistory.push(ranking);
   }
 
+  recordBehavior(event: BehavioralEvent): void {
+    this.behavioralEvents.push(event);
+  }
+
+  recordClassification(classification: ContributionClassification): void {
+    const index = this.contributionClassifications.findIndex(
+      (item) => item.messageId === classification.messageId,
+    );
+    if (index >= 0) this.contributionClassifications[index] = classification;
+    else this.contributionClassifications.push(classification);
+  }
+
+  hasProcessed(eventId: string): boolean {
+    return this.processedEventIds.has(eventId);
+  }
+
+  markProcessed(eventId: string): void {
+    this.processedEventIds.add(eventId);
+  }
+
+  checkpoint(): RuntimeCheckpoint {
+    return {
+      messages: this.messages,
+      rankingHistory: this.rankingHistory,
+      interventions: this.interventions,
+      behavioralEvents: this.behavioralEvents,
+      contributionClassifications: this.contributionClassifications,
+      processedEventIds: [...this.processedEventIds],
+      ruleState: this.state,
+    };
+  }
+
   recordIntervention(intervention: InterventionLog): void {
     this.interventions.push(intervention);
   }
@@ -101,5 +142,18 @@ export class SessionRuntime {
 
   markEnded(): void {
     this.ended = true;
+  }
+
+  private restore(checkpoint: RuntimeCheckpoint): void {
+    this.messages.push(...checkpoint.messages);
+    for (const message of this.messages) this.byId.set(message.id, message);
+    this.rankingHistory.push(...checkpoint.rankingHistory);
+    this.interventions.push(...checkpoint.interventions);
+    this.behavioralEvents.push(...checkpoint.behavioralEvents);
+    this.contributionClassifications.push(...checkpoint.contributionClassifications);
+    for (const eventId of checkpoint.processedEventIds) {
+      this.processedEventIds.add(eventId);
+    }
+    Object.assign(this.state, checkpoint.ruleState);
   }
 }

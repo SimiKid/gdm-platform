@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import {
   DEFAULT_INTERVENTION_CONFIG,
@@ -18,6 +18,8 @@ import type {
 } from "@gdm/shared";
 import type { TimelineEvent } from "../matrix/matrix-bot.service";
 import type { SessionRuntime } from "../sessions/session-runtime";
+import { CONTRIBUTION_CLASSIFIER } from "../classifier/contribution-classifier.token";
+import type { ContributionClassifier } from "../classifier/contribution-classifier";
 
 /**
  * Extension point for the intervention logic — THIS IS WHERE THE RULES GO.
@@ -55,10 +57,17 @@ const STATE_KEY = "contributionBotRules";
 export class ContributionBotRules implements BotRules {
   private readonly log = new Logger("ContributionBotRules");
 
+  constructor(
+    @Optional()
+    @Inject(CONTRIBUTION_CLASSIFIER)
+    private readonly classifier?: ContributionClassifier,
+  ) {}
+
   async onEvent(runtime: SessionRuntime, event: TimelineEvent): Promise<void> {
     if (event.type !== "m.room.message") return;
 
     const config = normalizeConfig(runtime.condition.config);
+    await this.classifyForShadowMode(runtime, event.ts, config);
     if (!isInsideInterventionWindow(runtime, event.ts, config)) return;
 
     const participantIds = await this.getParticipantIds(runtime);
@@ -109,6 +118,27 @@ export class ContributionBotRules implements BotRules {
     }
   }
 
+  private async classifyForShadowMode(
+    runtime: SessionRuntime,
+    nowMs: number,
+    config: InterventionConfig,
+  ): Promise<void> {
+    const envMode = process.env.LLM_MODE;
+    const mode = envMode === "shadow" || envMode === "off" ? envMode : config.llmMode;
+    if (mode !== "shadow" || !this.classifier) return;
+    const message = runtime.messages[runtime.messages.length - 1];
+    if (!message || runtime.contributionClassifications.some((c) => c.messageId === message.id)) {
+      return;
+    }
+    const classification = await this.classifier.classify(
+      message,
+      runtime.messages.slice(0, -1),
+    );
+    if (!classification) return;
+    runtime.recordClassification(classification);
+    detectIgnoredContributions(runtime, nowMs, config);
+  }
+
   private async getParticipantIds(runtime: SessionRuntime): Promise<string[]> {
     try {
       return await runtime.getParticipantUserIds();
@@ -118,6 +148,45 @@ export class ContributionBotRules implements BotRules {
       );
       return [...new Set(runtime.messages.map((m) => m.senderId))].sort();
     }
+  }
+}
+
+function detectIgnoredContributions(
+  runtime: SessionRuntime,
+  nowMs: number,
+  config: InterventionConfig,
+): void {
+  const graceMs = (config.ignoredGraceSeconds ?? 75) * 1000;
+  const minSubsequent = config.ignoredMinSubsequentMessages ?? 2;
+  for (const candidate of runtime.contributionClassifications) {
+    if (!candidate.substantive || candidate.ignoredInShadow) continue;
+    const message = runtime.messages.find((item) => item.id === candidate.messageId);
+    if (!message) continue;
+    const messageMs = new Date(message.timestamp).getTime();
+    if (nowMs - messageMs < graceMs) continue;
+    const laterFromOthers = runtime.messages.filter(
+      (item) =>
+        new Date(item.timestamp).getTime() > messageMs &&
+        item.senderId !== message.senderId,
+    );
+    if (laterFromOthers.length < minSubsequent) continue;
+    const acknowledged = runtime.contributionClassifications.some(
+      (item) =>
+        item.senderId !== message.senderId &&
+        item.references.includes(message.id),
+    );
+    if (acknowledged) continue;
+    candidate.ignoredInShadow = true;
+    runtime.recordBehavior({
+      id: `llm-shadow:${message.id}`,
+      type: "llm-shadow-trigger",
+      participantId: message.senderId,
+      timestamp: new Date(nowMs).toISOString(),
+      payload: {
+        messageId: message.id,
+        subsequentMessages: laterFromOthers.length,
+      },
+    });
   }
 }
 

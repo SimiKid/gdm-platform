@@ -17,6 +17,9 @@ function assertProductionConfig() {
   if (!process.env.INTERNAL_API_TOKEN) {
     errors.push("INTERNAL_API_TOKEN is empty — internal endpoints would be unprotected");
   }
+  if (!process.env.MATRIX_SERVICE_PASSWORD) {
+    errors.push("MATRIX_SERVICE_PASSWORD is empty — Matrix room ownership would not survive restarts");
+  }
   const matrixPublicUrl = process.env.MATRIX_PUBLIC_URL ?? "";
   if (!matrixPublicUrl || matrixPublicUrl.includes("localhost")) {
     errors.push(

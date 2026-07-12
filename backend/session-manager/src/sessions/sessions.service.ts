@@ -6,16 +6,15 @@ import {
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type {
+  CheckpointSessionRequest,
   Condition,
+  ContributionAggregate,
   ExportBundle,
   InterventionSummary,
-  Message,
-  InterventionLog,
   OpenSessionRequest,
   OpenSessionResponse,
   Participant,
   PublicSession,
-  Ranking,
   Session,
   SessionSummary,
   StartSessionNotification,
@@ -417,6 +416,60 @@ export class SessionsService {
     return toCsv(rows);
   }
 
+  async exportContributions(conditionIds: string[] = []) {
+    const sessions = await this.filteredSessions(conditionIds);
+    return {
+      generatedAt: new Date().toISOString(),
+      contributions: sessions.flatMap(contributionAggregates),
+      behavioralEvents: sessions.flatMap((session) =>
+        session.behavioralEvents.map((event) => ({
+          sessionId: session.id,
+          conditionId: session.condition.id,
+          ...event,
+        })),
+      ),
+      classifications: sessions.flatMap((session) =>
+        session.contributionClassifications.map((classification) => ({
+          sessionId: session.id,
+          conditionId: session.condition.id,
+          ...classification,
+        })),
+      ),
+    };
+  }
+
+  async exportContributionsCsv(conditionIds: string[] = []): Promise<string> {
+    const rows = [
+      [
+        "session_id",
+        "condition_id",
+        "participant_id",
+        "message_count",
+        "character_count",
+        "reaction_count",
+        "ranking_move_count",
+        "typing_duration_ms",
+        "substantive_message_count",
+        "ignored_contribution_count",
+        "semantic_weighted_score",
+      ],
+      ...(await this.exportContributions(conditionIds)).contributions.map((c) => [
+        c.sessionId,
+        c.conditionId,
+        c.participantId,
+        String(c.messageCount),
+        String(c.characterCount),
+        String(c.reactionCount),
+        String(c.rankingMoveCount),
+        String(c.typingDurationMs),
+        String(c.substantiveMessageCount),
+        String(c.ignoredContributionCount),
+        String(c.semanticWeightedScore),
+      ]),
+    ];
+    return toCsv(rows);
+  }
+
   /** Mark a session completed (idempotent) — drives progress & auto-off. */
   async completeSession(id: string): Promise<Session> {
     const session = await this.getSession(id);
@@ -429,19 +482,26 @@ export class SessionsService {
     return session;
   }
 
+  /** Persist live state without changing the session lifecycle. */
+  async checkpointSession(
+    id: string,
+    checkpoint: CheckpointSessionRequest,
+  ): Promise<Session> {
+    const session = await this.getSession(id);
+    applyCheckpoint(session, checkpoint);
+    await this.store.saveRuntimeCheckpoint(session);
+    return session;
+  }
+
   /** Persist the discussion returned by the Chat Service at session end. */
   async finalizeSession(
     id: string,
-    messages: Message[],
-    rankingHistory: Ranking[],
-    interventions: InterventionLog[] = [],
+    checkpoint: CheckpointSessionRequest,
   ): Promise<Session> {
     const session = await this.getSession(id);
-    session.chat.messages = messages;
-    session.rankingHistory = rankingHistory;
-    session.interventions = interventions;
-    if (rankingHistory.length > 0) {
-      session.ranking = rankingHistory[rankingHistory.length - 1];
+    applyCheckpoint(session, checkpoint);
+    if ((session.rankingHistory?.length ?? 0) > 0) {
+      session.ranking = session.rankingHistory![session.rankingHistory!.length - 1];
     }
     if (session.status !== "aborted") {
       session.status = "completed";
@@ -449,11 +509,40 @@ export class SessionsService {
     }
     await this.store.saveSession(session);
     this.log.log(
-      `finalized session ${id}: ${messages.length} messages, ` +
-        `${rankingHistory.length} ranking edits, ` +
-        `${interventions.length} interventions`,
+      `finalized session ${id}: ${session.chat.messages.length} messages, ` +
+        `${session.rankingHistory?.length ?? 0} ranking edits, ` +
+        `${session.interventions.length} interventions`,
     );
     return session;
+  }
+
+  /** Re-authorize a new bot account after chat-service restart. */
+  async recoverRunningSessions(botUserId: string): Promise<StartSessionNotification[]> {
+    if (!botUserId) throw new ConflictException("botUserId is required");
+    const running = (await this.store.allSessions()).filter(
+      (session) => session.status === "running" && session.roomId,
+    );
+    const notes: StartSessionNotification[] = [];
+    for (const session of running) {
+      await this.matrix.invite(session.roomId!, botUserId);
+      notes.push({
+        sessionId: session.id,
+        roomId: session.roomId!,
+        condition: session.condition,
+        durationMinutes: session.durationMinutes,
+        startedAt: session.startedAt,
+        checkpoint: {
+          messages: session.chat.messages,
+          rankingHistory: session.rankingHistory ?? [],
+          interventions: session.interventions,
+          behavioralEvents: session.behavioralEvents,
+          contributionClassifications: session.contributionClassifications,
+          processedEventIds: session.processedEventIds ?? [],
+          ruleState: session.runtimeState ?? {},
+        },
+      });
+    }
+    return notes;
   }
 
   async submitSurvey(req: SubmitSurveyRequest): Promise<void> {
@@ -558,17 +647,81 @@ export class SessionsService {
       roomId: session.roomId ?? "",
       condition: session.condition,
       durationMinutes: session.durationMinutes,
+      startedAt: session.startedAt,
     };
     try {
-      await fetch(`${this.chatServiceUrl}/internal/sessions/start`, {
+      const res = await fetch(`${this.chatServiceUrl}/internal/sessions/start`, {
         method: "POST",
         headers: internalHeaders(),
         body: JSON.stringify(payload),
       });
+      if (!res.ok) throw new Error(`status ${res.status}`);
     } catch (err) {
       this.log.warn(`chat service notify failed (is it running?): ${String(err)}`);
     }
   }
+}
+
+function applyCheckpoint(
+  session: Session,
+  checkpoint: CheckpointSessionRequest,
+): void {
+  session.chat.messages = checkpoint.messages ?? [];
+  session.rankingHistory = checkpoint.rankingHistory ?? [];
+  session.interventions = checkpoint.interventions ?? [];
+  session.behavioralEvents = checkpoint.behavioralEvents ?? [];
+  session.contributionClassifications =
+    checkpoint.contributionClassifications ?? [];
+  session.processedEventIds = checkpoint.processedEventIds ?? [];
+  session.runtimeState = checkpoint.ruleState ?? {};
+  if (session.rankingHistory.length > 0) {
+    session.ranking = session.rankingHistory[session.rankingHistory.length - 1];
+  }
+}
+
+function contributionAggregates(session: Session): ContributionAggregate[] {
+  const ids = new Set<string>();
+  for (const message of session.chat.messages) {
+    ids.add(message.senderId);
+    for (const reaction of message.reactions) ids.add(reaction.senderId);
+  }
+  for (const event of session.behavioralEvents) ids.add(event.participantId);
+  for (const item of session.contributionClassifications) ids.add(item.senderId);
+
+  return [...ids].sort().map((participantId) => {
+    const messages = session.chat.messages.filter(
+      (message) => message.senderId === participantId,
+    );
+    const classifications = session.contributionClassifications.filter(
+      (item) => item.senderId === participantId,
+    );
+    return {
+      sessionId: session.id,
+      conditionId: session.condition.id,
+      participantId,
+      messageCount: messages.length,
+      characterCount: messages.reduce((sum, message) => sum + message.text.length, 0),
+      reactionCount: session.chat.messages.reduce(
+        (sum, message) =>
+          sum + message.reactions.filter((reaction) => reaction.senderId === participantId).length,
+        0,
+      ),
+      rankingMoveCount: session.behavioralEvents.filter(
+        (event) => event.participantId === participantId && event.type === "ranking-move",
+      ).length,
+      typingDurationMs: session.behavioralEvents
+        .filter(
+          (event) => event.participantId === participantId && event.type === "typing-stop",
+        )
+        .reduce((sum, event) => sum + (event.durationMs ?? 0), 0),
+      substantiveMessageCount: classifications.filter((item) => item.substantive).length,
+      ignoredContributionCount: classifications.filter((item) => item.ignoredInShadow).length,
+      semanticWeightedScore: classifications.reduce(
+        (sum, item) => sum + item.relevanceWeight,
+        0,
+      ),
+    };
+  });
 }
 
 /** Headers for service-to-service calls (shared INTERNAL_API_TOKEN, if set). */
@@ -582,8 +735,15 @@ function internalHeaders(): Record<string, string> {
 
 /** Strip per-participant secrets before a session leaves the participant API. */
 function toPublicSession(session: Session): PublicSession {
+  const {
+    behavioralEvents: _behavioralEvents,
+    contributionClassifications: _contributionClassifications,
+    processedEventIds: _processedEventIds,
+    runtimeState: _runtimeState,
+    ...publicFields
+  } = session;
   return {
-    ...session,
+    ...publicFields,
     participants: session.participants.map((p) => ({ id: p.id, name: p.name })),
   };
 }
