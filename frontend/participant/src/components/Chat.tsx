@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { MatrixClient } from "matrix-js-sdk";
-import { ClientEvent, RoomEvent } from "matrix-js-sdk";
-import { GDM_RECIPIENT_KEY } from "@gdm/shared";
+import { ClientEvent, RoomEvent, RoomMemberEvent } from "matrix-js-sdk";
+import { GDM_RECIPIENT_KEY, MATRIX_EVENT_TYPES } from "@gdm/shared";
 import type { PublicSession } from "@gdm/shared";
 import SharedRanking from "./SharedRanking";
 import { buildIdentities, identityFor, isBot } from "../study/identity";
@@ -78,7 +78,42 @@ export default function Chat({ client, session, onTimeUp }: Props) {
   const [reactions, setReactions] = useState<Reactions>({});
   const [pickerFor, setPickerFor] = useState<string | null>(null);
   const [input, setInput] = useState("");
+  const [typingMembers, setTypingMembers] = useState<string[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const typingStartedAt = useRef<number | null>(null);
+  const typingStopTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cursorActivity = useRef({
+    sampleCount: 0,
+    distancePx: 0,
+    lastX: 0,
+    lastY: 0,
+    hasPoint: false,
+  });
+
+  const sendBehavior = useCallback(
+    async (
+      type:
+        | "typing-start"
+        | "typing-stop"
+        | "tab-hidden"
+        | "tab-visible"
+        | "cursor-activity",
+      durationMs?: number,
+      payload: Record<string, number> = {},
+    ) => {
+      if (!activeRoomId) return;
+      try {
+        await client.sendEvent(activeRoomId, MATRIX_EVENT_TYPES.behavior as never, {
+          type,
+          ...(durationMs === undefined ? {} : { durationMs }),
+          ...payload,
+        } as never);
+      } catch {
+        // Telemetry must never block the participant's chat interaction.
+      }
+    },
+    [activeRoomId, client],
+  );
 
   // Width of the resizable study side panel (persisted across reloads).
   const [panelWidth, setPanelWidth] = useState<number>(() => {
@@ -190,6 +225,78 @@ export default function Chat({ client, session, onTimeUp }: Props) {
     };
   }, [client, activeRoomId, userId]);
 
+  // Matrix typing is ephemeral and drives the live indicator. Matching custom
+  // behavior events make the start/stop intervals available in research data.
+  useEffect(() => {
+    if (!activeRoomId) return;
+    function refreshTyping() {
+      const members = client
+        .getRoom(activeRoomId!)
+        ?.getJoinedMembers()
+        .filter((member) => member.userId !== userId && member.typing && !isBot(member.userId))
+        .map((member) => identityFor(buildIdentities(
+          client.getRoom(activeRoomId!)?.getJoinedMembers().map((item) => item.userId) ?? [],
+        ), member.userId).name) ?? [];
+      setTypingMembers(members);
+    }
+    client.on(RoomMemberEvent.Typing, refreshTyping);
+    refreshTyping();
+    return () => {
+      client.off(RoomMemberEvent.Typing, refreshTyping);
+    };
+  }, [client, activeRoomId, userId]);
+
+  useEffect(() => {
+    if (!activeRoomId) return;
+    function onVisibilityChange() {
+      void sendBehavior(document.hidden ? "tab-hidden" : "tab-visible");
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [activeRoomId, sendBehavior]);
+
+  // Batch pointer activity so research gets cursor engagement measures without
+  // flooding Matrix with a raw event for every mouse movement.
+  useEffect(() => {
+    if (!activeRoomId) return;
+    function onPointerMove(event: PointerEvent) {
+      const activity = cursorActivity.current;
+      if (activity.hasPoint) {
+        activity.distancePx += Math.hypot(
+          event.clientX - activity.lastX,
+          event.clientY - activity.lastY,
+        );
+      }
+      activity.sampleCount += 1;
+      activity.lastX = event.clientX;
+      activity.lastY = event.clientY;
+      activity.hasPoint = true;
+    }
+    const interval = setInterval(() => {
+      const activity = cursorActivity.current;
+      if (activity.sampleCount > 0) {
+        void sendBehavior("cursor-activity", undefined, {
+          sampleCount: activity.sampleCount,
+          distancePx: Math.round(activity.distancePx),
+          lastX: activity.lastX,
+          lastY: activity.lastY,
+        });
+      }
+      cursorActivity.current = {
+        sampleCount: 0,
+        distancePx: 0,
+        lastX: activity.lastX,
+        lastY: activity.lastY,
+        hasPoint: activity.hasPoint,
+      };
+    }, 10_000);
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      clearInterval(interval);
+    };
+  }, [activeRoomId, sendBehavior]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -205,9 +312,33 @@ export default function Chat({ client, session, onTimeUp }: Props) {
 
   const [sendError, setSendError] = useState(false);
 
+  function stopTyping() {
+    if (!activeRoomId || typingStartedAt.current === null) return;
+    const durationMs = Date.now() - typingStartedAt.current;
+    typingStartedAt.current = null;
+    if (typingStopTimer.current) clearTimeout(typingStopTimer.current);
+    typingStopTimer.current = null;
+    void client.sendTyping(activeRoomId, false, 0);
+    void sendBehavior("typing-stop", durationMs);
+  }
+
+  function updateInput(value: string) {
+    setInput(value);
+    if (!activeRoomId) return;
+    if (value.trim() && typingStartedAt.current === null) {
+      typingStartedAt.current = Date.now();
+      void client.sendTyping(activeRoomId, true, 4000);
+      void sendBehavior("typing-start");
+    }
+    if (typingStopTimer.current) clearTimeout(typingStopTimer.current);
+    if (!value.trim()) stopTyping();
+    else typingStopTimer.current = setTimeout(stopTyping, 1800);
+  }
+
   async function sendMessage() {
     if (!input.trim() || !activeRoomId) return;
     const body = input.trim();
+    stopTyping();
     setInput("");
     setSendError(false);
     try {
@@ -244,6 +375,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
     room?.getJoinedMembers().map((m) => m.userId) ?? [],
   );
   const me = identityFor(identities, userId);
+  const firstReactableMessageId = messages.find((message) => !message.fromBot)?.id;
 
   return (
     <div className="study-layout">
@@ -306,7 +438,11 @@ export default function Chat({ client, session, onTimeUp }: Props) {
                       </button>
                     )}
                     {pickerFor === msg.id && (
-                      <div className="emoji-picker">
+                      <div
+                        className={`emoji-picker ${
+                          msg.id === firstReactableMessageId ? "below" : ""
+                        }`}
+                      >
                         {QUICK_EMOJI.map((em) => (
                           <button
                             key={em}
@@ -343,11 +479,16 @@ export default function Chat({ client, session, onTimeUp }: Props) {
                 Message not sent — please try again.
               </p>
             )}
+            <div className="typing-indicator" aria-live="polite">
+              {typingMembers.length > 0
+                ? `${typingMembers.join(", ")} ${typingMembers.length === 1 ? "is" : "are"} typing...`
+                : "\u00a0"}
+            </div>
             <div className="message-input">
               <input
                 placeholder="Type a message"
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => updateInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && void sendMessage()}
                 autoFocus
               />
