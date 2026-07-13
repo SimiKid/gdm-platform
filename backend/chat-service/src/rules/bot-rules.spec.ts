@@ -279,6 +279,59 @@ describe("ContributionBotRules", () => {
     if (previousMode === undefined) delete process.env.LLM_MODE;
     else process.env.LLM_MODE = previousMode;
   });
+
+  it("classifies the message for each event when later messages are already buffered", async () => {
+    const previousMode = process.env.LLM_MODE;
+    process.env.LLM_MODE = "shadow";
+    const classify = vi.fn(async (message: Message, context: Message[]) => ({
+      messageId: message.id,
+      senderId: message.senderId,
+      classifiedAt: new Date().toISOString(),
+      substantive: true,
+      relevanceWeight: 1,
+      references: [],
+      ignoredInShadow: false,
+      model: "test-model",
+      promptVersion: "test-v1",
+      prompt: context.map((item) => item.id).join(","),
+      rawOutput: "{}",
+      explanation: "test classification",
+    }));
+    const { rt, bot } = runtime("baseline", {
+      ignoredMinSubsequentMessages: 99,
+    });
+    const rules = new ContributionBotRules({ classify });
+    const start = rt.startedAtMs;
+    const events = [
+      record(rt, MEMBERS[0], "We should rank oxygen first.", "idea", start),
+      record(rt, MEMBERS[1], "What about water?", "later-1", start + 1_000),
+      record(rt, MEMBERS[2], "I prefer the map.", "later-2", start + 2_000),
+    ];
+
+    try {
+      for (const event of events) await rules.onEvent(rt, event);
+
+      expect(classify.mock.calls.map(([message]) => message.id)).toEqual([
+        "idea",
+        "later-1",
+        "later-2",
+      ]);
+      expect(
+        classify.mock.calls.map(([, context]) =>
+          context.map((message) => message.id),
+        ),
+      ).toEqual([[], ["idea"], ["idea", "later-1"]]);
+      expect(
+        rt.contributionClassifications.map((classification) =>
+          classification.messageId,
+        ),
+      ).toEqual(["idea", "later-1", "later-2"]);
+      expect(bot.sendText).not.toHaveBeenCalled();
+    } finally {
+      if (previousMode === undefined) delete process.env.LLM_MODE;
+      else process.env.LLM_MODE = previousMode;
+    }
+  });
 });
 
 describe("NoopBotRules", () => {

@@ -109,7 +109,14 @@ export class MatrixService {
         "Content-Type": "application/json",
         Authorization: `Bearer ${orch.accessToken}`,
       },
-      body: JSON.stringify({ name, preset: "private_chat", visibility: "private" }),
+      body: JSON.stringify({
+        name,
+        preset: "private_chat",
+        visibility: "private",
+        // Participant credentials live in the browser. Keep direct Matrix API
+        // calls from inviting extra accounts into an active study room.
+        power_level_content_override: { invite: 100 },
+      }),
     });
     if (!res.ok) {
       throw new Error(`createRoom failed (${res.status}): ${await res.text()}`);
