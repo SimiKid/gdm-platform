@@ -15,13 +15,13 @@ const STATUS_LABEL: Record<SessionStatus, string> = {
   aborted: "aborted",
 };
 
-const EXPORTS = [
-  { key: "sessions", label: "Everything (full sessions)" },
+const INDIVIDUAL_EXPORTS = [
   { key: "messages", label: "Chat logs" },
   { key: "interventions", label: "Nudge events" },
   { key: "surveys", label: "Survey responses" },
   { key: "contributions", label: "Contributions & behavioral telemetry" },
 ] as const;
+
 
 interface Props {
   rows: ConditionProgress[];
@@ -71,7 +71,7 @@ export default function Overview({ rows, sessions }: Props) {
 
       <div className="two-col">
         <StudyLinkCard rows={studyRows} />
-        <ExportCard rows={studyRows} />
+        <ExportCard />
       </div>
 
       <ConditionTracking rows={studyRows} testRows={testRows} />
@@ -147,69 +147,39 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-/** JSON/CSV downloads per data set, optionally restricted to conditions. */
-function ExportCard({ rows }: { rows: ConditionProgress[] }) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-
-  function toggle(id: string) {
-    setSelected((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  const query =
-    selected.size > 0 ? `?conditionIds=${[...selected].join(",")}` : "";
-
+/** JSON/CSV downloads per data set. */
+function ExportCard() {
   return (
     <section className="section">
       <h2>Export Data</h2>
-      <div className="chips selectable">
-        {rows.map(({ condition }) => (
-          <label key={condition.id}>
-            <input
-              type="checkbox"
-              checked={selected.has(condition.id)}
-              onChange={() => toggle(condition.id)}
-            />
-            {condition.name}
-          </label>
-        ))}
+      <div className="download-primary">
+        <a className="link-button secondary" href={exportUrl("/export/sessions", "")} download="detailed_data.json">
+          Full Data (JSON)
+        </a>
+        <a className="link-button" href={exportUrl("/export/sessions.csv", "")} download="overview.csv">
+          Overview (CSV)
+        </a>
       </div>
-      <p className="hint">
-        {selected.size > 0
-          ? `Filtered to ${selected.size} condition(s).`
-          : "All conditions included — tick conditions above to filter."}
-      </p>
-      <table className="export-table">
-        <tbody>
-          {EXPORTS.map(({ key, label }) => (
-            <tr key={key}>
-              <td>{label}</td>
-              <td>
-                <a
-                  className="link-button"
-                  href={exportUrl(`/export/${key}`, query)}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  JSON
-                </a>
-                <a
-                  className="link-button"
-                  href={exportUrl(`/export/${key}.csv`, query)}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  CSV
-                </a>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <details className="export-advanced">
+        <summary>Individual datasets</summary>
+        <table className="export-table">
+          <tbody>
+            {INDIVIDUAL_EXPORTS.map(({ key, label }) => (
+              <tr key={key}>
+                <td>{label}</td>
+                <td>
+                  <a className="link-button" href={exportUrl(`/export/${key}`, "")} target="_blank" rel="noreferrer">
+                    JSON
+                  </a>
+                  <a className="link-button" href={exportUrl(`/export/${key}.csv`, "")} target="_blank" rel="noreferrer">
+                    CSV
+                  </a>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
     </section>
   );
 }

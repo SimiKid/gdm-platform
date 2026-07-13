@@ -215,6 +215,22 @@ details summary {
 
 /* ── Export ────────────────────────────────────────── */
 
+.download-primary {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.link-button.secondary {
+  background: #eef2f7;
+  color: #172033;
+}
+
+.export-advanced {
+  margin-top: 4px;
+}
+
+
 .chips {
   display: flex;
   flex-wrap: wrap;

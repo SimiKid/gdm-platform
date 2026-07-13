@@ -221,9 +221,11 @@ export class SessionsService {
   /** Sessions restricted to the given conditions (empty = everything). */
   private async filteredSessions(conditionIds: string[] = []): Promise<Session[]> {
     const allowed = new Set(conditionIds);
-    return (await this.store
-      .allSessions())
-      .filter((session) => allowed.size === 0 || allowed.has(session.condition.id));
+    return (await this.store.allSessions()).filter(
+      (session) =>
+        !session.condition.id.startsWith("e2e-") &&
+        (allowed.size === 0 || allowed.has(session.condition.id)),
+    );
   }
 
   async exportCsv(conditionIds: string[] = []): Promise<string> {
