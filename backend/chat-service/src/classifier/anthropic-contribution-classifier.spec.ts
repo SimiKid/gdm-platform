@@ -20,7 +20,7 @@ describe("AnthropicContributionClassifier", () => {
             type: "text",
             text: JSON.stringify({
               substantive: true,
-              relevanceWeight: 1.4,
+              relevanceWeight: 3,
               references: ["m1", "not-in-context"],
               explanation: "builds on the earlier proposal",
             }),
@@ -53,13 +53,16 @@ describe("AnthropicContributionClassifier", () => {
       messageId: "m2",
       model: "test-haiku",
       substantive: true,
-      relevanceWeight: 1.4,
+      relevanceWeight: 2,
       references: ["m1"],
     });
     expect(result?.prompt).toContain("Red: Oxygen should be first.");
     expect(result?.prompt).not.toContain("@secret-a:localhost");
     const request = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
     expect(request.output_config.format.type).toBe("json_schema");
+    expect(
+      request.output_config.format.schema.properties.relevanceWeight,
+    ).toEqual({ type: "number" });
   });
 
   it("stays silent without an API key", async () => {

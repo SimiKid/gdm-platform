@@ -57,7 +57,7 @@ export class AnthropicContributionClassifier implements ContributionClassifier {
                 additionalProperties: false,
                 properties: {
                   substantive: { type: "boolean" },
-                  relevanceWeight: { type: "number", minimum: 0, maximum: 2 },
+                  relevanceWeight: { type: "number" },
                   references: { type: "array", items: { type: "string" } },
                   explanation: { type: "string" },
                 },
