@@ -198,7 +198,7 @@ test("three participants run a full study session end to end", async ({
   });
 
   let sessionId = "";
-  await test.step("the research record is complete: session, chat log, ranking history, 3+3 surveys", async () => {
+  await test.step("the research record is complete and exports exclude E2E residue", async () => {
     const sessions = (await (
       await request.get(`${API}/sessions`, { headers: API_HEADERS })
     ).json()) as Array<{
@@ -225,25 +225,33 @@ test("three participants run a full study session end to end", async ({
       .toBe("completed");
 
     const detail = (await (
-      await request.get(`${API}/sessions/${sessionId}`, { headers: API_HEADERS })
+      await request.get(`${API}/admin/sessions/${sessionId}`, {
+        headers: API_HEADERS,
+      })
     ).json()) as {
-      participants: unknown[];
+      participants: { entrySurvey?: unknown; exitSurvey?: unknown }[];
       chat: { messages: { text: string }[] };
       rankingHistory?: unknown[];
     };
     expect(detail.participants).toHaveLength(GROUP_SIZE);
+    expect(detail.participants.filter((p) => p.entrySurvey)).toHaveLength(
+      GROUP_SIZE,
+    );
+    expect(detail.participants.filter((p) => p.exitSurvey)).toHaveLength(
+      GROUP_SIZE,
+    );
     const recordedTexts = detail.chat.messages.map((m) => m.text);
     for (const text of CHAT_MESSAGES) expect(recordedTexts).toContain(text);
     expect(detail.rankingHistory?.length ?? 0).toBeGreaterThanOrEqual(1);
 
+    // Production exports deliberately omit automated e2e-* conditions so
+    // smoke-test records cannot contaminate the study analysis data.
     const surveys = (await (
       await request.get(`${API}/export/surveys?conditionIds=${CONDITION_ID}`, {
         headers: API_HEADERS,
       })
     ).json()) as { surveys: { sessionId: string; kind: string }[] };
-    const ours = surveys.surveys.filter((s) => s.sessionId === sessionId);
-    expect(ours.filter((s) => s.kind === "entry")).toHaveLength(GROUP_SIZE);
-    expect(ours.filter((s) => s.kind === "exit")).toHaveLength(GROUP_SIZE);
+    expect(surveys.surveys.some((s) => s.sessionId === sessionId)).toBe(false);
   });
 
   await test.step("the researcher sees the session as completed in the dashboard", async () => {
