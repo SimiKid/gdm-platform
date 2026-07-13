@@ -21,6 +21,8 @@ export class MatrixService {
   private readonly internalUrl =
     process.env.MATRIX_INTERNAL_URL ?? "http://localhost:8008";
   private orchestrator?: MatrixCreds;
+  private readonly servicePassword =
+    process.env.MATRIX_SERVICE_PASSWORD ?? "gdm-dev-orchestrator-password";
 
   /** Register a fresh Matrix user and return its credentials. */
   async registerUser(localpartHint: string): Promise<MatrixCreds> {
@@ -46,10 +48,52 @@ export class MatrixService {
 
   private async getOrchestrator(): Promise<MatrixCreds> {
     if (!this.orchestrator) {
-      this.orchestrator = await this.registerUser("gdm_orchestrator");
+      this.orchestrator = await this.loginOrRegisterOrchestrator();
       this.log.log(`Orchestrator account: ${this.orchestrator.userId}`);
     }
     return this.orchestrator;
+  }
+
+  private async loginOrRegisterOrchestrator(): Promise<MatrixCreds> {
+    const login = await fetch(`${this.internalUrl}/_matrix/client/v3/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "m.login.password",
+        identifier: { type: "m.id.user", user: "gdm_orchestrator" },
+        password: this.servicePassword,
+      }),
+    });
+    if (login.ok) {
+      const data = (await login.json()) as {
+        user_id: string;
+        access_token: string;
+      };
+      return { userId: data.user_id, accessToken: data.access_token };
+    }
+
+    const register = await fetch(
+      `${this.internalUrl}/_matrix/client/v3/register`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: "gdm_orchestrator",
+          password: this.servicePassword,
+          auth: { type: "m.login.dummy" },
+        }),
+      },
+    );
+    if (!register.ok) {
+      throw new Error(
+        `orchestrator login/register failed (${login.status}/${register.status})`,
+      );
+    }
+    const data = (await register.json()) as {
+      user_id: string;
+      access_token: string;
+    };
+    return { userId: data.user_id, accessToken: data.access_token };
   }
 
   /**

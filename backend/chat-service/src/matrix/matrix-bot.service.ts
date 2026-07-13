@@ -30,11 +30,16 @@ export class MatrixBotService implements OnModuleInit {
   private userId = "";
   private accessToken = "";
   private running = false;
+  private registration?: Promise<void>;
   private readonly handlers: EventHandler[] = [];
 
   async onModuleInit(): Promise<void> {
-    await this.register();
-    void this.startSync();
+    await this.ensureReady();
+  }
+
+  async ensureReady(): Promise<void> {
+    this.registration ??= this.register();
+    await this.registration;
   }
 
   get botUserId(): string {
@@ -97,6 +102,11 @@ export class MatrixBotService implements OnModuleInit {
     this.running = false;
   }
 
+  /** Start syncing after live runtimes have been recovered and handlers exist. */
+  start(): void {
+    if (!this.running) void this.startSync();
+  }
+
   // ── internals ──────────────────────────────────────────────────
 
   private authHeaders(): Record<string, string> {
@@ -124,20 +134,10 @@ export class MatrixBotService implements OnModuleInit {
     this.log.log(`bot user ${this.userId}`);
   }
 
-  /** Prime a sync token (ignoring history), then poll for new events. */
+  /** Initial sync includes recent room history so restart gaps can be replayed. */
   private async startSync(): Promise<void> {
     this.running = true;
-    let since: string | undefined;
-    try {
-      const res = await fetch(
-        `${this.internalUrl}/_matrix/client/v3/sync?timeout=0`,
-        { headers: this.authHeaders() },
-      );
-      since = ((await res.json()) as { next_batch?: string }).next_batch;
-    } catch (err) {
-      this.log.error(`initial sync failed: ${String(err)}`);
-    }
-    await this.loop(since);
+    await this.loop();
   }
 
   private async loop(since?: string): Promise<void> {

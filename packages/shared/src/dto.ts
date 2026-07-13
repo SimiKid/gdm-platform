@@ -13,7 +13,9 @@
 
 import type { InterventionLog } from "./interventions.js";
 import type {
+  BehavioralEvent,
   Condition,
+  ContributionClassification,
   Message,
   Ranking,
   Session,
@@ -44,7 +46,14 @@ export interface PublicParticipant {
 }
 
 /** A session as returned to participant clients — participants sanitized. */
-export type PublicSession = Omit<Session, "participants"> & {
+export type PublicSession = Omit<
+  Session,
+  | "participants"
+  | "behavioralEvents"
+  | "contributionClassifications"
+  | "processedEventIds"
+  | "runtimeState"
+> & {
   participants: PublicParticipant[];
 };
 
@@ -137,6 +146,8 @@ export const MATRIX_EVENT_TYPES = {
   poll: "de.gdm.poll",
   /** Timer / "5 min left" and other session lifecycle signals. */
   sessionSignal: "de.gdm.session_signal",
+  /** Durable interaction telemetry (typing intervals, visibility changes). */
+  behavior: "de.gdm.behavior",
 } as const;
 
 /**
@@ -158,6 +169,23 @@ export interface StartSessionNotification {
   roomId: string;
   condition: Condition;
   durationMinutes: number;
+  startedAt?: string;
+  checkpoint?: RuntimeCheckpoint;
+}
+
+/** Durable snapshot used while a live session is still running. */
+export interface RuntimeCheckpoint {
+  messages: Message[];
+  rankingHistory: Ranking[];
+  interventions: InterventionLog[];
+  behavioralEvents: BehavioralEvent[];
+  contributionClassifications: ContributionClassification[];
+  processedEventIds: string[];
+  ruleState: Record<string, unknown>;
+}
+
+export interface RecoverSessionsRequest {
+  botUserId: string;
 }
 
 /**
@@ -171,4 +199,25 @@ export interface FinalizeSessionRequest {
   rankingHistory: Ranking[];
   /** Bot interventions emitted during the session. */
   interventions?: InterventionLog[];
+  behavioralEvents?: BehavioralEvent[];
+  contributionClassifications?: ContributionClassification[];
+  processedEventIds?: string[];
+  ruleState?: Record<string, unknown>;
+}
+
+export type CheckpointSessionRequest = FinalizeSessionRequest;
+
+/** One participant's aggregate activity for analysis/export. */
+export interface ContributionAggregate {
+  sessionId: string;
+  conditionId: string;
+  participantId: string;
+  messageCount: number;
+  characterCount: number;
+  reactionCount: number;
+  rankingMoveCount: number;
+  typingDurationMs: number;
+  substantiveMessageCount: number;
+  ignoredContributionCount: number;
+  semanticWeightedScore: number;
 }

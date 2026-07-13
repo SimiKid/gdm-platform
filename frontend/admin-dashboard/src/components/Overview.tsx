@@ -20,6 +20,7 @@ const EXPORTS = [
   { key: "messages", label: "Chat logs" },
   { key: "interventions", label: "Nudge events" },
   { key: "surveys", label: "Survey responses" },
+  { key: "contributions", label: "Contributions & behavioral telemetry" },
 ] as const;
 
 interface Props {
@@ -411,6 +412,14 @@ function SessionDetail({ session }: { session: Session }) {
         />
         <Fact label="Messages" value={String(session.chat.messages.length)} />
         <Fact label="Nudges" value={String(session.interventions.length)} />
+        <Fact
+          label="Behavior events"
+          value={String(session.behavioralEvents.length)}
+        />
+        <Fact
+          label="Semantic classifications"
+          value={String(session.contributionClassifications.length)}
+        />
         <Fact
           label="Ranking edits"
           value={String(session.rankingHistory?.length ?? 0)}

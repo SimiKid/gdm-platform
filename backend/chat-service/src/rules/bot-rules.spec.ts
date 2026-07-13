@@ -7,6 +7,7 @@ import type { Condition, InterventionMode, Message } from "@gdm/shared";
 import type { MatrixBotService, TimelineEvent } from "../matrix/matrix-bot.service";
 import { SessionRuntime } from "../sessions/session-runtime";
 import { ContributionBotRules, NoopBotRules } from "./bot-rules";
+import type { ContributionClassifier } from "../classifier/contribution-classifier";
 
 const MEMBERS = [
   "@gdm_a:localhost",
@@ -234,6 +235,49 @@ describe("ContributionBotRules", () => {
       userId: MEMBERS[1],
       identityName: "Blue",
     });
+  });
+
+  it("records an ignored substantive contribution in shadow mode without nudging", async () => {
+    const previousMode = process.env.LLM_MODE;
+    process.env.LLM_MODE = "shadow";
+    const classifier: ContributionClassifier = {
+      classify: vi.fn(async (message) => ({
+        messageId: message.id,
+        senderId: message.senderId,
+        classifiedAt: new Date().toISOString(),
+        substantive: true,
+        relevanceWeight: 1.5,
+        references: [],
+        ignoredInShadow: false,
+        model: "test-model",
+        promptVersion: "test-v1",
+        prompt: "test prompt",
+        rawOutput: "{}",
+        explanation: "task-relevant proposal",
+      })),
+    };
+    const { rt, bot } = runtime("baseline", {
+      ignoredGraceSeconds: 60,
+      ignoredMinSubsequentMessages: 2,
+    });
+    const rules = new ContributionBotRules(classifier);
+    const start = rt.startedAtMs;
+
+    await rules.onEvent(rt, record(rt, MEMBERS[0], "We should rank oxygen first.", "idea", start));
+    await rules.onEvent(rt, record(rt, MEMBERS[1], "What about water?", "later-1", start + 70_000));
+    await rules.onEvent(rt, record(rt, MEMBERS[2], "I prefer the map.", "later-2", start + 71_000));
+
+    expect(rt.contributionClassifications[0].ignoredInShadow).toBe(true);
+    expect(rt.behavioralEvents).toContainEqual(
+      expect.objectContaining({
+        id: "llm-shadow:idea",
+        type: "llm-shadow-trigger",
+        participantId: MEMBERS[0],
+      }),
+    );
+    expect(bot.sendText).not.toHaveBeenCalled();
+    if (previousMode === undefined) delete process.env.LLM_MODE;
+    else process.env.LLM_MODE = previousMode;
   });
 });
 

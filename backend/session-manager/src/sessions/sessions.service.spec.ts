@@ -116,8 +116,10 @@ describe("SessionsService (session-manager)", () => {
       interventionCount: 0,
     });
 
-    const session = await svc.finalizeSession(res.session.id, [], [], [
-      {
+    const session = await svc.finalizeSession(res.session.id, {
+      messages: [],
+      rankingHistory: [],
+      interventions: [{
         id: "i1",
         sessionId: res.session.id,
         roomId: "!r",
@@ -133,8 +135,8 @@ describe("SessionsService (session-manager)", () => {
         targets: [],
         quietMembers: [],
         message: "hi",
-      },
-    ]);
+      }],
+    });
     expect(session.interventions).toHaveLength(1);
     expect((await svc.listInterventions())[0]).toMatchObject({
       sessionId: res.session.id,
@@ -164,9 +166,8 @@ describe("SessionsService (session-manager)", () => {
       updatedAt: "now",
       updatedBy: "u1",
     };
-    const session = await svc.finalizeSession(
-      res.session.id,
-      [
+    const session = await svc.finalizeSession(res.session.id, {
+      messages: [
         {
           id: "m1",
           timestamp: "now",
@@ -176,13 +177,88 @@ describe("SessionsService (session-manager)", () => {
           reactions: [],
         },
       ],
-      [ranking],
-    );
+      rankingHistory: [ranking],
+    });
     expect(session.chat.messages).toHaveLength(1);
     expect(session.rankingHistory).toHaveLength(1);
     expect(session.interventions).toEqual([]);
     expect(session.ranking).toEqual(ranking); // final = last of history
     expect(session.status).toBe("completed");
+  });
+
+  it("checkpoints live telemetry without completing and exports aggregates", async () => {
+    const res = await svc.openSession(open());
+    const session = await svc.checkpointSession(res.session.id, {
+      messages: [
+        {
+          id: "m1",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          senderId: "@u1:localhost",
+          text: "oxygen first",
+          reactions: [],
+        },
+      ],
+      rankingHistory: [],
+      behavioralEvents: [
+        {
+          id: "t1",
+          type: "typing-stop",
+          participantId: "@u1:localhost",
+          timestamp: "2026-01-01T00:00:01.000Z",
+          durationMs: 1200,
+        },
+      ],
+      contributionClassifications: [
+        {
+          messageId: "m1",
+          senderId: "@u1:localhost",
+          classifiedAt: "2026-01-01T00:00:02.000Z",
+          substantive: true,
+          relevanceWeight: 1.5,
+          references: [],
+          ignoredInShadow: true,
+          model: "test",
+          promptVersion: "v1",
+          prompt: "prompt",
+          rawOutput: "{}",
+          explanation: "proposal",
+        },
+      ],
+      processedEventIds: ["m1", "t1"],
+      ruleState: { cooldown: 1 },
+    });
+
+    expect(session.status).toBe("waiting");
+    expect(session.behavioralEvents).toHaveLength(1);
+    expect((await svc.exportContributions()).contributions[0]).toMatchObject({
+      participantId: "@u1:localhost",
+      messageCount: 1,
+      typingDurationMs: 1200,
+      substantiveMessageCount: 1,
+      ignoredContributionCount: 1,
+      semanticWeightedScore: 1.5,
+    });
+  });
+
+  it("re-invites a restarted bot and returns running checkpoints", async () => {
+    const first = await svc.openSession(open());
+    await svc.openSession(open());
+    await svc.openSession(open());
+    (matrix.invite as ReturnType<typeof vi.fn>).mockClear();
+
+    const recovered = await svc.recoverRunningSessions("@new_bot:localhost");
+
+    expect(matrix.invite).toHaveBeenCalledWith(
+      "!room:localhost",
+      "@new_bot:localhost",
+    );
+    expect(recovered).toEqual([
+      expect.objectContaining({
+        sessionId: first.session.id,
+        roomId: "!room:localhost",
+        checkpoint: expect.objectContaining({ messages: [] }),
+      }),
+    ]);
   });
 
   it("completeSession is idempotent", async () => {
@@ -211,9 +287,8 @@ describe("SessionsService (session-manager)", () => {
       kind: "entry",
       survey: { answers: { age: 30 }, submittedAt: "now" },
     });
-    await svc.finalizeSession(
-      res.session.id,
-      [
+    await svc.finalizeSession(res.session.id, {
+      messages: [
         {
           id: "m1",
           timestamp: "now",
@@ -223,8 +298,8 @@ describe("SessionsService (session-manager)", () => {
           reactions: [{ key: "👍", senderId: "u2", timestamp: "now" }],
         },
       ],
-      [],
-      [
+      rankingHistory: [],
+      interventions: [
         {
           id: "i1",
           sessionId: res.session.id,
@@ -243,7 +318,7 @@ describe("SessionsService (session-manager)", () => {
           message: "hi",
         },
       ],
-    );
+    });
 
     // JSON rows carry session/condition context.
     expect((await svc.exportMessages()).messages[0]).toMatchObject({
@@ -338,6 +413,10 @@ describe("SessionsService (session-manager)", () => {
       second.session,
       await svc.getPublicSession(res.session.id),
     ]) {
+      expect(view).not.toHaveProperty("behavioralEvents");
+      expect(view).not.toHaveProperty("contributionClassifications");
+      expect(view).not.toHaveProperty("processedEventIds");
+      expect(view).not.toHaveProperty("runtimeState");
       expect(view.participants.length).toBeGreaterThan(0);
       for (const p of view.participants) {
         expect(p).not.toHaveProperty("trackingToken");
@@ -371,16 +450,17 @@ describe("SessionsService (session-manager)", () => {
 
   it("escapes spreadsheet formula prefixes in CSV exports", async () => {
     const res = await svc.openSession(open());
-    await svc.finalizeSession(res.session.id, [
-      {
+    await svc.finalizeSession(res.session.id, {
+      messages: [{
         id: "m1",
         timestamp: "now",
         senderId: "u1",
         recipientId: null,
         text: "=HYPERLINK(\"http://evil\")",
         reactions: [],
-      },
-    ], []);
+      }],
+      rankingHistory: [],
+    });
 
     const csv = await svc.exportMessagesCsv();
     expect(csv).not.toContain(",\"=HYPERLINK");

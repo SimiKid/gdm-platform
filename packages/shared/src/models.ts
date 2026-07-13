@@ -93,6 +93,43 @@ export interface Ranking {
   order: string[]; // RankingItem ids, best-to-worst
   updatedAt: string; // ISO 8601
   updatedBy: string; // participant/bot id of the last editor
+  /** Optional movement metadata used for collaboration feedback and analysis. */
+  movement?: { itemId: string; from: number; to: number };
+}
+
+export type BehavioralEventType =
+  | "typing-start"
+  | "typing-stop"
+  | "tab-hidden"
+  | "tab-visible"
+  | "cursor-activity"
+  | "ranking-move"
+  | "llm-shadow-trigger";
+
+/** Persisted interaction telemetry emitted during the group task. */
+export interface BehavioralEvent {
+  id: string;
+  type: BehavioralEventType;
+  participantId: string;
+  timestamp: string;
+  durationMs?: number;
+  payload?: Record<string, string | number | boolean | string[]>;
+}
+
+/** Auditable result of one semantic classification request. */
+export interface ContributionClassification {
+  messageId: string;
+  senderId: string;
+  classifiedAt: string;
+  substantive: boolean;
+  relevanceWeight: number;
+  references: string[];
+  ignoredInShadow: boolean;
+  model: string;
+  promptVersion: string;
+  prompt: string;
+  rawOutput: string;
+  explanation: string;
 }
 
 /** A poll, initialized by the bot (wireframe: "Polls initialized by bot"). */
@@ -139,7 +176,7 @@ export interface StudySettings {
 
 /** Which nudge behavior the bot runs for a session. */
 export interface BotConfig {
-  /** Rule-based only for milestone 1; LLM check is optional/future. */
+  /** True when the semantic classifier is enabled for this session. */
   llmEnabled: boolean;
   condition: Condition;
 }
@@ -170,6 +207,13 @@ export interface Session {
   rankingHistory?: Ranking[];
   /** Bot interventions emitted during the live session. */
   interventions: InterventionLog[];
+  /** Typing, visibility, ranking movement, and shadow-trigger telemetry. */
+  behavioralEvents: BehavioralEvent[];
+  /** Per-message semantic judgments when LLM shadow mode is enabled. */
+  contributionClassifications: ContributionClassification[];
+  /** Internal restart checkpoint metadata; not used by participant clients. */
+  processedEventIds?: string[];
+  runtimeState?: Record<string, unknown>;
   polls: Poll[];
   /** Copied from the condition at assignment time; drives the chat timer. */
   durationMinutes: number;

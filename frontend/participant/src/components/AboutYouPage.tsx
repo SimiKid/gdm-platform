@@ -61,7 +61,16 @@ export default function AboutYouPage({ onContinue }: Props) {
           max={120}
           value={age}
           onChange={(e) => setAge(e.target.value)}
+          aria-invalid={age !== "" && !ageValid}
+          aria-describedby={age !== "" && !ageValid ? "about-age-error" : undefined}
         />
+        {age !== "" && !ageValid && (
+          <p id="about-age-error" className="error" role="alert">
+            {ageNum < 18
+              ? "You must be at least 18 years old to participate."
+              : "Please enter a valid age between 18 and 120."}
+          </p>
+        )}
       </div>
 
       <Likert

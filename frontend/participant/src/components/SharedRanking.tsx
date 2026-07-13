@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { MatrixClient, MatrixEvent } from "matrix-js-sdk";
 import { RoomEvent } from "matrix-js-sdk";
 import { MATRIX_EVENT_TYPES } from "@gdm/shared";
 import type { Ranking, RankingTask } from "@gdm/shared";
+import { buildIdentities, identityFor } from "../study/identity";
 
 const RANKING_EVENT = MATRIX_EVENT_TYPES.ranking; // "de.gdm.ranking"
 
@@ -22,12 +23,21 @@ interface Props {
  */
 export default function SharedRanking({ client, roomId, task, initial }: Props) {
   const [order, setOrder] = useState<string[]>(initial.order);
+  const [activity, setActivity] = useState<{
+    text: string;
+    itemId: string;
+  } | null>(null);
+  const activityTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const userId = client.getUserId() ?? "";
-  const labels = new Map(task.items.map((i) => [i.id, i.label]));
+  const labels = useMemo(
+    () => new Map(task.items.map((i) => [i.id, i.label])),
+    [task.items],
+  );
 
   useEffect(() => {
     const room = client.getRoom(roomId);
     if (!room) return;
+    const activeRoom = room;
 
     // Seed from the most recent ranking event already in the timeline.
     const events = room.getLiveTimeline().getEvents();
@@ -43,21 +53,36 @@ export default function SharedRanking({ client, roomId, task, initial }: Props) 
       if (event.getRoomId() !== roomId) return;
       if (event.getType() !== RANKING_EVENT) return;
       const content = event.getContent() as Ranking;
-      if (Array.isArray(content.order)) setOrder(content.order);
+      if (Array.isArray(content.order)) {
+        setOrder(content.order);
+        if (content.movement && content.updatedBy !== userId) {
+          const members = activeRoom.getJoinedMembers().map((member) => member.userId);
+          const identity = identityFor(buildIdentities(members), content.updatedBy);
+          const item = labels.get(content.movement.itemId) ?? content.movement.itemId;
+          setActivity({
+            text: `${identity.name} moved ${item} from #${content.movement.from + 1} to #${content.movement.to + 1}`,
+            itemId: content.movement.itemId,
+          });
+          if (activityTimer.current) clearTimeout(activityTimer.current);
+          activityTimer.current = setTimeout(() => setActivity(null), 3000);
+        }
+      }
     }
     client.on(RoomEvent.Timeline, onTimeline);
     return () => {
       client.off(RoomEvent.Timeline, onTimeline);
+      if (activityTimer.current) clearTimeout(activityTimer.current);
     };
-  }, [client, roomId]);
+  }, [client, labels, roomId, userId]);
 
-  function broadcast(next: string[]) {
+  function broadcast(next: string[], movement: Ranking["movement"]) {
     setOrder(next); // optimistic
     const ranking: Ranking = {
       taskId: task.id,
       order: next,
       updatedAt: new Date().toISOString(),
       updatedBy: userId,
+      movement,
     };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     void client.sendEvent(roomId, RANKING_EVENT as any, ranking as any);
@@ -68,15 +93,21 @@ export default function SharedRanking({ client, roomId, task, initial }: Props) 
     if (j < 0 || j >= order.length) return;
     const next = order.slice();
     [next[index], next[j]] = [next[j], next[index]];
-    broadcast(next);
+    broadcast(next, { itemId: order[index], from: index, to: j });
   }
 
   return (
     <div className="ranking">
       <h3>{task.title}</h3>
+      <div className="ranking-activity" aria-live="polite">
+        {activity?.text ?? "\u00a0"}
+      </div>
       <ol className="ranking-list">
         {order.map((id, idx) => (
-          <li key={id} className="ranking-item">
+          <li
+            key={id}
+            className={`ranking-item ${activity?.itemId === id ? "remote-move" : ""}`}
+          >
             <span className="rank-num">{idx + 1}</span>
             <span className="rank-label">{labels.get(id) ?? id}</span>
             <span className="rank-actions">

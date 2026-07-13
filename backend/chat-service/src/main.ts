@@ -16,6 +16,11 @@ function assertProductionConfig() {
     logger.error("GDM_ENV=production requires it; fix infra/.env and restart.");
     process.exit(1);
   }
+  if (process.env.LLM_MODE === "shadow" && !process.env.ANTHROPIC_API_KEY) {
+    const logger = new Logger("Bootstrap");
+    logger.error("LLM_MODE=shadow requires ANTHROPIC_API_KEY");
+    process.exit(1);
+  }
 }
 
 async function bootstrap() {

@@ -11,7 +11,9 @@ import {
 } from "@nestjs/common";
 import type {
   ConditionProgress,
+  CheckpointSessionRequest,
   FinalizeSessionRequest,
+  RecoverSessionsRequest,
   OpenSessionRequest,
   OpenSessionResponse,
   PublicSession,
@@ -81,12 +83,24 @@ export class SessionsController {
     @Param("id") id: string,
     @Body() body: FinalizeSessionRequest,
   ): Promise<Session> {
-    return this.sessions.finalizeSession(
-      id,
-      body.messages,
-      body.rankingHistory,
-      body.interventions ?? [],
-    );
+    return this.sessions.finalizeSession(id, body);
+  }
+
+  /** Chat Service incrementally persists live state without completing it. */
+  @Put("sessions/:id/checkpoint")
+  @UseGuards(InternalGuard)
+  checkpoint(
+    @Param("id") id: string,
+    @Body() body: CheckpointSessionRequest,
+  ): Promise<Session> {
+    return this.sessions.checkpointSession(id, body);
+  }
+
+  /** Re-invite a restarted bot and return all recoverable running sessions. */
+  @Post("sessions/recover")
+  @UseGuards(InternalGuard)
+  recover(@Body() body: RecoverSessionsRequest) {
+    return this.sessions.recoverRunningSessions(body.botUserId);
   }
 
   /** Admin: list editable study conditions. */
@@ -199,6 +213,22 @@ export class SessionsController {
   @Header("Content-Type", "text/csv; charset=utf-8")
   exportSurveysCsv(@Query("conditionIds") conditionIds?: string): Promise<string> {
     return this.sessions.exportSurveysCsv(parseConditionIds(conditionIds));
+  }
+
+  /** Behavioral events and per-participant aggregate contribution measures. */
+  @Get("export/contributions")
+  @UseGuards(AdminGuard)
+  exportContributions(@Query("conditionIds") conditionIds?: string) {
+    return this.sessions.exportContributions(parseConditionIds(conditionIds));
+  }
+
+  @Get("export/contributions.csv")
+  @UseGuards(AdminGuard)
+  @Header("Content-Type", "text/csv; charset=utf-8")
+  exportContributionsCsv(
+    @Query("conditionIds") conditionIds?: string,
+  ): Promise<string> {
+    return this.sessions.exportContributionsCsv(parseConditionIds(conditionIds));
   }
 }
 

@@ -1,5 +1,5 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
-import { MATRIX_EVENT_TYPES } from "@gdm/shared";
+import { Inject, Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import { MATRIX_EVENT_TYPES, isServiceUser } from "@gdm/shared";
 import type {
   Message,
   Ranking,
@@ -21,7 +21,7 @@ import type { BotRules } from "../rules/bot-rules";
  * Session Manager when the discussion timer ends.
  */
 @Injectable()
-export class SessionsService {
+export class SessionsService implements OnModuleInit {
   private readonly log = new Logger(SessionsService.name);
   private readonly sessionManagerUrl =
     process.env.SESSION_MANAGER_URL ?? "http://localhost:3001/api";
@@ -33,12 +33,24 @@ export class SessionsService {
    * the intervention-window bookkeeping races (double nudges on a burst).
    */
   private readonly ruleChains = new Map<string, Promise<void>>();
+  private readonly checkpointTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
+  private readonly checkpointRequests = new Map<string, Promise<void>>();
+  private readonly finalizingRooms = new Set<string>();
 
   constructor(
     private readonly bot: MatrixBotService,
     @Inject(BOT_RULES) private readonly rules: BotRules,
   ) {
     this.bot.onTimelineEvent((event) => this.handleEvent(event));
+  }
+
+  async onModuleInit(): Promise<void> {
+    await this.bot.ensureReady();
+    await this.recoverSessions();
+    this.bot.start();
   }
 
   /** Take over a freshly-provisioned session. */
@@ -54,22 +66,32 @@ export class SessionsService {
       note.condition,
       note.durationMinutes,
       this.bot,
+      note.startedAt,
+      note.checkpoint,
     );
     this.runtimes.set(note.roomId, runtime);
     this.log.log(
       `managing session ${note.sessionId} in ${note.roomId} (${note.condition.name})`,
     );
     // Server-side discussion timer: finalise when time is up.
-    setTimeout(
-      () => void this.endSession(note.roomId),
-      note.durationMinutes * 60_000,
+    const elapsed = note.startedAt
+      ? Math.max(0, Date.now() - new Date(note.startedAt).getTime())
+      : 0;
+    const remaining = Math.max(
+      note.checkpoint ? 5000 : 0,
+      note.durationMinutes * 60_000 - elapsed,
     );
+    setTimeout(() => void this.endSession(note.roomId), remaining);
   }
 
   private handleEvent(event: TimelineEvent): void {
     const runtime = this.runtimes.get(event.roomId);
-    if (!runtime || runtime.isEnded) return;
-    if (event.sender === this.bot.botUserId) return; // ignore our own events
+    if (!runtime || runtime.isEnded || this.finalizingRooms.has(event.roomId)) {
+      return;
+    }
+    if (event.sender === this.bot.botUserId || isServiceUser(event.sender)) return;
+    if (runtime.hasProcessed(event.eventId)) return;
+    runtime.markProcessed(event.eventId);
 
     switch (event.type) {
       case "m.room.message": {
@@ -107,7 +129,52 @@ export class SessionsService {
       case MATRIX_EVENT_TYPES.ranking: {
         const order = event.content.order;
         if (Array.isArray(order)) {
-          runtime.recordRanking(event.content as unknown as Ranking);
+          const ranking = event.content as unknown as Ranking;
+          runtime.recordRanking(ranking);
+          if (ranking.movement) {
+            runtime.recordBehavior({
+              id: `ranking-move:${event.eventId}`,
+              type: "ranking-move",
+              participantId: event.sender,
+              timestamp: new Date(event.ts).toISOString(),
+              payload: {
+                itemId: ranking.movement.itemId,
+                from: ranking.movement.from,
+                to: ranking.movement.to,
+              },
+            });
+          }
+        }
+        break;
+      }
+      case MATRIX_EVENT_TYPES.behavior: {
+        const type = event.content.type;
+        if (
+          type === "typing-start" ||
+          type === "typing-stop" ||
+          type === "tab-hidden" ||
+          type === "tab-visible" ||
+          type === "cursor-activity"
+        ) {
+          runtime.recordBehavior({
+            id: event.eventId,
+            type,
+            participantId: event.sender,
+            timestamp: new Date(event.ts).toISOString(),
+            durationMs:
+              typeof event.content.durationMs === "number"
+                ? event.content.durationMs
+                : undefined,
+            payload:
+              type === "cursor-activity"
+                ? {
+                    sampleCount: Number(event.content.sampleCount ?? 0),
+                    distancePx: Number(event.content.distancePx ?? 0),
+                    lastX: Number(event.content.lastX ?? 0),
+                    lastY: Number(event.content.lastY ?? 0),
+                  }
+                : undefined,
+          });
         }
         break;
       }
@@ -119,37 +186,102 @@ export class SessionsService {
       event.roomId,
       chain
         .then(() => this.rules.onEvent(runtime, event))
-        .catch((err) => this.log.error(`rules failed: ${String(err)}`)),
+        .catch((err) => this.log.error(`rules failed: ${String(err)}`))
+        .finally(() => this.scheduleCheckpoint(runtime)),
     );
   }
 
   /** Finalise: send the collected discussion back to the Session Manager. */
   async endSession(roomId: string): Promise<void> {
     const runtime = this.runtimes.get(roomId);
-    if (!runtime || runtime.isEnded) return;
-    runtime.markEnded();
+    if (!runtime || runtime.isEnded || this.finalizingRooms.has(roomId)) return;
+    this.finalizingRooms.add(roomId);
+    await this.ruleChains.get(roomId);
+    const timer = this.checkpointTimers.get(roomId);
+    if (timer) clearTimeout(timer);
+    this.checkpointTimers.delete(roomId);
+    await this.checkpointRequests.get(roomId);
     this.log.log(
       `finalizing session ${runtime.sessionId} ` +
         `(${runtime.messages.length} messages, ${runtime.rankingHistory.length} ranking edits)`,
     );
     try {
-      await fetch(
+      const res = await fetch(
         `${this.sessionManagerUrl}/sessions/${runtime.sessionId}/finalize`,
         {
           method: "POST",
           headers: internalHeaders(),
-          body: JSON.stringify({
-            messages: runtime.messages,
-            rankingHistory: runtime.rankingHistory,
-            interventions: runtime.interventions,
-          }),
+          body: JSON.stringify(runtime.checkpoint()),
         },
       );
+      if (!res.ok) throw new Error(`status ${res.status}`);
     } catch (err) {
       this.log.error(`finalize failed: ${String(err)}`);
+      this.finalizingRooms.delete(roomId);
+      setTimeout(() => void this.endSession(roomId), 5000);
+      return;
     }
+    runtime.markEnded();
     this.runtimes.delete(roomId);
     this.ruleChains.delete(roomId);
+    this.checkpointRequests.delete(roomId);
+    this.finalizingRooms.delete(roomId);
+  }
+
+  private scheduleCheckpoint(runtime: SessionRuntime): void {
+    if (this.finalizingRooms.has(runtime.roomId)) return;
+    const existing = this.checkpointTimers.get(runtime.roomId);
+    if (existing) clearTimeout(existing);
+    this.checkpointTimers.set(
+      runtime.roomId,
+      setTimeout(() => {
+        const request = this.persistCheckpoint(runtime).finally(() => {
+          if (this.checkpointRequests.get(runtime.roomId) === request) {
+            this.checkpointRequests.delete(runtime.roomId);
+          }
+        });
+        this.checkpointRequests.set(runtime.roomId, request);
+      }, 1000),
+    );
+  }
+
+  private async persistCheckpoint(runtime: SessionRuntime): Promise<void> {
+    this.checkpointTimers.delete(runtime.roomId);
+    if (runtime.isEnded) return;
+    try {
+      const res = await fetch(
+        `${this.sessionManagerUrl}/sessions/${runtime.sessionId}/checkpoint`,
+        {
+          method: "PUT",
+          headers: internalHeaders(),
+          body: JSON.stringify(runtime.checkpoint()),
+        },
+      );
+      if (!res.ok) throw new Error(`status ${res.status}`);
+    } catch (err) {
+      this.log.error(`checkpoint failed: ${String(err)}`);
+      if (!this.finalizingRooms.has(runtime.roomId)) {
+        this.scheduleCheckpoint(runtime);
+      }
+    }
+  }
+
+  private async recoverSessions(): Promise<void> {
+    try {
+      const res = await fetch(`${this.sessionManagerUrl}/sessions/recover`, {
+        method: "POST",
+        headers: internalHeaders(),
+        body: JSON.stringify({ botUserId: this.bot.botUserId }),
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const notes = (await res.json()) as StartSessionNotification[];
+      for (const note of notes) await this.startSession(note);
+      if (notes.length > 0) {
+        this.log.log(`recovered ${notes.length} live session(s)`);
+      }
+    } catch (err) {
+      this.log.warn(`session recovery unavailable: ${String(err)}`);
+    }
   }
 }
 

@@ -918,6 +918,11 @@ body {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
+/* The first message has no room above it inside the scroll container. */
+.emoji-picker.below {
+  top: calc(100% + 0.25rem);
+}
+
 .emoji-picker button {
   border: none;
   background: none;
@@ -954,6 +959,15 @@ body {
 }
 
 /* ── Message input ───────────────────────────── */
+
+.typing-indicator {
+  min-height: 1.35rem;
+  padding: 0.15rem 1.15rem 0;
+  background: #f0f0f0;
+  color: #5f6670;
+  font-size: 0.75rem;
+  font-style: italic;
+}
 
 .message-input {
   display: flex;
@@ -1106,6 +1120,30 @@ body {
   margin-bottom: 0.5rem;
 }
 
+.ranking-activity {
+  min-height: 1.25rem;
+  margin-bottom: 0.35rem;
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.panel-col .ranking-item.remote-move {
+  animation: remote-ranking-move 0.9s ease-out;
+  outline: 2px solid var(--accent);
+}
+
+@keyframes remote-ranking-move {
+  from {
+    background: #dbe3f8;
+    transform: translateX(6px);
+  }
+  to {
+    background: #fafafa;
+    transform: translateX(0);
+  }
+}
+
 /* ── Empty state ─────────────────────────────── */
 
 .no-room {
@@ -1115,4 +1153,27 @@ body {
   flex: 1;
   color: #888;
   font-size: 0.95rem;
+}
+
+@media (max-width: 760px) {
+  .study-layout {
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .chat-main {
+    min-height: 65vh;
+  }
+
+  .panel-resizer {
+    display: none;
+  }
+
+  .panel-col {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-height: none;
+    border-top: 1px solid #ddd;
+  }
 }
