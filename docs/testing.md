@@ -12,7 +12,7 @@ exercised by exactly one layer so failures point somewhere specific.
 |---|---|---|---|---|
 | Unit | `pnpm test` | Node | seconds | Pure logic, components in jsdom |
 | Integration | `pnpm test:integration` | Docker | ~1 min | Nest apps over HTTP, Postgres, Synapse |
-| End-to-end | `pnpm test:e2e` | Running compose stack | ~1.5 min | Everything: browsers, all services, Matrix |
+| End-to-end | `pnpm test:e2e` | Running compose stack | ~2 min | Everything: browsers, all services, Matrix |
 
 All commands work from the repo root (they fan out via `pnpm -r`) or inside a
 single package.
@@ -88,19 +88,31 @@ each run starts throwaway containers and removes them afterwards.
 
 ## End-to-End (`e2e/`)
 
-One Playwright golden-path test against the local Docker Compose stack:
-three isolated browser contexts walk the complete participant journey —
-recruiting → consent → about-you → individual ranking → waiting room →
-matched into one session → live chat over real Matrix → shared-ranking edit
-syncing between browsers → discussion timer → exit survey → debriefing —
-then the test verifies the research record via the API (participants,
-persisted messages, ranking history, entry/exit surveys) and that the admin
-dashboard shows the session as completed.
+The default Playwright profile covers the complete three-participant journey,
+validation feedback, live typing and reactions, shared ranking and panel
+resizing, behavioral telemetry, every intervention mode, the admin download,
+and all JSON/CSV export families. API-provisioned scenarios jump directly into
+the real Matrix chat so only the golden path waits for the one-minute timer.
 
 ```bash
 cd infra && sh start.sh     # the stack must be up; global-setup fails fast if not
 pnpm test:e2e
 ```
+
+Two disruptive or externally billed profiles are opt-in:
+
+```bash
+# Three real classifications through the deployed Anthropic integration.
+pnpm --dir e2e test:e2e:live
+
+# Local compose only: stops and starts Session Manager + Chat Service in order.
+E2E_COMPOSE_ENV_FILE=.env pnpm --dir e2e test:e2e:recovery
+```
+
+The restart profile refuses non-local API URLs and refuses to run while a
+non-E2E session is waiting or running. The live profile is intentionally one
+test; it verifies classifications, pseudonymized prompts, ignored-contribution
+telemetry, and that shadow mode never renders a nudge.
 
 First-time setup: `pnpm --filter @gdm/e2e exec playwright install chromium`.
 
@@ -124,10 +136,9 @@ Notes:
   `ADMIN_API_TOKEN` is set (attached as `x-admin-token` to API calls and
   pre-seeded into the dashboard's localStorage). See the smoke-test section
   in [deployment.md](deployment.md) for the ready-made production command.
-- `--repeat-each=N --workers=W` turns one run into N sessions, W in
-  parallel — usable as a light load probe (client-bound: 3 Chromium
-  contexts per session). Safe to parallelise: each worker provisions its
-  own condition, so concurrent sessions never cross-match.
+- Keep the full suite at one worker. For a deliberate load probe, target only
+  `tests/golden-path.spec.ts` with `--repeat-each=N --workers=W`; each worker
+  provisions its own condition, so concurrent sessions cannot cross-match.
 
 ## Which Layer Does a New Test Belong In?
 

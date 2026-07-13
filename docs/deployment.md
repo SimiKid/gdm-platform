@@ -78,9 +78,9 @@ VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (never public)
 
 ## Smoke test (e2e against production)
 
-The Playwright golden path can run against the live stack — after a deploy or
-before opening recruitment. With the SSH tunnel (below) open, from your
-machine:
+The production-safe Playwright profile can run against the live stack after a
+deploy or before opening recruitment. With the SSH tunnel (below) open, from
+your machine:
 
 ```bash
 E2E_PARTICIPANT_URL=https://gdmproject.ifi.uzh.ch \
@@ -94,12 +94,26 @@ The run provisions its own `e2e-…` condition (grouped as test residue in the
 dashboard, deactivated afterwards) and leaves its session data in the research
 DB — exclude `e2e-` conditions when exporting study data.
 
+Run the separately gated live Anthropic check with the same environment:
+
+```bash
+E2E_PARTICIPANT_URL=https://gdmproject.ifi.uzh.ch \
+E2E_SESSION_MANAGER_URL=https://gdmproject.ifi.uzh.ch/api \
+E2E_ADMIN_URL=http://localhost:3003 \
+E2E_ADMIN_TOKEN=<ADMIN_API_TOKEN from the server .env> \
+pnpm --dir e2e test:e2e:live
+```
+
+Do not run `test:e2e:recovery` against production. It deliberately controls a
+local Compose stack; production recovery is exercised during a planned deploy
+and verified with the production-safe profile.
+
 For a light load probe before opening recruitment, repeat and parallelise the
 run — each worker provisions its own condition, so parallel sessions cannot
 cross-match:
 
 ```bash
-E2E_… pnpm --dir e2e exec playwright test --repeat-each=10 --workers=5
+E2E_… pnpm --dir e2e exec playwright test tests/golden-path.spec.ts --repeat-each=10 --workers=5
 ```
 
 This is bounded by the machine running the browsers (3 Chromium contexts per
@@ -121,6 +135,14 @@ cd ~/gdm-platform && git pull && sh infra/deploy.sh
 `git pull` updates compose files/Caddyfile/templates; `deploy.sh` re-renders
 the Synapse config, pulls images and restarts changed containers. Database
 data lives in named volumes and survives all of this.
+
+If a release changes `homeserver.prod.yaml.template`, restart Synapse once
+after `deploy.sh` so the bind-mounted configuration is reloaded:
+
+```bash
+cd ~/gdm-platform/infra
+docker compose --env-file .env -f docker-compose.yml -f docker-compose.prod.yml restart synapse
+```
 
 Prisma migrations run automatically before Session Manager startup. The
 runtime-checkpoint migration adds JSON columns only and does not rewrite or

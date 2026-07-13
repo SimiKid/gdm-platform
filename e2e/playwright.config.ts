@@ -10,10 +10,11 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests",
   globalSetup: "./global-setup.ts",
-  // One golden-path run drives three participants through a full session.
+  // Matrix rooms and temporary conditions are shared server-side resources.
   fullyParallel: false,
   workers: 1,
   retries: 0,
+  forbidOnly: Boolean(process.env.CI),
   timeout: 300_000,
   expect: { timeout: 15_000 },
   // printSteps: each test.step() prints as it passes, so a run shows WHAT
@@ -22,5 +23,6 @@ export default defineConfig({
   use: {
     baseURL: process.env.E2E_PARTICIPANT_URL ?? "http://localhost:3000",
     trace: "retain-on-failure",
+    screenshot: "only-on-failure",
   },
 });

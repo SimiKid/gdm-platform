@@ -137,7 +137,7 @@ pnpm install --frozen-lockfile
 
 pnpm test              # unit tests (seconds, no Docker)
 pnpm test:integration  # backend integration tests (needs Docker; starts throwaway Postgres/Synapse)
-pnpm test:e2e          # Playwright golden path (needs the compose stack running)
+pnpm test:e2e          # Production-safe Playwright profile (needs the compose stack running)
 ```
 
 See [testing.md](testing.md) for what each layer covers and its conventions.
