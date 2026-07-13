@@ -113,7 +113,7 @@ async function rankAllItems(page: Page): Promise<void> {
   }
 }
 
-test("three participants run a full study session end to end", async ({
+test("@golden three participants run a full study session end to end", async ({
   browser,
   request,
 }) => {

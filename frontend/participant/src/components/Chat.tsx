@@ -37,6 +37,9 @@ const QUICK_EMOJI = ["👍", "👎", "❤️"];
 const PANEL_WIDTH_KEY = "gdm-panel-width";
 const PANEL_MIN = 280;
 const PANEL_MAX = 640;
+const TYPING_SERVER_TIMEOUT_MS = 4000;
+const TYPING_RENEW_INTERVAL_MS = 3000;
+const TYPING_IDLE_TIMEOUT_MS = 1800;
 
 /** Keep the panel usable and leave the chat column at least ~360px. */
 function clampPanelWidth(w: number): number {
@@ -82,6 +85,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingStartedAt = useRef<number | null>(null);
   const typingStopTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const typingRenewInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const cursorActivity = useRef({
     sampleCount: 0,
     distancePx: 0,
@@ -89,6 +93,14 @@ export default function Chat({ client, session, onTimeUp }: Props) {
     lastY: 0,
     hasPoint: false,
   });
+
+  useEffect(
+    () => () => {
+      if (typingStopTimer.current) clearTimeout(typingStopTimer.current);
+      if (typingRenewInterval.current) clearInterval(typingRenewInterval.current);
+    },
+    [],
+  );
 
   const sendBehavior = useCallback(
     async (
@@ -278,8 +290,8 @@ export default function Chat({ client, session, onTimeUp }: Props) {
         void sendBehavior("cursor-activity", undefined, {
           sampleCount: activity.sampleCount,
           distancePx: Math.round(activity.distancePx),
-          lastX: activity.lastX,
-          lastY: activity.lastY,
+          lastX: Math.round(activity.lastX),
+          lastY: Math.round(activity.lastY),
         });
       }
       cursorActivity.current = {
@@ -318,7 +330,9 @@ export default function Chat({ client, session, onTimeUp }: Props) {
     typingStartedAt.current = null;
     if (typingStopTimer.current) clearTimeout(typingStopTimer.current);
     typingStopTimer.current = null;
-    void client.sendTyping(activeRoomId, false, 0);
+    if (typingRenewInterval.current) clearInterval(typingRenewInterval.current);
+    typingRenewInterval.current = null;
+    void client.sendTyping(activeRoomId, false, 0).catch(() => undefined);
     void sendBehavior("typing-stop", durationMs);
   }
 
@@ -327,12 +341,20 @@ export default function Chat({ client, session, onTimeUp }: Props) {
     if (!activeRoomId) return;
     if (value.trim() && typingStartedAt.current === null) {
       typingStartedAt.current = Date.now();
-      void client.sendTyping(activeRoomId, true, 4000);
+      void client
+        .sendTyping(activeRoomId, true, TYPING_SERVER_TIMEOUT_MS)
+        .catch(() => undefined);
+      typingRenewInterval.current = setInterval(() => {
+        if (typingStartedAt.current === null) return;
+        void client
+          .sendTyping(activeRoomId, true, TYPING_SERVER_TIMEOUT_MS)
+          .catch(() => undefined);
+      }, TYPING_RENEW_INTERVAL_MS);
       void sendBehavior("typing-start");
     }
     if (typingStopTimer.current) clearTimeout(typingStopTimer.current);
     if (!value.trim()) stopTyping();
-    else typingStopTimer.current = setTimeout(stopTyping, 1800);
+    else typingStopTimer.current = setTimeout(stopTyping, TYPING_IDLE_TIMEOUT_MS);
   }
 
   async function sendMessage() {

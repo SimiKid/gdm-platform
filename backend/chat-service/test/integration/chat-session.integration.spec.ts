@@ -67,7 +67,10 @@ describe("chat-service ↔ real Synapse (integration)", () => {
 
   const finalizeFor = (sessionId: string, timeoutMs: number) =>
     until(
-      () => fakeSm.calls.find((c) => c.path.includes(sessionId)),
+      () =>
+        fakeSm.calls.find(
+          (call) => call.path === `/sessions/${sessionId}/finalize`,
+        ),
       `finalize callback for session ${sessionId}`,
       timeoutMs,
     );

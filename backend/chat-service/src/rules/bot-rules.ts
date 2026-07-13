@@ -67,7 +67,7 @@ export class ContributionBotRules implements BotRules {
     if (event.type !== "m.room.message") return;
 
     const config = normalizeConfig(runtime.condition.config);
-    await this.classifyForShadowMode(runtime, event.ts, config);
+    await this.classifyForShadowMode(runtime, event, config);
     if (!isInsideInterventionWindow(runtime, event.ts, config)) return;
 
     const participantIds = await this.getParticipantIds(runtime);
@@ -120,23 +120,26 @@ export class ContributionBotRules implements BotRules {
 
   private async classifyForShadowMode(
     runtime: SessionRuntime,
-    nowMs: number,
+    event: TimelineEvent,
     config: InterventionConfig,
   ): Promise<void> {
     const envMode = process.env.LLM_MODE;
     const mode = envMode === "shadow" || envMode === "off" ? envMode : config.llmMode;
     if (mode !== "shadow" || !this.classifier) return;
-    const message = runtime.messages[runtime.messages.length - 1];
+    const messageIndex = runtime.messages.findIndex(
+      (message) => message.id === event.eventId,
+    );
+    const message = runtime.messages[messageIndex];
     if (!message || runtime.contributionClassifications.some((c) => c.messageId === message.id)) {
       return;
     }
     const classification = await this.classifier.classify(
       message,
-      runtime.messages.slice(0, -1),
+      runtime.messages.slice(0, messageIndex),
     );
     if (!classification) return;
     runtime.recordClassification(classification);
-    detectIgnoredContributions(runtime, nowMs, config);
+    detectIgnoredContributions(runtime, event.ts, config);
   }
 
   private async getParticipantIds(runtime: SessionRuntime): Promise<string[]> {

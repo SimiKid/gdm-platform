@@ -31,7 +31,7 @@ export interface FinalizeCall {
 
 export interface FakeSessionManager {
   url: string;
-  /** Every finalize POST the chat-service sent, in arrival order. */
+  /** Every checkpoint/finalize request, in arrival order. */
   calls: FinalizeCall[];
   close(): Promise<void>;
 }

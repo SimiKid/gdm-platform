@@ -83,3 +83,18 @@ rc_login:
 rc_registration:
   per_second: 5
   burst_count: 30
+
+# The same service bot is invited into every study room. Synapse's default
+# recipient limit allows only five rapid invites and then blocks new groups
+# for several minutes. Public registration is blocked by Caddy and study
+# rooms reserve invitation power for the orchestrator.
+rc_invites:
+  per_room:
+    per_second: 10
+    burst_count: 50
+  per_user:
+    per_second: 10
+    burst_count: 50
+  per_issuer:
+    per_second: 10
+    burst_count: 50

@@ -54,6 +54,11 @@ describe("MatrixService", () => {
     expect(await svc.createRoom("Study 1")).toBe("!r1:localhost");
     expect(await svc.createRoom("Study 2")).toBe("!r2:localhost");
     expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body as string)).toMatchObject({
+      preset: "private_chat",
+      visibility: "private",
+      power_level_content_override: { invite: 100 },
+    });
   });
 
   it("registers the stable orchestrator when its first login is unavailable", async () => {
