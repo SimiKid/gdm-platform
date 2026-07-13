@@ -44,9 +44,10 @@ The GDM platform is a monorepo with two backends, two frontends, a shared type p
 The diagram shows the local dev topology (ports from
 `docker-compose.override.yml`). In production nothing is exposed directly:
 a Caddy reverse proxy on 80/443 terminates TLS and routes `/_matrix` → Synapse
-(registration blocked), `/api` → Session Manager and everything else to the
-participant frontend; the admin dashboard is reachable only through an SSH
-tunnel. See [deployment.md](deployment.md).
+(registration blocked), `/api` → Session Manager, `/admin` → the token-protected
+admin dashboard and everything else to the participant frontend. A localhost
+SSH tunnel remains available as an admin fallback. See
+[deployment.md](deployment.md).
 
 ## Services
 

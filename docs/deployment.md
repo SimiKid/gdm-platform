@@ -10,8 +10,9 @@ reachable via UZH VPN; ports 80/443 are open to the public internet.
 Internet ──► Caddy :80/:443 (TLS via Let's Encrypt)
               ├── /_matrix/*  ─► Synapse            (registration answers 403)
               ├── /api/*      ─► Session Manager
+              ├── /admin/*    ─► Admin Dashboard     (API token required)
               └── /*          ─► Participant SPA
-VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (never public)
+VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (fallback)
 ```
 
 - App images are built by [GitHub Actions](../.github/workflows/build-images.yml)
@@ -176,13 +177,18 @@ If a migration was involved, restore the matching DB backup first (below).
 
 ## Admin dashboard access
 
-The dashboard is not routed publicly. From a machine on the UZH VPN:
+Open https://gdmproject.ifi.uzh.ch/admin/ and enter `ADMIN_API_TOKEN`. The
+dashboard shell is public, but every researcher endpoint containing sessions,
+settings or exports rejects requests without that token.
+
+The original SSH-tunnel route remains available as a fallback from a machine
+on the UZH VPN:
 
 ```bash
 ssh -L 3003:localhost:3003 deployer@gdmproject.ifi.uzh.ch
 ```
 
-Then open http://localhost:3003 and enter the `ADMIN_API_TOKEN`.
+Then open http://localhost:3003 and enter the same token.
 
 ## Backup & restore
 
