@@ -5,6 +5,9 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "dev": "pnpm -r --parallel dev"
+    "test:cov": "pnpm -r test:cov",
+    "test:integration": "pnpm -r test:integration",
+    "dev": "pnpm -r --parallel dev",
+    "test:e2e": "pnpm -r test:e2e"
   }
 }

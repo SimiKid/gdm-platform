@@ -1,0 +1,148 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model ConditionRecord {
+  id              String          @id
+  name            String
+  active          Boolean         @default(true)
+  goal            Int
+  durationMinutes Int             @map("duration_minutes")
+  groupSize       Int             @map("group_size")
+  config          Json
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+  sessions        SessionRecord[]
+
+  @@map("conditions")
+}
+
+model SessionRecord {
+  id                String               @id
+  status            String
+  conditionId       String               @map("condition_id")
+  conditionSnapshot Json                 @map("condition_snapshot")
+  bot               Json
+  briefing          Json
+  rankingTask       Json                 @map("ranking_task")
+  ranking           Json
+  polls             Json
+  durationMinutes   Int                  @map("duration_minutes")
+  roomId            String?              @map("room_id")
+  createdAt         DateTime             @default(now()) @map("created_at")
+  startedAt         DateTime?            @map("started_at")
+  completedAt       DateTime?            @map("completed_at")
+  condition         ConditionRecord      @relation(fields: [conditionId], references: [id])
+  participants      ParticipantRecord[]
+  messages          MessageRecord[]
+  rankingHistory    RankingHistoryRecord[]
+  interventions     InterventionRecord[]
+
+  @@index([conditionId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("sessions")
+}
+
+model ParticipantRecord {
+  id                String         @id
+  sessionId         String         @map("session_id")
+  name              String
+  trackingToken     String         @map("tracking_token")
+  matrixUserId      String?        @map("matrix_user_id")
+  matrixAccessToken String?        @map("matrix_access_token")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  session           SessionRecord  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  surveys           SurveyRecord[]
+
+  @@index([sessionId])
+  @@index([trackingToken])
+  @@map("participants")
+}
+
+model SurveyRecord {
+  id            String            @id @default(uuid())
+  participantId String            @map("participant_id")
+  kind          String
+  answers       Json
+  submittedAt   DateTime          @map("submitted_at")
+  participant   ParticipantRecord @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@unique([participantId, kind])
+  @@index([kind])
+  @@map("surveys")
+}
+
+model MessageRecord {
+  id          String           @id
+  sessionId   String           @map("session_id")
+  timestamp   DateTime
+  senderId    String           @map("sender_id")
+  recipientId String?          @map("recipient_id")
+  text        String
+  session     SessionRecord    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  reactions   ReactionRecord[]
+
+  @@index([sessionId, timestamp])
+  @@map("messages")
+}
+
+model ReactionRecord {
+  id        String        @id @default(uuid())
+  messageId String        @map("message_id")
+  key       String
+  senderId  String        @map("sender_id")
+  timestamp DateTime
+  message   MessageRecord @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@map("reactions")
+}
+
+model RankingHistoryRecord {
+  id        String        @id @default(uuid())
+  sessionId String        @map("session_id")
+  position  Int
+  ranking   Json
+  updatedAt DateTime      @map("updated_at")
+  session   SessionRecord @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, position])
+  @@index([sessionId])
+  @@map("ranking_history")
+}
+
+model InterventionRecord {
+  id                         String        @id
+  sessionId                  String        @map("session_id")
+  roomId                     String        @map("room_id")
+  conditionId                String        @map("condition_id")
+  mode                       String
+  audience                   String
+  tone                       String
+  timestamp                  DateTime
+  trigger                    String
+  threshold                  Float
+  contributionWindowMinutes  Int           @map("contribution_window_minutes")
+  message                    String
+  payload                    Json
+  session                    SessionRecord @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([conditionId])
+  @@index([timestamp])
+  @@map("interventions")
+}
+
+model StudySettingRecord {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("study_settings")
+}

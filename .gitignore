@@ -2,7 +2,7 @@ node_modules/
 dist/
 .env
 .env.*
-!.env.example
+!infra/.env.example
 
 # Structurizr Lite working files
 .structurizr/
@@ -10,3 +10,13 @@ docs/architecture/workspace.json
 
 # Synapse/Postgres runtime data
 infra/data/
+
+# Rendered Synapse prod config (contains DB password; see render-homeserver.sh)
+infra/synapse/homeserver.prod.yaml
+
+# Claude Code local context
+.claude/
+
+# Playwright artifacts
+e2e/test-results/
+e2e/playwright-report/
