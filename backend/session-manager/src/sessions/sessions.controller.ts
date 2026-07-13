@@ -159,6 +159,7 @@ export class SessionsController {
   /** JSON export for currently persisted research sessions. */
   @Get("export/sessions")
   @UseGuards(AdminGuard)
+  @Header("Content-Disposition", 'attachment; filename="detailed_data.json"')
   exportSessions(@Query("conditionIds") conditionIds?: string) {
     return this.sessions.exportBundle(parseConditionIds(conditionIds));
   }
@@ -167,6 +168,7 @@ export class SessionsController {
   @Get("export/sessions.csv")
   @UseGuards(AdminGuard)
   @Header("Content-Type", "text/csv; charset=utf-8")
+  @Header("Content-Disposition", 'attachment; filename="overview.csv"')
   exportSessionsCsv(@Query("conditionIds") conditionIds?: string): Promise<string> {
     return this.sessions.exportCsv(parseConditionIds(conditionIds));
   }
@@ -174,6 +176,7 @@ export class SessionsController {
   /** Chat logs export (one row per message). */
   @Get("export/messages")
   @UseGuards(AdminGuard)
+  @Header("Content-Disposition", 'attachment; filename="messages.json"')
   exportMessages(@Query("conditionIds") conditionIds?: string) {
     return this.sessions.exportMessages(parseConditionIds(conditionIds));
   }
@@ -181,6 +184,7 @@ export class SessionsController {
   @Get("export/messages.csv")
   @UseGuards(AdminGuard)
   @Header("Content-Type", "text/csv; charset=utf-8")
+  @Header("Content-Disposition", 'attachment; filename="messages.csv"')
   exportMessagesCsv(@Query("conditionIds") conditionIds?: string): Promise<string> {
     return this.sessions.exportMessagesCsv(parseConditionIds(conditionIds));
   }
@@ -188,6 +192,7 @@ export class SessionsController {
   /** Bot nudge events export (one row per intervention). */
   @Get("export/interventions")
   @UseGuards(AdminGuard)
+  @Header("Content-Disposition", 'attachment; filename="interventions.json"')
   exportInterventions(@Query("conditionIds") conditionIds?: string) {
     return this.sessions.exportInterventions(parseConditionIds(conditionIds));
   }
@@ -195,6 +200,7 @@ export class SessionsController {
   @Get("export/interventions.csv")
   @UseGuards(AdminGuard)
   @Header("Content-Type", "text/csv; charset=utf-8")
+  @Header("Content-Disposition", 'attachment; filename="interventions.csv"')
   exportInterventionsCsv(
     @Query("conditionIds") conditionIds?: string,
   ): Promise<string> {
@@ -204,6 +210,7 @@ export class SessionsController {
   /** Survey responses export (one row per participant and kind). */
   @Get("export/surveys")
   @UseGuards(AdminGuard)
+  @Header("Content-Disposition", 'attachment; filename="surveys.json"')
   exportSurveys(@Query("conditionIds") conditionIds?: string) {
     return this.sessions.exportSurveys(parseConditionIds(conditionIds));
   }
@@ -211,6 +218,7 @@ export class SessionsController {
   @Get("export/surveys.csv")
   @UseGuards(AdminGuard)
   @Header("Content-Type", "text/csv; charset=utf-8")
+  @Header("Content-Disposition", 'attachment; filename="surveys.csv"')
   exportSurveysCsv(@Query("conditionIds") conditionIds?: string): Promise<string> {
     return this.sessions.exportSurveysCsv(parseConditionIds(conditionIds));
   }
@@ -218,6 +226,7 @@ export class SessionsController {
   /** Behavioral events and per-participant aggregate contribution measures. */
   @Get("export/contributions")
   @UseGuards(AdminGuard)
+  @Header("Content-Disposition", 'attachment; filename="contributions.json"')
   exportContributions(@Query("conditionIds") conditionIds?: string) {
     return this.sessions.exportContributions(parseConditionIds(conditionIds));
   }
@@ -225,6 +234,7 @@ export class SessionsController {
   @Get("export/contributions.csv")
   @UseGuards(AdminGuard)
   @Header("Content-Type", "text/csv; charset=utf-8")
+  @Header("Content-Disposition", 'attachment; filename="contributions.csv"')
   exportContributionsCsv(
     @Query("conditionIds") conditionIds?: string,
   ): Promise<string> {

@@ -15,13 +15,13 @@ const STATUS_LABEL: Record<SessionStatus, string> = {
   aborted: "aborted",
 };
 
-const EXPORTS = [
-  { key: "sessions", label: "Everything (full sessions)" },
+const INDIVIDUAL_EXPORTS = [
   { key: "messages", label: "Chat logs" },
   { key: "interventions", label: "Nudge events" },
   { key: "surveys", label: "Survey responses" },
   { key: "contributions", label: "Contributions & behavioral telemetry" },
 ] as const;
+
 
 interface Props {
   rows: ConditionProgress[];
@@ -160,56 +160,79 @@ function ExportCard({ rows }: { rows: ConditionProgress[] }) {
     });
   }
 
-  const query =
-    selected.size > 0 ? `?conditionIds=${[...selected].join(",")}` : "";
+  const query = selected.size > 0 ? `conditionIds=${[...selected].join(",")}` : "";
 
   return (
     <section className="section">
       <h2>Export Data</h2>
-      <div className="chips selectable">
-        {rows.map(({ condition }) => (
-          <label key={condition.id}>
-            <input
-              type="checkbox"
-              checked={selected.has(condition.id)}
-              onChange={() => toggle(condition.id)}
-            />
-            {condition.name}
-          </label>
-        ))}
+      {selected.size > 0 && (
+        <p className="hint">Filtered to {selected.size} condition(s).</p>
+      )}
+      <div className="download-primary">
+        <a
+          className="link-button"
+          href={exportUrl("/export/sessions.csv", query)}
+          download="overview.csv"
+        >
+          Overview (CSV)
+        </a>
+        <a
+          className="link-button secondary"
+          href={exportUrl("/export/sessions", query)}
+          download="detailed_data.json"
+        >
+          Full Data (JSON)
+        </a>
       </div>
-      <p className="hint">
-        {selected.size > 0
-          ? `Filtered to ${selected.size} condition(s).`
-          : "All conditions included — tick conditions above to filter."}
-      </p>
-      <table className="export-table">
-        <tbody>
-          {EXPORTS.map(({ key, label }) => (
-            <tr key={key}>
-              <td>{label}</td>
-              <td>
-                <a
-                  className="link-button"
-                  href={exportUrl(`/export/${key}`, query)}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  JSON
-                </a>
-                <a
-                  className="link-button"
-                  href={exportUrl(`/export/${key}.csv`, query)}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  CSV
-                </a>
-              </td>
-            </tr>
+      <details className="export-advanced">
+        <summary>Individual datasets & filters</summary>
+        <div className="chips selectable">
+          {rows.map(({ condition }) => (
+            <label key={condition.id}>
+              <input
+                type="checkbox"
+                checked={selected.has(condition.id)}
+                onChange={() => toggle(condition.id)}
+              />
+              {condition.name}
+            </label>
           ))}
-        </tbody>
-      </table>
+        </div>
+        {rows.length > 0 && (
+          <p className="hint">
+            {selected.size > 0
+              ? "Filter applied to all downloads above and below."
+              : "Tick conditions to filter — applies to all downloads."}
+          </p>
+        )}
+        <table className="export-table">
+          <tbody>
+            {INDIVIDUAL_EXPORTS.map(({ key, label }) => (
+              <tr key={key}>
+                <td>{label}</td>
+                <td>
+                  <a
+                    className="link-button"
+                    href={exportUrl(`/export/${key}`, query)}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    JSON
+                  </a>
+                  <a
+                    className="link-button"
+                    href={exportUrl(`/export/${key}.csv`, query)}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    CSV
+                  </a>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
     </section>
   );
 }
