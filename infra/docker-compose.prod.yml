@@ -4,8 +4,8 @@
 ##     -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 ##
 ## Only Caddy is publicly exposed (80/443, auto-TLS via Let's Encrypt).
-## The admin dashboard binds to localhost only — researchers reach it via
-## an SSH tunnel: ssh -L 3003:localhost:3003 deployer@gdmproject.ifi.uzh.ch
+## The admin dashboard is routed by Caddy at /admin/ and remains bound to
+## localhost as an SSH-tunnel fallback. Its API calls require ADMIN_API_TOKEN.
 ##
 ## Before first start: render the Synapse config (sh render-homeserver.sh) —
 ## server_name is immutable once Synapse has started.
@@ -32,6 +32,8 @@ services:
     depends_on:
       participant:
         condition: service_started
+      admin-dashboard:
+        condition: service_started
       session-manager:
         condition: service_healthy
 
@@ -51,7 +53,7 @@ services:
   participant:
     image: ${IMAGE_PREFIX:-ghcr.io/simikid/gdm-platform}/participant:${IMAGE_TAG:-latest}
 
-  # ── Admin dashboard: SSH-tunnel access only ───────────
+  # ── Admin dashboard: Caddy + SSH-tunnel fallback ──────
   admin-dashboard:
     image: ${IMAGE_PREFIX:-ghcr.io/simikid/gdm-platform}/admin-dashboard:${IMAGE_TAG:-latest}
     ports:

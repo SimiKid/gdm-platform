@@ -1,7 +1,6 @@
 # Public entry point for the study platform. TLS certificates come from
 # Let's Encrypt automatically (requires ports 80+443 reachable from the
 # internet). PUBLIC_HOST and ACME_EMAIL are injected via docker-compose.prod.yml.
-
 {
 	email {$ACME_EMAIL}
 }
@@ -24,9 +23,16 @@
 		reverse_proxy session-manager:3001
 	}
 
-	# Everything else is the participant SPA (its nginx serves the static
-	# build). The admin dashboard is intentionally NOT routed here — it is
-	# only reachable via SSH tunnel (see docker-compose.prod.yml).
+	# Temporary researcher access on the existing public host. The dashboard
+	# itself contains no research data; every researcher API request remains
+	# protected by ADMIN_API_TOKEN in the Session Manager. Keep the localhost
+	# port binding below as an SSH-tunnel fallback.
+	redir /admin /admin/ 308
+	handle_path /admin/* {
+		reverse_proxy admin-dashboard:80
+	}
+
+	# Everything else is the participant SPA (its nginx serves the static build).
 	handle {
 		reverse_proxy participant:80
 	}
