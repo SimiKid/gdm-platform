@@ -67,7 +67,10 @@ describe("SessionsController", () => {
 
   it("finalize passes messages and ranking history", async () => {
     await ctrl.finalize("s", { messages: [], rankingHistory: [] });
-    expect(sessions.finalizeSession).toHaveBeenCalledWith("s", [], [], []);
+    expect(sessions.finalizeSession).toHaveBeenCalledWith("s", {
+      messages: [],
+      rankingHistory: [],
+    });
   });
 
   it("progress maps completed count and goal per condition", async () => {

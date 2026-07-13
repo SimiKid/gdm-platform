@@ -31,6 +31,8 @@ function makeBot() {
     botUserId: "@bot:localhost",
     onTimelineEvent: (h: (e: TimelineEvent) => void) => handlers.push(h),
     join: vi.fn(async () => undefined),
+    start: vi.fn(),
+    ensureReady: vi.fn(async () => undefined),
     sendText: vi.fn(async () => undefined),
     getJoinedMemberIds: vi.fn(async () => ["@u:localhost", "@u2:localhost"]),
   };
@@ -90,13 +92,14 @@ describe("SessionsService (chat-service)", () => {
     await svc.startSession(note);
     emit({ roomId: "!r", type: "m.room.message", sender: "@u:localhost", eventId: "m1", ts: 1000, content: { body: "hi" } });
     emit({ roomId: "!r", type: "m.reaction", sender: "@u2:localhost", eventId: "re1", ts: 1001, content: { "m.relates_to": { rel_type: "m.annotation", event_id: "m1", key: "👍" } } });
-    emit({ roomId: "!r", type: "de.gdm.ranking", sender: "@u:localhost", eventId: "rk1", ts: 1002, content: { taskId: "t", order: ["a", "b"], updatedAt: "", updatedBy: "u" } });
-    emit({ roomId: "!r", type: "m.room.redaction", sender: "@u2:localhost", eventId: "rd1", ts: 1003, content: {}, redacts: "re1" });
+    emit({ roomId: "!r", type: "de.gdm.ranking", sender: "@u:localhost", eventId: "rk1", ts: 1002, content: { taskId: "t", order: ["a", "b"], updatedAt: "", updatedBy: "u", movement: { itemId: "a", from: 1, to: 0 } } });
+    emit({ roomId: "!r", type: "de.gdm.behavior", sender: "@u:localhost", eventId: "ty1", ts: 1003, content: { type: "typing-stop", durationMs: 800 } });
+    emit({ roomId: "!r", type: "m.room.redaction", sender: "@u2:localhost", eventId: "rd1", ts: 1004, content: {}, redacts: "re1" });
     emit({ roomId: "!r", type: "m.room.message", sender: "@bot:localhost", eventId: "b1", ts: 1004, content: { body: "own" } });
 
-    // rules run (serialized per room) for every non-own event (4 of the 5 above)
+    // rules run (serialized per room) for every non-own event.
     await vi.advanceTimersByTimeAsync(0);
-    expect(rules.onEvent).toHaveBeenCalledTimes(4);
+    expect(rules.onEvent).toHaveBeenCalledTimes(5);
 
     await svc.endSession("!r");
     const lastCall = fetchMock.mock.calls.at(-1) as [string, { body: string }];
@@ -104,6 +107,12 @@ describe("SessionsService (chat-service)", () => {
     expect(lastBody.messages).toHaveLength(1);
     expect(lastBody.messages[0].reactions).toHaveLength(0); // added then redacted
     expect(lastBody.rankingHistory).toHaveLength(1);
+    expect(lastBody.behavioralEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "ranking-move" }),
+        expect.objectContaining({ type: "typing-stop", durationMs: 800 }),
+      ]),
+    );
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining("/finalize"),
       expect.any(Object),

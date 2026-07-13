@@ -32,6 +32,10 @@ model SessionRecord {
   rankingTask       Json                 @map("ranking_task")
   ranking           Json
   polls             Json
+  behavioralEvents  Json                 @default("[]") @map("behavioral_events")
+  classifications   Json                 @default("[]") @map("contribution_classifications")
+  processedEventIds Json                 @default("[]") @map("processed_event_ids")
+  runtimeState      Json                 @default("{}") @map("runtime_state")
   durationMinutes   Int                  @map("duration_minutes")
   roomId            String?              @map("room_id")
   createdAt         DateTime             @default(now()) @map("created_at")

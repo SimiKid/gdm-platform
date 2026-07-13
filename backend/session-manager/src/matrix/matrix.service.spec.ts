@@ -33,10 +33,10 @@ describe("MatrixService", () => {
     await expect(svc.registerUser("x")).rejects.toThrow(/register failed/);
   });
 
-  it("createRoom registers the orchestrator once and reuses it", async () => {
+  it("createRoom logs in the stable orchestrator once and reuses it", async () => {
     const fetchMock = vi
       .fn()
-      // 1st createRoom: orchestrator registration + room creation…
+      // 1st createRoom: orchestrator login + room creation…
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ user_id: "@orc:localhost", access_token: "o" }),
@@ -53,6 +53,24 @@ describe("MatrixService", () => {
     vi.stubGlobal("fetch", fetchMock);
     expect(await svc.createRoom("Study 1")).toBe("!r1:localhost");
     expect(await svc.createRoom("Study 2")).toBe("!r2:localhost");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("registers the stable orchestrator when its first login is unavailable", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 403 })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ user_id: "@gdm_orchestrator:localhost", access_token: "o" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ room_id: "!r:localhost" }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(svc.createRoom("Study")).resolves.toBe("!r:localhost");
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 

@@ -145,6 +145,7 @@ function ConditionsTable({ rows, onSaved }: Props) {
         <thead>
           <tr>
             <th>Condition</th>
+            <th>Semantic analysis</th>
             <th>Bot mode</th>
             <th>Active</th>
             <th>Goal</th>
@@ -212,6 +213,23 @@ function ConditionRow({ row, onSaved }: { row: ConditionProgress; onSaved: () =>
       <td>
         <strong>{draft.name}</strong>
         <span className="muted">{draft.id}</span>
+      </td>
+      <td>
+        <select
+          value={draft.config.llmMode ?? "off"}
+          onChange={(e) =>
+            patch({
+              config: {
+                ...draft.config,
+                llmMode: e.target.value as "off" | "shadow",
+              },
+            })
+          }
+          aria-label={`${draft.name} semantic analysis`}
+        >
+          <option value="off">off</option>
+          <option value="shadow">shadow</option>
+        </select>
       </td>
       <td>
         {/* Read-only: which nudge behavior the bot runs (baseline = none).

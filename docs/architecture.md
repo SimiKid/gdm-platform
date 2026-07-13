@@ -62,6 +62,9 @@ NestJS API responsible for:
 - **Matchmaking** — `POST /api/sessions` places a participant into a forming group. If no group exists for the assigned condition, one is created. When the group reaches `groupSize`, a Matrix room is provisioned.
 - **Condition assignment** — if the join request includes a `conditionId` (e.g. from a pilot link `?conditionId=public-neutral`), that condition is used. Otherwise, the system picks the least-completed active condition (balanced assignment). Assignment happens server-side.
 - **Matrix integration** — registers participant Matrix users, creates rooms, invites participants.
+- **Stable room ownership** — the `gdm_orchestrator` Matrix account logs in
+  with `MATRIX_SERVICE_PASSWORD`, so invite-only rooms remain manageable after
+  Session Manager or full-stack restarts.
 - **Survey persistence** — stores entry and exit survey responses.
 - **Session lifecycle** — tracks status transitions: `waiting` -> `running` -> `completed`.
 - **Export** — JSON and CSV export endpoints for all research data.
@@ -76,6 +79,11 @@ NestJS bot runtime responsible for:
 - **Event processing** — normalizes Matrix events (messages, reactions, ranking edits, redactions) and feeds them to the session runtime.
 - **Bot rules** — the `ContributionBotRules` engine evaluates every message against the condition's intervention config and sends nudges when thresholds are crossed. See [bot-rulebook.md](bot-rulebook.md).
 - **Session runtime** — one `SessionRuntime` instance per active session, collecting messages, reactions, ranking history, and intervention logs.
+- **Durable checkpoints** — live runtimes checkpoint messages, behavioral events,
+  semantic classifications, processed Matrix event IDs, and rule cooldown state
+  into the research database. After restart the service registers a new bot,
+  asks the Session Manager to re-invite it, restores running sessions, and
+  replays only unprocessed Matrix events.
 
 The chat service receives a notification from the session manager when a room is provisioned, joins the room, and starts monitoring.
 
@@ -147,9 +155,11 @@ Participant opens http://localhost:3000/
 - **Session Manager -> Matrix (Synapse)**: user registration, room creation, room invites
 - **Session Manager -> Chat Service**: session start notification
 - **Participant -> Matrix**: chat messages, reactions, ranking edits (via matrix-js-sdk)
+- **Participant -> Matrix**: batched typing, cursor activity, and tab-visibility telemetry
 - **Chat Service -> Matrix**: bot nudge messages (public or private)
 - **Matrix -> Chat Service**: real-time event stream via `/sync`
 - **Chat Service -> Session Manager**: finalized session data at session end
+- **Chat Service -> Session Manager**: incremental live checkpoints and final session data
 - **Admin Dashboard -> Session Manager**: condition updates, study settings (compensation link), session queries, exports
 
 ## Key Design Decisions

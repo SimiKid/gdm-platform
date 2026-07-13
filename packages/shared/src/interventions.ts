@@ -35,6 +35,12 @@ export interface InterventionConfig {
   /** Rolling message window used to calculate the contribution split. */
   contributionWindowMinutes: number;
   scoreWeights: ContributionScoreWeights;
+  /** Semantic classifier mode. Shadow records detections but never nudges. */
+  llmMode?: "off" | "shadow";
+  /** Minimum age of a substantive message before it can count as ignored. */
+  ignoredGraceSeconds?: number;
+  /** Other-participant messages required after it before it counts as ignored. */
+  ignoredMinSubsequentMessages?: number;
 }
 
 export interface ContributionShare {
@@ -80,6 +86,9 @@ export const DEFAULT_INTERVENTION_CONFIG: InterventionConfig = {
     messages: 1,
     characters: 0.01,
   },
+  llmMode: "off",
+  ignoredGraceSeconds: 75,
+  ignoredMinSubsequentMessages: 2,
 };
 
 export function audienceForMode(mode: InterventionMode): InterventionAudience {

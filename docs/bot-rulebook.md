@@ -160,6 +160,30 @@ Every intervention is recorded as an `InterventionLog` containing:
 
 These logs are visible in the admin dashboard's **Intervention Audit** section and included in the JSON and CSV exports (`/api/export/sessions`, `/api/export/sessions.csv`).
 
+## Semantic Shadow Mode
+
+Provide `ANTHROPIC_API_KEY` and select `shadow` for a condition in the admin
+dashboard to classify its participant messages with Anthropic's Messages API.
+`LLM_MODE=shadow` is an optional global override. The classifier records:
+
+- whether the message is substantive;
+- a relevance weight from 0 to 2;
+- earlier message IDs it acknowledges, answers, disputes, or develops;
+- model ID, prompt version, exact prompt, raw JSON output, and explanation.
+
+A substantive contribution is marked `ignoredInShadow` after the configured
+grace period when enough other-participant messages followed it and no later
+classification references it. This produces a persisted
+`llm-shadow-trigger` behavioral event. It never sends a nudge and therefore
+cannot alter a study condition. Classifications, raw behavioral events, and
+participant aggregates are available from `/api/export/contributions` and
+`/api/export/contributions.csv`.
+
+Defaults: `ignoredGraceSeconds=75` and
+`ignoredMinSubsequentMessages=2`. The API receives pseudonymous color labels,
+but it does receive chat text; consent and the data-processing documentation
+must state this before shadow mode is used with real participants.
+
 ## Key Source Files
 
 | File | What it does |
@@ -172,5 +196,5 @@ These logs are visible in the admin dashboard's **Intervention Audit** section a
 
 ## Current Limitations
 
-- **No semantic analysis.** The bot measures volume (messages + characters), not content. It cannot detect whether a contribution was actually acknowledged or engaged with.
-- **Fixed message templates.** The bot messages are hardcoded strings, not LLM-generated. An LLM-based approach is listed as a future deferral.
+- Semantic detection is shadow-only; it cannot send a participant-visible nudge.
+- Participant-visible bot messages remain fixed templates rather than LLM-generated text.

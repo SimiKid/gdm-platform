@@ -102,6 +102,7 @@ describe("MatrixBotService", () => {
     );
 
     await bot.onModuleInit();
+    bot.start();
     await vi.waitFor(() => expect(events).toHaveLength(1));
     expect(bot.botUserId).toBe("@bot:localhost");
     expect(events[0]).toMatchObject({ roomId: "!r", type: "m.room.message", eventId: "m1" });

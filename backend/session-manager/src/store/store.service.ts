@@ -8,9 +8,10 @@ import {
 } from "@gdm/shared";
 import type {
   Briefing,
+  BehavioralEvent,
   BotConfig,
-  Chat,
   Condition,
+  ContributionClassification,
   InterventionLog,
   InterventionMode,
   Message,
@@ -207,6 +208,10 @@ export class StoreService implements OnModuleInit {
           rankingTask: json(session.rankingTask),
           ranking: json(session.ranking),
           polls: json(session.polls),
+          behavioralEvents: json(session.behavioralEvents),
+          classifications: json(session.contributionClassifications),
+          processedEventIds: json(session.processedEventIds ?? []),
+          runtimeState: json(session.runtimeState ?? {}),
           durationMinutes: session.durationMinutes,
           roomId: session.roomId,
           createdAt: toDate(session.createdAt),
@@ -222,6 +227,10 @@ export class StoreService implements OnModuleInit {
           rankingTask: json(session.rankingTask),
           ranking: json(session.ranking),
           polls: json(session.polls),
+          behavioralEvents: json(session.behavioralEvents),
+          classifications: json(session.contributionClassifications),
+          processedEventIds: json(session.processedEventIds ?? []),
+          runtimeState: json(session.runtimeState ?? {}),
           durationMinutes: session.durationMinutes,
           roomId: session.roomId,
           startedAt: toOptionalDate(session.startedAt),
@@ -230,6 +239,39 @@ export class StoreService implements OnModuleInit {
       });
 
       await this.saveParticipants(tx, session);
+      await this.replaceMessages(tx, session);
+      await this.replaceRankingHistory(tx, session);
+      await this.replaceInterventions(tx, session);
+    });
+  }
+
+  /** Persist only live chat-owned fields; never overwrite lifecycle/surveys. */
+  async saveRuntimeCheckpoint(session: Session): Promise<void> {
+    if (!this.dbEnabled) {
+      const stored = this.sessions.get(session.id);
+      if (!stored) return;
+      stored.chat = session.chat;
+      stored.ranking = session.ranking;
+      stored.rankingHistory = session.rankingHistory;
+      stored.interventions = session.interventions;
+      stored.behavioralEvents = session.behavioralEvents;
+      stored.contributionClassifications = session.contributionClassifications;
+      stored.processedEventIds = session.processedEventIds;
+      stored.runtimeState = session.runtimeState;
+      return;
+    }
+
+    await this.db.$transaction(async (tx) => {
+      await tx.sessionRecord.update({
+        where: { id: session.id },
+        data: {
+          ranking: json(session.ranking),
+          behavioralEvents: json(session.behavioralEvents),
+          classifications: json(session.contributionClassifications),
+          processedEventIds: json(session.processedEventIds ?? []),
+          runtimeState: json(session.runtimeState ?? {}),
+        },
+      });
       await this.replaceMessages(tx, session);
       await this.replaceRankingHistory(tx, session);
       await this.replaceInterventions(tx, session);
@@ -252,7 +294,7 @@ export class StoreService implements OnModuleInit {
       id: randomUUID(),
       status: "waiting",
       condition,
-      bot: { llmEnabled: false, condition },
+      bot: { llmEnabled: condition.config.llmMode === "shadow", condition },
       participants: [],
       chat: { messages: [] },
       briefing: BRIEFING,
@@ -264,6 +306,10 @@ export class StoreService implements OnModuleInit {
         updatedBy: "system",
       },
       interventions: [],
+      behavioralEvents: [],
+      contributionClassifications: [],
+      processedEventIds: [],
+      runtimeState: {},
       polls: [],
       durationMinutes: condition.durationMinutes,
       createdAt: now,
@@ -593,6 +639,12 @@ function sessionFromRow(row: SessionRow): Session {
     interventions: row.interventions.map(
       (intervention) => fromJson<InterventionLog>(intervention.payload),
     ),
+    behavioralEvents: fromJson<BehavioralEvent[]>(row.behavioralEvents),
+    contributionClassifications: fromJson<ContributionClassification[]>(
+      row.classifications,
+    ),
+    processedEventIds: fromJson<string[]>(row.processedEventIds),
+    runtimeState: fromJson<Record<string, unknown>>(row.runtimeState),
     polls: fromJson<Poll[]>(row.polls),
     durationMinutes: row.durationMinutes,
     roomId: row.roomId ?? undefined,

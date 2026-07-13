@@ -41,6 +41,5 @@ See [docs/getting-started.md](docs/getting-started.md) for prerequisites, ports,
 
 ## Current Deferrals
 
-- Semantic/LLM-based contribution classifier
-- Typing-speed and tab-visibility telemetry
+- Participant-visible semantic/LLM-triggered interventions (classification is shadow-only)
 - Matrix appservice registration for the bot

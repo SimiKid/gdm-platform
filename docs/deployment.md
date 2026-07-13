@@ -41,6 +41,11 @@ VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (never public)
    - Fresh `SYNAPSE_DB_PASSWORD` / `RESEARCH_DB_PASSWORD` — never the dev
      defaults (they are in the git history)
    - `ADMIN_API_TOKEN` / `INTERNAL_API_TOKEN`: `openssl rand -hex 32` each
+   - `MATRIX_SERVICE_PASSWORD`: another generated secret. It authenticates the
+     stable Matrix room owner used to re-invite a bot after service restarts.
+   - For semantic shadow mode, add `ANTHROPIC_API_KEY` and keep the pinned
+     `ANTHROPIC_MODEL`. Leave `LLM_MODE` empty to control shadow mode per
+     condition in the dashboard. The key is read only by `chat-service`.
 
 3. **Log in to GHCR** (needed while the packages are private; a GitHub
    personal access token with `read:packages` suffices):
@@ -103,6 +108,10 @@ your laptop. Every run leaves one more test session in the research DB.
 
 ## Updating
 
+Do not deploy while a discussion is active. Runtime checkpoints make an
+unexpected restart recoverable, but a planned update should still happen
+between sessions.
+
 Merge to `main` → the workflow pushes fresh images → then, on the VM:
 
 ```bash
@@ -112,6 +121,25 @@ cd ~/gdm-platform && git pull && sh infra/deploy.sh
 `git pull` updates compose files/Caddyfile/templates; `deploy.sh` re-renders
 the Synapse config, pulls images and restarts changed containers. Database
 data lives in named volumes and survives all of this.
+
+Prisma migrations run automatically before Session Manager startup. The
+runtime-checkpoint migration adds JSON columns only and does not rewrite or
+delete existing study rows.
+
+## Enabling Anthropic shadow mode
+
+1. Create an API key in the Anthropic Console and fund/enable the workspace.
+2. Put `ANTHROPIC_API_KEY=...` in the VM's `infra/.env`; never commit it.
+3. Keep `ANTHROPIC_MODEL=claude-haiku-4-5-20251001` for reproducible results.
+4. Redeploy the chat service, then select `shadow` for the intended conditions
+   in Admin -> Settings. Alternatively, `LLM_MODE=shadow` forces every arm
+   into shadow mode; `LLM_MODE=off` is an emergency global kill switch.
+5. Run a fake pilot and download **Contributions & behavioral telemetry**.
+   Confirm classifications and `llm-shadow-trigger` events before recruitment.
+
+Shadow mode sends pseudonymized participant labels plus chat text to Anthropic.
+It records model, prompt, raw output, and decisions, but never emits an LLM
+nudge. Consent/data-processing approval must cover the external API first.
 
 ## Rollback
 
