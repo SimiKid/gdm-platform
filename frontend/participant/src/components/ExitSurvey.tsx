@@ -86,7 +86,12 @@ export default function ExitSurvey({ session, participantId, groupRanking, onDon
           discussion.
         </p>
 
-        <RankingBoard items={items} ranked={ranked} onChange={setRanked} />
+        <RankingBoard
+          items={items}
+          ranked={ranked}
+          onChange={setRanked}
+          poolBelow={!!groupRanking?.length}
+        />
 
         <h2>Part 2: Your experience of the group discussion</h2>
         <p>
