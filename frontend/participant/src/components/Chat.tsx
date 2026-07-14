@@ -28,8 +28,8 @@ interface Props {
   client: MatrixClient;
   /** The study session (briefing, ranking, timer). Null on the dev fast-path. */
   session: PublicSession | null;
-  /** Fired once when the discussion timer reaches zero. */
-  onTimeUp?: () => void;
+  /** Fired once when the discussion timer reaches zero, with the final group ranking order. */
+  onTimeUp?: (groupOrder: string[]) => void;
 }
 
 const QUICK_EMOJI = ["👍", "👎", "❤️"];
@@ -77,6 +77,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
   const [activeRoomId, setActiveRoomId] = useState<string | null>(
     session?.roomId ?? null,
   );
+  const [groupOrder, setGroupOrder] = useState<string[]>(session?.ranking.order ?? []);
   const [messages, setMessages] = useState<Message[]>([]);
   const [reactions, setReactions] = useState<Reactions>({});
   const [pickerFor, setPickerFor] = useState<string | null>(null);
@@ -315,10 +316,12 @@ export default function Chat({ client, session, onTimeUp }: Props) {
 
   // Fire onTimeUp exactly once when the discussion timer hits zero.
   const endedRef = useRef(false);
+  const groupOrderRef = useRef(groupOrder);
+  useEffect(() => { groupOrderRef.current = groupOrder; }, [groupOrder]);
   useEffect(() => {
     if (remaining === 0 && !endedRef.current) {
       endedRef.current = true;
-      onTimeUp?.();
+      onTimeUp?.(groupOrderRef.current);
     }
   }, [remaining, onTimeUp]);
 
@@ -571,6 +574,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
               roomId={activeRoomId}
               task={session.rankingTask}
               initial={session.ranking}
+              onChange={setGroupOrder}
             />
           )}
         </aside>

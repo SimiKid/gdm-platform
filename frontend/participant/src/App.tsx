@@ -59,6 +59,7 @@ export default function App() {
   const [session, setSession] = useState<PublicSession | null>(null);
   const [participantId, setParticipantId] = useState("");
   const [client, setClient] = useState<MatrixClient | null>(null);
+  const [groupRanking, setGroupRanking] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [booting, setBooting] = useState(true);
 
@@ -106,6 +107,7 @@ export default function App() {
         case "exit": {
           const refreshed = await httpSessionManager.getSession(progress.sessionId);
           setSession(refreshed);
+          setGroupRanking(refreshed.ranking.order);
           setParticipantId(progress.participantId);
           setStage("exit");
           break;
@@ -191,7 +193,8 @@ export default function App() {
       <Chat
         client={client}
         session={session}
-        onTimeUp={() => {
+        onTimeUp={(finalOrder) => {
+          setGroupRanking(finalOrder);
           updateStage("exit");
           setStage("exit");
         }}
@@ -244,6 +247,7 @@ export default function App() {
         <ExitSurvey
           session={session}
           participantId={participantId}
+          groupRanking={groupRanking}
           onDone={() => {
             updateStage("done");
             setStage("done");
