@@ -12,6 +12,8 @@ interface Props {
   roomId: string;
   task: RankingTask;
   initial: Ranking;
+  /** Called whenever the group ranking order changes. */
+  onChange?: (order: string[]) => void;
 }
 
 /**
@@ -21,8 +23,16 @@ interface Props {
  * `de.gdm.ranking` timeline events (regular members can send these — no power
  * level needed), and incoming events replace the local order (last-write-wins).
  */
-export default function SharedRanking({ client, roomId, task, initial }: Props) {
+export default function SharedRanking({ client, roomId, task, initial, onChange }: Props) {
+  const onChangeRef = useRef(onChange);
+  useEffect(() => { onChangeRef.current = onChange; });
+
   const [order, setOrder] = useState<string[]>(initial.order);
+
+  function applyOrder(next: string[]) {
+    setOrder(next);
+    onChangeRef.current?.(next);
+  }
   const [activity, setActivity] = useState<{
     text: string;
     itemId: string;
@@ -44,7 +54,7 @@ export default function SharedRanking({ client, roomId, task, initial }: Props) 
     for (let i = events.length - 1; i >= 0; i--) {
       if (events[i].getType() === RANKING_EVENT) {
         const content = events[i].getContent() as Ranking;
-        if (Array.isArray(content.order)) setOrder(content.order);
+        if (Array.isArray(content.order)) applyOrder(content.order);
         break;
       }
     }
@@ -54,7 +64,7 @@ export default function SharedRanking({ client, roomId, task, initial }: Props) 
       if (event.getType() !== RANKING_EVENT) return;
       const content = event.getContent() as Ranking;
       if (Array.isArray(content.order)) {
-        setOrder(content.order);
+        applyOrder(content.order);
         if (content.movement && content.updatedBy !== userId) {
           const members = activeRoom.getJoinedMembers().map((member) => member.userId);
           const identity = identityFor(buildIdentities(members), content.updatedBy);
@@ -76,7 +86,7 @@ export default function SharedRanking({ client, roomId, task, initial }: Props) 
   }, [client, labels, roomId, userId]);
 
   function broadcast(next: string[], movement: Ranking["movement"]) {
-    setOrder(next); // optimistic
+    applyOrder(next); // optimistic
     const ranking: Ranking = {
       taskId: task.id,
       order: next,
