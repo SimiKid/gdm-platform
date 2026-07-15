@@ -385,7 +385,7 @@ The JSON export contains three arrays. The CSV contains only the aggregate contr
 | Field | Description |
 |---|---|
 | `substantive` | Whether the LLM judged this message as a real contribution |
-| `relevanceWeight` | Quality score 0–1 assigned by the LLM |
+| `relevanceWeight` | Quality score 0–2 assigned by the LLM (0 = noise/empty agreement, 1 = normal task content, up to 2 = strong concrete contribution) |
 | `references` | Message ids this message explicitly responds to or builds on |
 | `ignoredInShadow` | `true` if this message was substantive but received no follow-up. This is the primary nudge trigger. |
 | `explanation` | Plain-text LLM reasoning for the classification |

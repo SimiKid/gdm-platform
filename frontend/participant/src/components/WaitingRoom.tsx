@@ -185,7 +185,7 @@ export default function WaitingRoom({
       <div className="study-card narrow centered">
         <h1>Waiting room</h1>
         <div className="waiting-spinner" aria-hidden="true" />
-        <p>Thanks — waiting for the group to fill up...</p>
+        <p>Thanks! We're waiting for the group to fill up...</p>
         <p className="waiting-count" aria-live="polite">
           {count}
           {groupSize ? ` / ${groupSize}` : ""} people joined
