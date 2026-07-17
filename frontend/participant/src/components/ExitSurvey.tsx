@@ -16,6 +16,8 @@ function numericScale(n: number) {
 interface Props {
   session: PublicSession;
   participantId: string;
+  /** The group's final ranking order, used as the pre-filled default. */
+  groupRanking?: string[];
   /** Called once the exit survey is submitted and the session is completed. */
   onDone: () => void;
 }
@@ -28,9 +30,9 @@ interface Props {
  * post-discussion view). Part 2 rates the group experience on 1–7 scales.
  * Submitting persists everything and completes the session.
  */
-export default function ExitSurvey({ session, participantId, onDone }: Props) {
+export default function ExitSurvey({ session, participantId, groupRanking, onDone }: Props) {
   const items = session.rankingTask.items;
-  const [ranked, setRanked] = useState<string[]>([]);
+  const [ranked, setRanked] = useState<string[]>(groupRanking ?? []);
   const [satisfaction, setSatisfaction] = useState("");
   const [fairness, setFairness] = useState("");
   const [feltHeard, setFeltHeard] = useState("");
@@ -77,13 +79,19 @@ export default function ExitSurvey({ session, participantId, onDone }: Props) {
 
         <h2>Part 1: Your final ranking</h2>
         <p>
-          Now that the group discussion is over, please rank the 15 items one
-          more time on your own. Your ranking may match the team's or differ
-          from it. There is no right answer here; we are interested in your
-          personal view after the discussion.
+          Now that the group discussion is over, please give your personal
+          ranking of the 15 items. The group's final ranking is pre-filled as a
+          starting point — adjust it to reflect your own view. There is no right
+          answer here; we are interested in your personal view after the
+          discussion.
         </p>
 
-        <RankingBoard items={items} ranked={ranked} onChange={setRanked} />
+        <RankingBoard
+          items={items}
+          ranked={ranked}
+          onChange={setRanked}
+          poolBelow={!!groupRanking?.length}
+        />
 
         <h2>Part 2: Your experience of the group discussion</h2>
         <p>
