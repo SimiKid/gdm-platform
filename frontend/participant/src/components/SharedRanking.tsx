@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { DragEvent } from "react";
 import type { MatrixClient, MatrixEvent } from "matrix-js-sdk";
 import { RoomEvent } from "matrix-js-sdk";
 import { MATRIX_EVENT_TYPES } from "@gdm/shared";
@@ -33,6 +34,8 @@ export default function SharedRanking({ client, roomId, task, initial, onChange 
     setOrder(next);
     onChangeRef.current?.(next);
   }
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropBoundary, setDropBoundary] = useState<number | null>(null);
   const [activity, setActivity] = useState<{
     text: string;
     itemId: string;
@@ -106,17 +109,78 @@ export default function SharedRanking({ client, roomId, task, initial, onChange 
     broadcast(next, { itemId: order[index], from: index, to: j });
   }
 
+  function onDragStart(event: DragEvent, id: string) {
+    setDragId(id);
+    event.dataTransfer.setData("text/plain", id);
+    event.dataTransfer.effectAllowed = "move";
+  }
+
+  function onDragOver(event: DragEvent, index: number) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const rect = event.currentTarget.getBoundingClientRect();
+    const after = event.clientY >= rect.top + rect.height / 2;
+    setDropBoundary(index + (after ? 1 : 0));
+  }
+
+  function finishDrag() {
+    setDragId(null);
+    setDropBoundary(null);
+  }
+
+  function onDrop(event: DragEvent) {
+    event.preventDefault();
+    const id = event.dataTransfer.getData("text/plain") || dragId;
+    if (!id || dropBoundary === null) {
+      finishDrag();
+      return;
+    }
+
+    // Use the item at the insertion boundary as an anchor. Removing the
+    // dragged item first otherwise shifts indexes during downward moves.
+    const from = order.indexOf(id);
+    const anchor = dropBoundary >= order.length ? null : order[dropBoundary];
+    if (from < 0 || anchor === id) {
+      finishDrag();
+      return;
+    }
+    const next = order.filter((itemId) => itemId !== id);
+    const insertionIndex = anchor === null ? next.length : next.indexOf(anchor);
+    next.splice(insertionIndex < 0 ? next.length : insertionIndex, 0, id);
+    const to = next.indexOf(id);
+    if (to !== from) broadcast(next, { itemId: id, from, to });
+    finishDrag();
+  }
+
   return (
     <div className="ranking">
       <h3>{task.title}</h3>
       <div className="ranking-activity" aria-live="polite">
         {activity?.text ?? "\u00a0"}
       </div>
-      <ol className="ranking-list">
+      <ol
+        className="ranking-list shared-ranking-list"
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={onDrop}
+      >
         {order.map((id, idx) => (
           <li
             key={id}
-            className={`ranking-item ${activity?.itemId === id ? "remote-move" : ""}`}
+            className={[
+              "ranking-item",
+              activity?.itemId === id ? "remote-move" : "",
+              dragId === id ? "dragging" : "",
+              dropBoundary === idx && dragId !== id ? "drop-before" : "",
+              dropBoundary === order.length && idx === order.length - 1
+                ? "drop-after"
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            draggable
+            onDragStart={(event) => onDragStart(event, id)}
+            onDragOver={(event) => onDragOver(event, idx)}
+            onDragEnd={finishDrag}
           >
             <span className="rank-num">{idx + 1}</span>
             <span className="rank-label">{labels.get(id) ?? id}</span>

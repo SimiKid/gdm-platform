@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { StoreService } from "./store.service";
+import { shuffleRankingOrder, StoreService } from "./store.service";
 import type { Participant } from "@gdm/shared";
 
 const participant = (id: string): Participant => ({
@@ -50,8 +50,19 @@ describe("StoreService", () => {
     expect(session.participants).toEqual([]);
     expect(session.rankingTask.items.length).toBeGreaterThan(0);
     expect(session.ranking.order).toHaveLength(session.rankingTask.items.length);
+    expect([...session.ranking.order].sort()).toEqual(
+      session.rankingTask.items.map((item) => item.id).sort(),
+    );
     expect(session.interventions).toEqual([]);
     expect(await store.getSession(session.id)).toBe(session);
+  });
+
+  it("shuffles a ranking without mutating the task item order", () => {
+    const itemIds = ["a", "b", "c", "d"];
+    const shuffled = shuffleRankingOrder(itemIds, () => 0);
+
+    expect(shuffled).toEqual(["b", "c", "d", "a"]);
+    expect(itemIds).toEqual(["a", "b", "c", "d"]);
   });
 
   it("findForming returns the oldest waiting session with a free seat", async () => {

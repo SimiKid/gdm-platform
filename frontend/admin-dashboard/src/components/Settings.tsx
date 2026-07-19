@@ -99,8 +99,6 @@ function CompensationCard() {
 
 function ConditionsCard({ rows, onSaved }: Props) {
   const studyRows = rows.filter((row) => !isTestCondition(row.condition.id));
-  const testRows = rows.filter((row) => isTestCondition(row.condition.id));
-  const activeTestCount = testRows.filter((row) => row.condition.active).length;
 
   return (
     <section className="section">
@@ -111,33 +109,11 @@ function ConditionsCard({ rows, onSaved }: Props) {
         already running ones keep their settings.
       </p>
       <ConditionsTable rows={studyRows} onSaved={onSaved} />
-
-      {testRows.length > 0 && (
-        <details className="test-conditions" open={activeTestCount > 0}>
-          <summary>
-            Test conditions from E2E runs ({testRows.length})
-            {activeTestCount > 0 && (
-              <strong className="bad">
-                {" "}
-                — {activeTestCount} still active! Switch off, or real
-                participants can be matched into a test session.
-              </strong>
-            )}
-          </summary>
-          <p className="hint">
-            Each automated end-to-end run creates its own throwaway arm
-            (baseline, 1-minute discussion) and switches it off afterwards.
-            These are kept for inspecting the test data and are safe to ignore
-            — as long as they stay off.
-          </p>
-          <ConditionsTable rows={testRows} onSaved={onSaved} />
-        </details>
-      )}
     </section>
   );
 }
 
-function ConditionsTable({ rows, onSaved }: Props) {
+export function ConditionsTable({ rows, onSaved }: Props) {
   if (rows.length === 0) return null;
   return (
     <div className="table-wrap" aria-label="Condition settings">
