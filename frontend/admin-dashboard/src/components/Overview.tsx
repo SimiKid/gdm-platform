@@ -34,16 +34,8 @@ export default function Overview({ rows, sessions }: Props) {
     () => rows.filter((row) => !isTestCondition(row.condition.id)),
     [rows],
   );
-  const testRows = useMemo(
-    () => rows.filter((row) => isTestCondition(row.condition.id)),
-    [rows],
-  );
   const studySessions = useMemo(
     () => sessions.filter((s) => !isTestCondition(s.conditionId)),
-    [sessions],
-  );
-  const testSessions = useMemo(
-    () => sessions.filter((s) => isTestCondition(s.conditionId)),
     [sessions],
   );
   const liveCount = studySessions.filter((s) => s.status === "running").length;
@@ -70,12 +62,12 @@ export default function Overview({ rows, sessions }: Props) {
       </section>
 
       <div className="two-col">
-        <StudyLinkCard rows={studyRows} />
+        <StudyLinkCard />
         <ExportCard />
       </div>
 
-      <ConditionTracking rows={studyRows} testRows={testRows} />
-      <SessionsTable sessions={studySessions} testSessions={testSessions} />
+      <ConditionTracking rows={studyRows} />
+      <SessionsTable sessions={studySessions} />
     </>
   );
 }
@@ -100,7 +92,7 @@ function Metric({
 }
 
 /** The one generic link researchers hand out (participants self-register). */
-function StudyLinkCard({ rows }: { rows: ConditionProgress[] }) {
+function StudyLinkCard() {
   const link = `${PARTICIPANT_BASE}/`;
   return (
     <section className="section">
@@ -113,19 +105,29 @@ function StudyLinkCard({ rows }: { rows: ConditionProgress[] }) {
         <input readOnly value={link} onFocus={(e) => e.target.select()} />
         <CopyButton text={link} />
       </div>
-      <details>
-        <summary>Pilot links (force a condition — testing only)</summary>
-        {rows.map(({ condition }) => {
-          const pilot = `${PARTICIPANT_BASE}/?conditionId=${condition.id}`;
-          return (
-            <div className="copy-row" key={condition.id}>
-              <span className="pilot-name">{condition.name}</span>
-              <input readOnly value={pilot} onFocus={(e) => e.target.select()} />
-              <CopyButton text={pilot} />
-            </div>
-          );
-        })}
-      </details>
+    </section>
+  );
+}
+
+/** Forced-condition links are isolated in the dedicated Testing view. */
+export function PilotLinksCard({ rows }: { rows: ConditionProgress[] }) {
+  return (
+    <section className="section">
+      <h2>Pilot Links</h2>
+      <p className="hint">
+        Open a participant flow in a specific study condition for manual
+        testing. Do not distribute these links to recruited participants.
+      </p>
+      {rows.map(({ condition }) => {
+        const pilot = `${PARTICIPANT_BASE}/?conditionId=${condition.id}`;
+        return (
+          <div className="copy-row" key={condition.id}>
+            <span className="pilot-name">{condition.name}</span>
+            <input readOnly value={pilot} onFocus={(e) => e.target.select()} />
+            <CopyButton text={pilot} />
+          </div>
+        );
+      })}
     </section>
   );
 }
@@ -185,14 +187,7 @@ function ExportCard() {
 }
 
 /** "# Completed per condition" — the wireframe's tracking block. */
-function ConditionTracking({
-  rows,
-  testRows,
-}: {
-  rows: ConditionProgress[];
-  testRows: ConditionProgress[];
-}) {
-  const activeTestCount = testRows.filter((row) => row.condition.active).length;
+function ConditionTracking({ rows }: { rows: ConditionProgress[] }) {
   return (
     <section className="section">
       <h2>Completed per Condition</h2>
@@ -201,24 +196,6 @@ function ConditionTracking({
           <TrackingRow key={row.condition.id} row={row} />
         ))}
       </div>
-      {testRows.length > 0 && (
-        <details className="test-conditions" open={activeTestCount > 0}>
-          <summary>
-            Test conditions from E2E runs ({testRows.length})
-            {activeTestCount > 0 && (
-              <strong className="bad">
-                {" "}
-                — {activeTestCount} still active! Switch off in Settings.
-              </strong>
-            )}
-          </summary>
-          <div className="tracking">
-            {testRows.map((row) => (
-              <TrackingRow key={row.condition.id} row={row} />
-            ))}
-          </div>
-        </details>
-      )}
     </section>
   );
 }
@@ -244,12 +221,16 @@ function TrackingRow({ row }: { row: ConditionProgress }) {
   );
 }
 
-function SessionsTable({
+export function SessionsTable({
   sessions,
-  testSessions,
+  title = "Sessions",
+  emptyMessage = "No sessions yet.",
+  label = "Sessions",
 }: {
   sessions: SessionSummary[];
-  testSessions: SessionSummary[];
+  title?: string;
+  emptyMessage?: string;
+  label?: string;
 }) {
   const [detail, setDetail] = useState<Session | null>(null);
 
@@ -272,37 +253,17 @@ function SessionsTable({
     if (res.ok) setDetail((await res.json()) as Session);
   }
 
-  const activeTestCount = testSessions.filter(
-    (s) => s.status === "running" || s.status === "waiting",
-  ).length;
-
   return (
     <section className="section">
-      <h2>Sessions</h2>
-      {sessions.length === 0 && <p className="empty">No sessions yet.</p>}
+      <h2>{title}</h2>
+      {sessions.length === 0 && <p className="empty">{emptyMessage}</p>}
       {sessions.length > 0 && (
         <SessionRows
           sessions={sessions}
           selectedId={detail?.id}
           onOpen={open}
-          label="Sessions"
+          label={label}
         />
-      )}
-      {testSessions.length > 0 && (
-        <details className="test-conditions" open={activeTestCount > 0}>
-          <summary>
-            Sessions from E2E runs ({testSessions.length})
-            {activeTestCount > 0 && (
-              <strong className="bad"> — {activeTestCount} still open!</strong>
-            )}
-          </summary>
-          <SessionRows
-            sessions={testSessions}
-            selectedId={detail?.id}
-            onOpen={open}
-            label="E2E sessions"
-          />
-        </details>
       )}
       {detail && <SessionDetail session={detail} />}
     </section>
