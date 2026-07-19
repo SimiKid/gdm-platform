@@ -1,16 +1,38 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { MatrixClient } from "matrix-js-sdk";
+import { RoomEvent } from "matrix-js-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MATRIX_EVENT_TYPES } from "@gdm/shared";
 import Chat from "./Chat";
 
 const ROOM_ID = "!room:test";
 
-function createClient() {
+interface FakeMessage {
+  id: string;
+  sender: string;
+  body: string;
+  ts: number;
+}
+
+function matrixMessage({ id, sender, body, ts }: FakeMessage) {
+  return {
+    isRedacted: () => false,
+    getType: () => "m.room.message",
+    getContent: () => ({ body }),
+    getSender: () => sender,
+    getId: () => id,
+    getTs: () => ts,
+    status: null,
+  };
+}
+
+function createClient(initialMessages: FakeMessage[] = []) {
+  const events = initialMessages.map(matrixMessage);
+  const listeners = new Map<unknown, Set<(...args: unknown[]) => void>>();
   const room = {
     roomId: ROOM_ID,
     name: "Test room",
-    getLiveTimeline: () => ({ getEvents: () => [] }),
+    getLiveTimeline: () => ({ getEvents: () => events }),
     getJoinedMembers: () => [],
   };
   const sendEvent = vi.fn().mockResolvedValue({ event_id: "$event" });
@@ -19,15 +41,34 @@ function createClient() {
     getUserId: () => "@participant:test",
     getRooms: () => [room],
     getRoom: () => room,
-    on: vi.fn(),
-    off: vi.fn(),
+    on: vi.fn((event: unknown, handler: (...args: unknown[]) => void) => {
+      const handlers = listeners.get(event) ?? new Set();
+      handlers.add(handler);
+      listeners.set(event, handlers);
+    }),
+    off: vi.fn((event: unknown, handler: (...args: unknown[]) => void) => {
+      listeners.get(event)?.delete(handler);
+    }),
     sendEvent,
     sendTyping,
     sendTextMessage: vi.fn().mockResolvedValue({ event_id: "$message" }),
     redactEvent: vi.fn().mockResolvedValue({ event_id: "$redaction" }),
   };
 
-  return { client: client as unknown as MatrixClient, sendEvent, sendTyping };
+  function pushMessage(message: FakeMessage) {
+    const event = matrixMessage(message);
+    events.push(event);
+    for (const handler of listeners.get(RoomEvent.Timeline) ?? []) {
+      handler(event, room);
+    }
+  }
+
+  return {
+    client: client as unknown as MatrixClient,
+    sendEvent,
+    sendTyping,
+    pushMessage,
+  };
 }
 
 describe("Chat telemetry", () => {
@@ -90,5 +131,71 @@ describe("Chat telemetry", () => {
         lastY: 172,
       },
     );
+  });
+
+  it("shows a timestamp on bot messages", () => {
+    const ts = new Date(2026, 0, 2, 9, 5).getTime();
+    const { client } = createClient([
+      {
+        id: "$bot",
+        sender: "@gdm_bot:test",
+        body: "Please make room for quieter members.",
+        ts,
+      },
+    ]);
+
+    render(<Chat client={client} session={null} />);
+
+    expect(screen.getByText("🤖 Assistant")).toBeInTheDocument();
+    expect(screen.getByText("9:05")).toHaveClass("bot-meta");
+  });
+
+  it("preserves a scrolled-up position and counts new messages", () => {
+    const { client, pushMessage } = createClient([
+      {
+        id: "$first",
+        sender: "@other:test",
+        body: "First message",
+        ts: Date.now(),
+      },
+    ]);
+    const { container } = render(<Chat client={client} session={null} />);
+    const viewport = container.querySelector(".messages") as HTMLDivElement;
+    Object.defineProperties(viewport, {
+      scrollHeight: { configurable: true, value: 1000 },
+      clientHeight: { configurable: true, value: 200 },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+    });
+    fireEvent.scroll(viewport);
+
+    act(() => {
+      pushMessage({
+        id: "$second",
+        sender: "@other:test",
+        body: "Second message",
+        ts: Date.now() + 1,
+      });
+      pushMessage({
+        id: "$third",
+        sender: "@other:test",
+        body: "Third message",
+        ts: Date.now() + 2,
+      });
+    });
+
+    const indicator = screen.getByRole("button", { name: "2 new messages ↓" });
+    expect(indicator).toBeInTheDocument();
+    fireEvent.click(indicator);
+    expect(indicator).not.toBeInTheDocument();
+  });
+
+  it("prevents pasting into the message input", () => {
+    const { client } = createClient();
+    render(<Chat client={client} session={null} />);
+    const input = screen.getByPlaceholderText("Type a message");
+    const paste = new Event("paste", { bubbles: true, cancelable: true });
+
+    expect(fireEvent(input, paste)).toBe(false);
+    expect(paste.defaultPrevented).toBe(true);
   });
 });

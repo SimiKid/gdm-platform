@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ConditionProgress, SessionSummary } from "@gdm/shared";
 import Overview from "./components/Overview";
 import Settings from "./components/Settings";
+import Testing from "./components/Testing";
 import { apiFetch, getAdminToken, setAdminToken } from "./api";
 
 export { API_BASE, PARTICIPANT_BASE } from "./api";
@@ -9,7 +10,7 @@ export { API_BASE, PARTICIPANT_BASE } from "./api";
 /** How often the dashboard refreshes itself (drives the "Live" indicator). */
 const POLL_MS = 5000;
 
-type View = "overview" | "settings";
+type View = "overview" | "settings" | "testing";
 
 export default function App() {
   const [view, setView] = useState<View>("overview");
@@ -76,15 +77,28 @@ export default function App() {
           >
             Settings
           </button>
+          <button
+            type="button"
+            className={view === "testing" ? "tab active" : "tab"}
+            onClick={() => setView("testing")}
+          >
+            Testing
+          </button>
         </nav>
       </header>
 
       {error && <p className="error">{error}</p>}
 
-      {view === "overview" ? (
-        <Overview rows={rows} sessions={sessions} />
-      ) : (
+      {view === "overview" && <Overview rows={rows} sessions={sessions} />}
+      {view === "settings" && (
         <Settings rows={rows} onSaved={() => void load()} />
+      )}
+      {view === "testing" && (
+        <Testing
+          rows={rows}
+          sessions={sessions}
+          onSaved={() => void load()}
+        />
       )}
     </main>
   );

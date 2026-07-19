@@ -1,6 +1,6 @@
 import { Injectable, OnModuleInit, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import {
   DEFAULT_INTERVENTION_CONFIG,
   MOON_SURVIVAL,
@@ -301,7 +301,9 @@ export class StoreService implements OnModuleInit {
       rankingTask: RANKING_TASK,
       ranking: {
         taskId: RANKING_TASK.id,
-        order: RANKING_TASK.items.map((i) => i.id),
+        // Shuffle once when the group session is created. The persisted order
+        // is then shared with every participant in that session.
+        order: shuffleRankingOrder(RANKING_TASK.items.map((i) => i.id)),
         updatedAt: now,
         updatedBy: "system",
       },
@@ -531,6 +533,22 @@ export class StoreService implements OnModuleInit {
       });
     }
   }
+}
+
+/** Unbiased Fisher-Yates shuffle for a new shared-ranking starting order. */
+export function shuffleRankingOrder(
+  itemIds: string[],
+  pickIndex: (maxExclusive: number) => number = randomInt,
+): string[] {
+  const shuffled = itemIds.slice();
+  for (let index = shuffled.length - 1; index > 0; index--) {
+    const swapWith = pickIndex(index + 1);
+    [shuffled[index], shuffled[swapWith]] = [
+      shuffled[swapWith],
+      shuffled[index],
+    ];
+  }
+  return shuffled;
 }
 
 function seedConditions(): Condition[] {

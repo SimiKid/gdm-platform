@@ -83,7 +83,11 @@ export default function Chat({ client, session, onTimeUp }: Props) {
   const [pickerFor, setPickerFor] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [typingMembers, setTypingMembers] = useState<string[]>([]);
+  const [newMessageCount, setNewMessageCount] = useState(0);
+  const messagesViewportRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const previousMessageCount = useRef(0);
+  const isNearMessageEnd = useRef(true);
   const typingStartedAt = useRef<number | null>(null);
   const typingStopTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingRenewInterval = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -310,9 +314,51 @@ export default function Chat({ client, session, onTimeUp }: Props) {
     };
   }, [activeRoomId, sendBehavior]);
 
+  const scrollToLatest = useCallback((behavior: ScrollBehavior = "smooth") => {
+    isNearMessageEnd.current = true;
+    setNewMessageCount(0);
+    messagesEndRef.current?.scrollIntoView({ behavior });
+  }, []);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    previousMessageCount.current = 0;
+    isNearMessageEnd.current = true;
+    setNewMessageCount(0);
+  }, [activeRoomId]);
+
+  // Keep following the conversation only while the participant is already at
+  // the bottom. If they scroll up to read, preserve that position and surface
+  // a WhatsApp-style count instead of pulling the viewport away.
+  useEffect(() => {
+    const previousCount = previousMessageCount.current;
+    const addedCount = Math.max(0, messages.length - previousCount);
+    const addedMessages =
+      addedCount > 0 ? messages.slice(messages.length - addedCount) : [];
+    previousMessageCount.current = messages.length;
+
+    if (messages.length === 0) {
+      setNewMessageCount(0);
+      return;
+    }
+    if (
+      previousCount === 0 ||
+      isNearMessageEnd.current ||
+      addedMessages.some((message) => message.isOwn)
+    ) {
+      scrollToLatest(previousCount === 0 ? "auto" : "smooth");
+    } else if (addedCount > 0) {
+      setNewMessageCount((count) => count + addedCount);
+    }
+  }, [messages, scrollToLatest]);
+
+  function trackMessageScroll() {
+    const viewport = messagesViewportRef.current;
+    if (!viewport) return;
+    const nearEnd =
+      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 48;
+    isNearMessageEnd.current = nearEnd;
+    if (nearEnd) setNewMessageCount(0);
+  }
 
   // Fire onTimeUp exactly once when the discussion timer hits zero.
   const endedRef = useRef(false);
@@ -415,89 +461,108 @@ export default function Chat({ client, session, onTimeUp }: Props) {
         </div>
         {activeRoomId ? (
           <>
-            <div className="messages">
-              {messages.map((msg) => {
-                if (msg.fromBot) {
+            <div className="messages-shell">
+              <div
+                className="messages"
+                ref={messagesViewportRef}
+                onScroll={trackMessageScroll}
+              >
+                {messages.map((msg) => {
+                  if (msg.fromBot) {
+                    return (
+                      <div
+                        key={msg.id}
+                        className={`bot-message ${msg.recipient ? "private" : ""}`}
+                      >
+                        <div className="bot-label">
+                          <span>
+                            🤖 Assistant
+                            {msg.recipient ? " · only you can see this" : ""}
+                          </span>
+                          <span className="bot-meta">{formatClock(msg.ts)}</span>
+                        </div>
+                        <div className="bot-body">{msg.body}</div>
+                      </div>
+                    );
+                  }
+                  const msgReactions = reactions[msg.id] ?? {};
                   return (
                     <div
                       key={msg.id}
-                      className={`bot-message ${msg.recipient ? "private" : ""}`}
+                      className={`message ${msg.isOwn ? "own" : "other"}`}
                     >
-                      <div className="bot-label">
-                        🤖 Assistant
-                        {msg.recipient ? " · only you can see this" : ""}
-                      </div>
-                      <div className="bot-body">{msg.body}</div>
+                      {!msg.isOwn && (
+                        <div
+                          className="sender"
+                          style={{ color: identityFor(identities, msg.sender).color }}
+                        >
+                          {identityFor(identities, msg.sender).name}
+                        </div>
+                      )}
+                      <div className="body">{msg.body}</div>
+                      <span className="meta">{formatClock(msg.ts)}</span>
+
+                      {/* Reactions target the event id, which is temporary
+                          until the server confirms the message. */}
+                      {!msg.pending && (
+                        <button
+                          type="button"
+                          className="react-btn"
+                          aria-label="Add reaction"
+                          onClick={() =>
+                            setPickerFor((cur) => (cur === msg.id ? null : msg.id))
+                          }
+                        >
+                          +
+                        </button>
+                      )}
+                      {pickerFor === msg.id && (
+                        <div
+                          className={`emoji-picker ${
+                            msg.id === firstReactableMessageId ? "below" : ""
+                          }`}
+                        >
+                          {QUICK_EMOJI.map((em) => (
+                            <button
+                              key={em}
+                              type="button"
+                              onClick={() => toggleReaction(msg.id, em)}
+                            >
+                              {em}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {Object.keys(msgReactions).length > 0 && (
+                        <div className="reactions">
+                          {Object.entries(msgReactions).map(([key, r]) => (
+                            <button
+                              key={key}
+                              type="button"
+                              className={`reaction ${r.mine ? "mine" : ""}`}
+                              onClick={() => toggleReaction(msg.id, key)}
+                            >
+                              {key} {r.count}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
-                }
-                const msgReactions = reactions[msg.id] ?? {};
-                return (
-                  <div
-                    key={msg.id}
-                    className={`message ${msg.isOwn ? "own" : "other"}`}
-                  >
-                    {!msg.isOwn && (
-                      <div
-                        className="sender"
-                        style={{ color: identityFor(identities, msg.sender).color }}
-                      >
-                        {identityFor(identities, msg.sender).name}
-                      </div>
-                    )}
-                    <div className="body">{msg.body}</div>
-                    <span className="meta">{formatClock(msg.ts)}</span>
-
-                    {/* Reactions target the event id, which is temporary
-                        until the server confirms the message. */}
-                    {!msg.pending && (
-                      <button
-                        type="button"
-                        className="react-btn"
-                        aria-label="Add reaction"
-                        onClick={() =>
-                          setPickerFor((cur) => (cur === msg.id ? null : msg.id))
-                        }
-                      >
-                        +
-                      </button>
-                    )}
-                    {pickerFor === msg.id && (
-                      <div
-                        className={`emoji-picker ${
-                          msg.id === firstReactableMessageId ? "below" : ""
-                        }`}
-                      >
-                        {QUICK_EMOJI.map((em) => (
-                          <button
-                            key={em}
-                            type="button"
-                            onClick={() => toggleReaction(msg.id, em)}
-                          >
-                            {em}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                    {Object.keys(msgReactions).length > 0 && (
-                      <div className="reactions">
-                        {Object.entries(msgReactions).map(([key, r]) => (
-                          <button
-                            key={key}
-                            type="button"
-                            className={`reaction ${r.mine ? "mine" : ""}`}
-                            onClick={() => toggleReaction(msg.id, key)}
-                          >
-                            {key} {r.count}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              <div ref={messagesEndRef} />
+                })}
+                <div ref={messagesEndRef} />
+              </div>
+              {newMessageCount > 0 && (
+                <button
+                  type="button"
+                  className="new-messages"
+                  onClick={() => scrollToLatest()}
+                >
+                  {newMessageCount} new{" "}
+                  {newMessageCount === 1 ? "message" : "messages"} ↓
+                </button>
+              )}
             </div>
             {sendError && (
               <p className="error" role="alert">
@@ -515,6 +580,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
                 value={input}
                 onChange={(e) => updateInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && void sendMessage()}
+                onPaste={(e) => e.preventDefault()}
                 autoFocus
               />
               <button onClick={() => void sendMessage()} aria-label="Send">

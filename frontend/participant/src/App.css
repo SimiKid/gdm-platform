@@ -497,6 +497,10 @@ body {
   box-shadow: 0 -3px 0 0 var(--accent);
 }
 
+.ranking-item.drop-after {
+  box-shadow: 0 3px 0 0 var(--accent);
+}
+
 .rank-num {
   width: 1.6rem;
   height: 1.6rem;
@@ -793,14 +797,41 @@ body {
 
 /* ── Messages ────────────────────────────────── */
 
-.messages {
+.messages-shell {
+  position: relative;
   flex: 1;
+  min-height: 0;
+}
+
+.messages {
+  height: 100%;
   overflow-y: auto;
   padding: 1rem 1.5rem;
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
   background: #e9ecf3;
+}
+
+.new-messages {
+  position: absolute;
+  left: 50%;
+  bottom: 0.75rem;
+  z-index: 4;
+  transform: translateX(-50%);
+  padding: 0.45rem 0.8rem;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--accent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.new-messages:hover {
+  background: var(--accent-tint);
 }
 
 .message {
@@ -863,10 +894,19 @@ body {
 }
 
 .bot-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
   font-size: 0.7rem;
   font-weight: 600;
   color: #b8860b;
   margin-bottom: 0.15rem;
+}
+
+.bot-meta {
+  flex-shrink: 0;
+  color: #667781;
+  font-weight: 400;
 }
 
 .bot-message.private .bot-label {
@@ -1063,6 +1103,14 @@ body {
   background: #fafafa;
 }
 
+.panel-col .shared-ranking-list .ranking-item {
+  cursor: grab;
+}
+
+.panel-col .shared-ranking-list .ranking-item:active {
+  cursor: grabbing;
+}
+
 .panel-col .rank-num {
   width: 1.4rem;
   height: 1.4rem;
@@ -1078,6 +1126,10 @@ body {
 /* ── Timer (chat side panel) ─────────────────── */
 
 .timer {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  flex-shrink: 0;
   text-align: center;
   font-weight: 600;
   font-size: 0.95rem;
