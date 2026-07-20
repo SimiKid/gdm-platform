@@ -127,6 +127,7 @@ export function ConditionsTable({ rows, onSaved }: Props) {
             <th>Goal</th>
             <th>Discussion time (min)</th>
             <th># People</th>
+            <th>Rolling window (min)</th>
             <th>Progress</th>
             <th />
           </tr>
@@ -238,6 +239,17 @@ function ConditionRow({ row, onSaved }: { row: ConditionProgress; onSaved: () =>
           value={draft.groupSize}
           min={2}
           onChange={(groupSize) => patch({ groupSize })}
+        />
+      </td>
+      <td className="num">
+        <NumberInput
+          value={draft.config.contributionWindowMinutes}
+          min={1}
+          onChange={(contributionWindowMinutes) =>
+            patch({
+              config: { ...draft.config, contributionWindowMinutes },
+            })
+          }
         />
       </td>
       <td>
