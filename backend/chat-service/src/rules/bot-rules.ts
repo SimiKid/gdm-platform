@@ -96,7 +96,11 @@ export class ContributionBotRules implements BotRules {
     if (audience === "none") return;
     const selectedTargets =
       audience === "private" ? eligibleTargets : [eligibleTargets[0]];
-    const quietMembers = quietestMembers(split, selectedTargets);
+    const quietMembers = quietestMembers(
+      split,
+      selectedTargets,
+      config.contributionThreshold,
+    );
 
     if (audience === "public") {
       const message = buildMessage(mode, split, selectedTargets[0], quietMembers);
@@ -303,10 +307,13 @@ function markIntervened(
 function quietestMembers(
   split: ContributionShare[],
   targets: ContributionShare[],
+  threshold: number,
 ): InterventionTarget[] {
   const targetIds = new Set(targets.map((target) => target.userId));
   return split
-    .filter((entry) => !targetIds.has(entry.userId))
+    .filter(
+      (entry) => !targetIds.has(entry.userId) && entry.share < threshold,
+    )
     .sort(
       (a, b) => a.share - b.share || a.identityName.localeCompare(b.identityName),
     )
@@ -317,30 +324,42 @@ function quietestMembers(
 function buildMessage(
   mode: InterventionMode,
   split: ContributionShare[],
-  target: InterventionTarget,
+  target: ContributionShare,
   quietMembers: InterventionTarget[],
 ): string {
   const status = `Current participation split:\n\n${formatSplit(split)}.`;
   const quiet = formatQuietMembers(quietMembers);
+  const topPhrase = isShareLeader(split, target)
+    ? "you are the top contributor"
+    : "you are among the top contributors";
 
   switch (mode) {
     case "public-neutral":
       return `${status}\n\n@all, consider this info as you continue with your conversations.`;
     case "public-engaging":
       return (
-        `${status}\n\n@${target.identityName}, you are the top contributor right now. ` +
+        `${status}\n\n@${target.identityName}, ${topPhrase} right now. ` +
         `Now might be a good time to check in with group members who did not contribute as much, such as ${quiet} - you might be missing something useful.`
       );
     case "private-neutral":
       return `${status}\n\n@${target.identityName}, consider this info as you continue.`;
     case "private-engaging":
       return (
-        `${status}\n\n@${target.identityName}, you are the top contributor right now. ` +
+        `${status}\n\n@${target.identityName}, ${topPhrase} right now. ` +
         `Now might be a good time to check in with group members who did not contribute as much, such as ${quiet} - you might be missing something useful.`
       );
     case "baseline":
       return "";
   }
+}
+
+function isShareLeader(
+  split: ContributionShare[],
+  target: ContributionShare,
+): boolean {
+  return split.every(
+    (entry) => entry.userId === target.userId || entry.share <= target.share,
+  );
 }
 
 function formatSplit(split: ContributionShare[]): string {
