@@ -592,9 +592,11 @@ function normalizeCondition(condition: Condition): Condition {
         ...DEFAULT_INTERVENTION_CONFIG.scoreWeights,
         ...condition.config.scoreWeights,
       },
-      contributionWindowMinutes:
+      contributionWindowMinutes: clampInt(
         condition.config.contributionWindowMinutes ??
-        DEFAULT_INTERVENTION_CONFIG.contributionWindowMinutes,
+          DEFAULT_INTERVENTION_CONFIG.contributionWindowMinutes,
+        1,
+      ),
     },
   };
 }
