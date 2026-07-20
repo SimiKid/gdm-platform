@@ -112,7 +112,7 @@ function TokenGate({ onSubmit }: { onSubmit: () => void }) {
       <header className="topbar">
         <div>
           <h1>Study Admin</h1>
-          <p>This dashboard is protected — enter the admin token.</p>
+          <p>This dashboard is protected. Please enter the admin token.</p>
         </div>
       </header>
       <section className="section">
