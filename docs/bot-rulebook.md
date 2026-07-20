@@ -126,7 +126,11 @@ Participants are not addressed by their real names or Matrix user IDs in bot mes
 
 ## Quiet Members
 
-When the bot sends an engaging message, it identifies the **quietest members** — the participants with the lowest contribution share who are not themselves targets. Up to 2 quiet members are named in the message to direct the target's attention.
+When the bot sends an engaging message, it identifies the **quietest members** — the participants with the lowest contribution share who are **below the threshold** and not themselves targets. Anyone above the threshold is never listed as a quiet member, even if their share is lower than the addressed target's (this happens when a higher-share co-dominator is skipped by cooldown). Up to 2 quiet members are named in the message.
+
+## "Top Contributor" Phrasing
+
+The engaging message calls the addressed target the **"top contributor"** only if their share is the highest in the split. If a higher-share participant exists but was skipped by cooldown, the wording softens to **"among the top contributors"** so the statement stays truthful.
 
 ## Configurable Parameters
 
