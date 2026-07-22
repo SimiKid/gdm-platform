@@ -100,7 +100,10 @@ export class SessionsController {
   @Post("sessions/recover")
   @UseGuards(InternalGuard)
   recover(@Body() body: RecoverSessionsRequest) {
-    return this.sessions.recoverRunningSessions(body.botUserId);
+    return this.sessions.recoverRunningSessions(
+      body.botUserId,
+      body.comparisonBotUserIds ?? [],
+    );
   }
 
   /** Admin: list editable study conditions. */

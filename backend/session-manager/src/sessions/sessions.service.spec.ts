@@ -40,7 +40,13 @@ describe("SessionsService (session-manager)", () => {
         ok: true,
         json: async () =>
           String(url).includes("/internal/bot")
-            ? { userId: "@bot:localhost" }
+            ? {
+                userId: "@bot:localhost",
+                comparisonUserIds: [
+                  "@gdm_bot_a_x:localhost",
+                  "@gdm_bot_b_x:localhost",
+                ],
+              }
             : {},
       })),
     );
@@ -77,6 +83,46 @@ describe("SessionsService (session-manager)", () => {
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining("/internal/sessions/start"),
       expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("invites the comparison bots when provisioning a two-bot condition", async () => {
+    const baseline = (await store.listConditions())[0];
+    await store.upsertCondition({
+      ...baseline,
+      id: "compare",
+      name: "Compare",
+      config: { ...baseline.config, comparisonMode: true },
+    });
+    await svc.openSession({ ...open(), conditionId: "compare" });
+    await svc.openSession({ ...open(), conditionId: "compare" });
+    await svc.openSession({ ...open(), conditionId: "compare" });
+
+    // Rooms are invite-only: without these invites the comparison bots'
+    // joins are rejected with 403 (the prod incident this guards against).
+    expect(matrix.invite).toHaveBeenCalledWith("!room:localhost", "@bot:localhost");
+    expect(matrix.invite).toHaveBeenCalledWith(
+      "!room:localhost",
+      "@gdm_bot_a_x:localhost",
+    );
+    expect(matrix.invite).toHaveBeenCalledWith(
+      "!room:localhost",
+      "@gdm_bot_b_x:localhost",
+    );
+  });
+
+  it("regular conditions never invite the comparison bots", async () => {
+    await svc.openSession(open());
+    await svc.openSession(open());
+    await svc.openSession(open());
+
+    expect(matrix.invite).not.toHaveBeenCalledWith(
+      "!room:localhost",
+      "@gdm_bot_a_x:localhost",
+    );
+    expect(matrix.invite).not.toHaveBeenCalledWith(
+      "!room:localhost",
+      "@gdm_bot_b_x:localhost",
     );
   });
 

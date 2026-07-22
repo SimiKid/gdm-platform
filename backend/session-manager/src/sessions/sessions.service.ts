@@ -522,7 +522,10 @@ export class SessionsService {
   }
 
   /** Re-authorize a new bot account after chat-service restart. */
-  async recoverRunningSessions(botUserId: string): Promise<StartSessionNotification[]> {
+  async recoverRunningSessions(
+    botUserId: string,
+    comparisonBotUserIds: string[] = [],
+  ): Promise<StartSessionNotification[]> {
     if (!botUserId) throw new ConflictException("botUserId is required");
     const running = (await this.store.allSessions()).filter(
       (session) => session.status === "running" && session.roomId,
@@ -530,6 +533,17 @@ export class SessionsService {
     const notes: StartSessionNotification[] = [];
     for (const session of running) {
       await this.matrix.invite(session.roomId!, botUserId);
+      if (session.condition.config.comparisonMode === true) {
+        for (const comparisonUserId of comparisonBotUserIds) {
+          try {
+            await this.matrix.invite(session.roomId!, comparisonUserId);
+          } catch (err) {
+            this.log.warn(
+              `comparison bot re-invite failed for ${comparisonUserId}: ${String(err)}`,
+            );
+          }
+        }
+      }
       notes.push({
         sessionId: session.id,
         roomId: session.roomId!,
@@ -621,8 +635,21 @@ export class SessionsService {
     }
     // Invite the Chat Service bot so it can join when it takes the session
     // over (best-effort — the chat still works client-side without the bot).
-    const botUserId = await this.fetchBotUserId();
-    if (botUserId) await this.matrix.invite(roomId, botUserId);
+    // Comparison conditions additionally need Assistant A/B invited: rooms
+    // are invite-only, so an uninvited bot's join is rejected with 403.
+    const bot = await this.fetchBotIdentity();
+    if (bot.userId) await this.matrix.invite(roomId, bot.userId);
+    if (session.condition.config.comparisonMode === true) {
+      for (const comparisonUserId of bot.comparisonUserIds) {
+        try {
+          await this.matrix.invite(roomId, comparisonUserId);
+        } catch (err) {
+          this.log.warn(
+            `comparison bot invite failed for ${comparisonUserId}: ${String(err)}`,
+          );
+        }
+      }
+    }
 
     session.roomId = roomId;
     session.status = "running";
@@ -631,18 +658,27 @@ export class SessionsService {
     void this.notifyChatService(session);
   }
 
-  /** Ask the Chat Service which Matrix user its bot runs as. */
-  private async fetchBotUserId(): Promise<string | undefined> {
+  /** Ask the Chat Service which Matrix users its bots run as. */
+  private async fetchBotIdentity(): Promise<{
+    userId?: string;
+    comparisonUserIds: string[];
+  }> {
     try {
       const res = await fetch(`${this.chatServiceUrl}/internal/bot`, {
         headers: internalHeaders(),
       });
       if (!res.ok) throw new Error(`status ${res.status}`);
-      const data = (await res.json()) as { userId?: string };
-      return data.userId || undefined;
+      const data = (await res.json()) as {
+        userId?: string;
+        comparisonUserIds?: string[];
+      };
+      return {
+        userId: data.userId || undefined,
+        comparisonUserIds: data.comparisonUserIds ?? [],
+      };
     } catch (err) {
       this.log.warn(`could not resolve bot user (chat service down?): ${String(err)}`);
-      return undefined;
+      return { userId: undefined, comparisonUserIds: [] };
     }
   }
 

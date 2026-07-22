@@ -62,9 +62,18 @@ export class SessionsService implements OnModuleInit {
     await this.bot.join(note.roomId);
     if (note.condition.config.comparisonMode === true) {
       // Two-bot comparison test: Assistant A (rule-based) and Assistant B
-      // (rule-based + LLM) join alongside the primary sync bot.
-      await this.bot.joinAs("a", note.roomId);
-      await this.bot.joinAs("b", note.roomId);
+      // (rule-based + LLM) join alongside the primary sync bot. The Session
+      // Manager invited them during provisioning (study rooms are
+      // invite-only). Never let their failure kill the takeover — recording
+      // and the timer matter more than the extra bots.
+      try {
+        await this.bot.joinAs("a", note.roomId);
+        await this.bot.joinAs("b", note.roomId);
+      } catch (err) {
+        this.log.error(
+          `comparison bots could not join ${note.roomId} — continuing without them: ${String(err)}`,
+        );
+      }
     }
     const runtime = new SessionRuntime(
       note.sessionId,
@@ -277,7 +286,10 @@ export class SessionsService implements OnModuleInit {
       const res = await fetch(`${this.sessionManagerUrl}/sessions/recover`, {
         method: "POST",
         headers: internalHeaders(),
-        body: JSON.stringify({ botUserId: this.bot.botUserId }),
+        body: JSON.stringify({
+          botUserId: this.bot.botUserId,
+          comparisonBotUserIds: await this.bot.comparisonBotUserIds(),
+        }),
       });
       if (!res.ok) throw new Error(`status ${res.status}`);
       const notes = (await res.json()) as StartSessionNotification[];
