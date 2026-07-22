@@ -22,11 +22,15 @@ export class SessionsController {
   }
 
   /**
-   * The Matrix user the bot runs as. The Session Manager invites this user
-   * into freshly-provisioned (invite-only) study rooms.
+   * The Matrix users the bots run as. The Session Manager invites them into
+   * freshly-provisioned (invite-only) study rooms — the comparison bots only
+   * for conditions with the two-bot test enabled.
    */
   @Get("bot")
-  botIdentity(): { userId: string } {
-    return { userId: this.bot.botUserId };
+  async botIdentity(): Promise<{ userId: string; comparisonUserIds: string[] }> {
+    return {
+      userId: this.bot.botUserId,
+      comparisonUserIds: await this.bot.comparisonBotUserIds(),
+    };
   }
 }

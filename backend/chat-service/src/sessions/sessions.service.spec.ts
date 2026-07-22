@@ -34,6 +34,10 @@ function makeBot() {
     joinAs: vi.fn(async () => undefined),
     start: vi.fn(),
     ensureReady: vi.fn(async () => undefined),
+    comparisonBotUserIds: vi.fn(async () => [
+      "@gdm_bot_a_x:localhost",
+      "@gdm_bot_b_x:localhost",
+    ]),
     sendText: vi.fn(async () => undefined),
     sendTextAs: vi.fn(async () => undefined),
     getJoinedMemberIds: vi.fn(async () => ["@u:localhost", "@u2:localhost"]),
@@ -79,6 +83,31 @@ describe("SessionsService (chat-service)", () => {
     expect(bot.join).toHaveBeenCalledWith("!r");
     expect(bot.joinAs).toHaveBeenCalledWith("a", "!r");
     expect(bot.joinAs).toHaveBeenCalledWith("b", "!r");
+  });
+
+  it("a failed comparison-bot join never kills the takeover — recording continues", async () => {
+    (bot.joinAs as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("bot join failed (403)"),
+    );
+    await svc.startSession({
+      ...note,
+      condition: {
+        ...condition,
+        config: { ...condition.config, comparisonMode: true },
+      },
+    });
+
+    // The runtime was registered despite the join failure: messages record.
+    emit({
+      roomId: "!r",
+      type: "m.room.message",
+      sender: "@u:localhost",
+      eventId: "m1",
+      ts: 1000,
+      content: { body: "hi" },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(rules.onEvent).toHaveBeenCalled();
   });
 
   it("does not start the same room twice", async () => {

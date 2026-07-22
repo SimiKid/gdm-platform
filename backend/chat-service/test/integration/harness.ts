@@ -152,6 +152,39 @@ export async function createPublicRoom(user: MatrixUser, name: string): Promise<
   return data.room_id as string;
 }
 
+/** Mirrors the Session Manager's production room: invite-only, invite PL 100. */
+export async function createInviteOnlyRoom(
+  user: MatrixUser,
+  name: string,
+): Promise<string> {
+  const data = await matrixFetch("/_matrix/client/v3/createRoom", {
+    method: "POST",
+    token: user.accessToken,
+    body: JSON.stringify({
+      name,
+      preset: "private_chat",
+      visibility: "private",
+      power_level_content_override: { invite: 100 },
+    }),
+  });
+  return data.room_id as string;
+}
+
+export async function inviteUser(
+  user: MatrixUser,
+  roomId: string,
+  userId: string,
+): Promise<void> {
+  await matrixFetch(
+    `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/invite`,
+    {
+      method: "POST",
+      token: user.accessToken,
+      body: JSON.stringify({ user_id: userId }),
+    },
+  );
+}
+
 export async function joinRoom(user: MatrixUser, roomId: string): Promise<void> {
   await matrixFetch(`/_matrix/client/v3/join/${encodeURIComponent(roomId)}`, {
     method: "POST",
