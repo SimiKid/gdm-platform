@@ -5,7 +5,7 @@ import { ClientEvent, RoomEvent, RoomMemberEvent } from "matrix-js-sdk";
 import { GDM_RECIPIENT_KEY, MATRIX_EVENT_TYPES } from "@gdm/shared";
 import type { PublicSession } from "@gdm/shared";
 import SharedRanking from "./SharedRanking";
-import { buildIdentities, identityFor, isBot } from "../study/identity";
+import { botLabel, buildIdentities, identityFor, isBot } from "../study/identity";
 
 interface Message {
   id: string;
@@ -21,9 +21,6 @@ interface Message {
   pending: boolean;
 }
 
-/** targetEventId -> emoji -> { count, mine: my reaction event id if reacted }. */
-type Reactions = Record<string, Record<string, { count: number; mine?: string }>>;
-
 interface Props {
   client: MatrixClient;
   /** The study session (briefing, ranking, timer). Null on the dev fast-path. */
@@ -31,8 +28,6 @@ interface Props {
   /** Fired once when the discussion timer reaches zero, with the final group ranking order. */
   onTimeUp?: (groupOrder: string[]) => void;
 }
-
-const QUICK_EMOJI = ["👍", "👎", "❤️"];
 
 const PANEL_WIDTH_KEY = "gdm-panel-width";
 const PANEL_MIN = 280;
@@ -79,8 +74,6 @@ export default function Chat({ client, session, onTimeUp }: Props) {
   );
   const [groupOrder, setGroupOrder] = useState<string[]>(session?.ranking.order ?? []);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [reactions, setReactions] = useState<Reactions>({});
-  const [pickerFor, setPickerFor] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [typingMembers, setTypingMembers] = useState<string[]>([]);
   const [newMessageCount, setNewMessageCount] = useState(0);
@@ -178,12 +171,13 @@ export default function Chat({ client, session, onTimeUp }: Props) {
     };
   }, [client, session]);
 
-  // Rebuild messages + reactions from the live timeline on any change. Study
-  // rooms are tiny, so a full rebuild is simplest and always consistent.
+  // Rebuild messages from the live timeline on any change. Study rooms are
+  // tiny, so a full rebuild is simplest and always consistent. Emoji
+  // reactions are intentionally unsupported: the study is about turn-taking
+  // in talking/typing, so participants must engage by writing.
   useEffect(() => {
     if (!activeRoomId) {
       setMessages([]);
-      setReactions({});
       return;
     }
 
@@ -192,7 +186,6 @@ export default function Chat({ client, session, onTimeUp }: Props) {
       if (!room) return;
       const events = room.getLiveTimeline().getEvents();
       const msgs: Message[] = [];
-      const rx: Reactions = {};
       for (const e of events) {
         if (e.isRedacted()) continue;
         const type = e.getType();
@@ -214,20 +207,9 @@ export default function Chat({ client, session, onTimeUp }: Props) {
             recipient,
             pending: e.status !== null,
           });
-        } else if (type === "m.reaction") {
-          const rel = e.getContent()["m.relates_to"] as
-            | { rel_type?: string; event_id?: string; key?: string }
-            | undefined;
-          if (!rel || rel.rel_type !== "m.annotation" || !rel.event_id || !rel.key)
-            continue;
-          const bucket = (rx[rel.event_id] ??= {});
-          const entry = (bucket[rel.key] ??= { count: 0 });
-          entry.count++;
-          if (e.getSender() === userId) entry.mine = e.getId() ?? undefined;
         }
       }
       setMessages(msgs);
-      setReactions(rx);
     }
 
     refresh();
@@ -421,23 +403,6 @@ export default function Chat({ client, session, onTimeUp }: Props) {
     }
   }
 
-  async function toggleReaction(targetId: string, key: string) {
-    setPickerFor(null);
-    if (!activeRoomId) return;
-    const mine = reactions[targetId]?.[key]?.mine;
-    try {
-      if (mine) {
-        await client.redactEvent(activeRoomId, mine);
-      } else {
-        await client.sendEvent(activeRoomId, "m.reaction" as never, {
-          "m.relates_to": { rel_type: "m.annotation", event_id: targetId, key },
-        } as never);
-      }
-    } catch {
-      /* ignore reaction errors */
-    }
-  }
-
   const room = activeRoomId ? client.getRoom(activeRoomId) : null;
   const title = session?.condition.name ?? room?.name ?? "Group Chat";
   const timerLow = remaining !== null && remaining <= 5 * 60_000;
@@ -446,7 +411,6 @@ export default function Chat({ client, session, onTimeUp }: Props) {
     room?.getJoinedMembers().map((m) => m.userId) ?? [],
   );
   const me = identityFor(identities, userId);
-  const firstReactableMessageId = messages.find((message) => !message.fromBot)?.id;
 
   return (
     <div className="study-layout">
@@ -475,9 +439,17 @@ export default function Chat({ client, session, onTimeUp }: Props) {
                         className={`bot-message ${msg.recipient ? "private" : ""}`}
                       >
                         <div className="bot-label">
-                          <span>
-                            🤖 Assistant
-                            {msg.recipient ? " · only you can see this" : ""}
+                          <span>🤖 {botLabel(msg.sender)}</span>
+                          {/* Zoom-style delivery badge: participants must
+                              never be unsure who can see a nudge. */}
+                          <span
+                            className={`audience-badge ${
+                              msg.recipient ? "badge-private" : "badge-public"
+                            }`}
+                          >
+                            {msg.recipient
+                              ? "🔒 Private message to you — only you can see this"
+                              : "📢 Message to ALL in the group"}
                           </span>
                           <span className="bot-meta">{formatClock(msg.ts)}</span>
                         </div>
@@ -485,7 +457,6 @@ export default function Chat({ client, session, onTimeUp }: Props) {
                       </div>
                     );
                   }
-                  const msgReactions = reactions[msg.id] ?? {};
                   return (
                     <div
                       key={msg.id}
@@ -501,53 +472,6 @@ export default function Chat({ client, session, onTimeUp }: Props) {
                       )}
                       <div className="body">{msg.body}</div>
                       <span className="meta">{formatClock(msg.ts)}</span>
-
-                      {/* Reactions target the event id, which is temporary
-                          until the server confirms the message. */}
-                      {!msg.pending && (
-                        <button
-                          type="button"
-                          className="react-btn"
-                          aria-label="Add reaction"
-                          onClick={() =>
-                            setPickerFor((cur) => (cur === msg.id ? null : msg.id))
-                          }
-                        >
-                          +
-                        </button>
-                      )}
-                      {pickerFor === msg.id && (
-                        <div
-                          className={`emoji-picker ${
-                            msg.id === firstReactableMessageId ? "below" : ""
-                          }`}
-                        >
-                          {QUICK_EMOJI.map((em) => (
-                            <button
-                              key={em}
-                              type="button"
-                              onClick={() => toggleReaction(msg.id, em)}
-                            >
-                              {em}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-
-                      {Object.keys(msgReactions).length > 0 && (
-                        <div className="reactions">
-                          {Object.entries(msgReactions).map(([key, r]) => (
-                            <button
-                              key={key}
-                              type="button"
-                              className={`reaction ${r.mine ? "mine" : ""}`}
-                              onClick={() => toggleReaction(msg.id, key)}
-                            >
-                              {key} {r.count}
-                            </button>
-                          ))}
-                        </div>
-                      )}
                     </div>
                   );
                 })}

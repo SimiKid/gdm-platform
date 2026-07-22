@@ -32,12 +32,12 @@ describe("Recruiting", () => {
     window.history.replaceState(
       {},
       "",
-      "/?p=abc123&conditionId=private-engaging",
+      "/?p=abc123&conditionId=private-llm",
     );
     const onEnter = vi.fn();
     render(<Recruiting onEnter={onEnter} />);
-    expect(onEnter).toHaveBeenCalledWith("abc123", "private-engaging");
+    expect(onEnter).toHaveBeenCalledWith("abc123", "private-llm");
     // token stripped from the URL
-    expect(window.location.search).toBe("?conditionId=private-engaging");
+    expect(window.location.search).toBe("?conditionId=private-llm");
   });
 });

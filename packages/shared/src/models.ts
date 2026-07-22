@@ -103,8 +103,7 @@ export type BehavioralEventType =
   | "tab-hidden"
   | "tab-visible"
   | "cursor-activity"
-  | "ranking-move"
-  | "llm-shadow-trigger";
+  | "ranking-move";
 
 /** Persisted interaction telemetry emitted during the group task. */
 export interface BehavioralEvent {
@@ -116,20 +115,37 @@ export interface BehavioralEvent {
   payload?: Record<string, string | number | boolean | string[]>;
 }
 
-/** Auditable result of one semantic classification request. */
+/** One true/false structural indicator plus the model's one-sentence reason. */
+export interface ClassifierIndicator {
+  value: boolean;
+  reason: string;
+}
+
+/**
+ * Auditable result of one meaningfulness classification request.
+ *
+ * The first three indicators average into `meaningfulnessScore` (0..1).
+ * `invitesParticipation` is tracked separately — it feeds the dominant
+ * contributor's self-correction grace period, never the score.
+ */
 export interface ContributionClassification {
   messageId: string;
   senderId: string;
   classifiedAt: string;
-  substantive: boolean;
-  relevanceWeight: number;
-  references: string[];
-  ignoredInShadow: boolean;
+  /** Reacts to, builds on, or directly refers to a prior message/member. */
+  respondsToPrior: ClassifierIndicator;
+  /** Explicitly names one or more ranking-task items. */
+  referencesTaskItem: ClassifierIndicator;
+  /** Explicit stance, proposal, or structured discourse move. */
+  hasDiscussionStructure: ClassifierIndicator;
+  /** Explicitly invites another (named or unnamed) member to contribute. */
+  invitesParticipation: ClassifierIndicator;
+  /** Mean of the three meaningfulness indicators, 0..1. */
+  meaningfulnessScore: number;
   model: string;
   promptVersion: string;
   prompt: string;
   rawOutput: string;
-  explanation: string;
 }
 
 /** A poll, initialized by the bot (wireframe: "Polls initialized by bot"). */

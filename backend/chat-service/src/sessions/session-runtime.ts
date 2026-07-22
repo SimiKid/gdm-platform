@@ -136,6 +136,11 @@ export class SessionRuntime {
     });
   }
 
+  /** Post publicly as a named comparison bot ("a" / "b") instead of the primary bot. */
+  postAs(botKind: string, body: string): Promise<void> {
+    return this.bot.sendTextAs(botKind, this.roomId, body);
+  }
+
   get isEnded(): boolean {
     return this.ended;
   }

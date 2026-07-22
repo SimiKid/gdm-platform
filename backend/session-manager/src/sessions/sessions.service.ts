@@ -201,7 +201,6 @@ export class SessionsService {
           timestamp: intervention.timestamp,
           mode: intervention.mode,
           audience: intervention.audience,
-          tone: intervention.tone,
           targets: intervention.targets,
           quietMembers: intervention.quietMembers,
           contributionSplit: intervention.contributionSplit,
@@ -336,9 +335,9 @@ export class SessionsService {
         "timestamp",
         "mode",
         "audience",
-        "tone",
         "trigger",
         "threshold",
+        "llm_mode",
         "targets",
         "quiet_members",
         "message",
@@ -350,9 +349,9 @@ export class SessionsService {
         i.timestamp,
         i.mode,
         i.audience,
-        i.tone,
         i.trigger,
         String(i.threshold),
+        i.llmMode ?? "off",
         i.targets.map((target) => target.identityName).join("|"),
         i.quietMembers.map((member) => member.identityName).join("|"),
         i.message,
@@ -451,9 +450,11 @@ export class SessionsService {
         "reaction_count",
         "ranking_move_count",
         "typing_duration_ms",
-        "substantive_message_count",
-        "ignored_contribution_count",
-        "semantic_weighted_score",
+        "responds_to_prior_count",
+        "references_task_item_count",
+        "has_discussion_structure_count",
+        "invites_participation_count",
+        "meaningfulness_score_mean",
       ],
       ...(await this.exportContributions(conditionIds)).contributions.map((c) => [
         c.sessionId,
@@ -464,9 +465,11 @@ export class SessionsService {
         String(c.reactionCount),
         String(c.rankingMoveCount),
         String(c.typingDurationMs),
-        String(c.substantiveMessageCount),
-        String(c.ignoredContributionCount),
-        String(c.semanticWeightedScore),
+        String(c.respondsToPriorCount),
+        String(c.referencesTaskItemCount),
+        String(c.hasDiscussionStructureCount),
+        String(c.invitesParticipationCount),
+        String(c.meaningfulnessScoreMean),
       ]),
     ];
     return toCsv(rows);
@@ -716,12 +719,23 @@ function contributionAggregates(session: Session): ContributionAggregate[] {
           (event) => event.participantId === participantId && event.type === "typing-stop",
         )
         .reduce((sum, event) => sum + (event.durationMs ?? 0), 0),
-      substantiveMessageCount: classifications.filter((item) => item.substantive).length,
-      ignoredContributionCount: classifications.filter((item) => item.ignoredInShadow).length,
-      semanticWeightedScore: classifications.reduce(
-        (sum, item) => sum + item.relevanceWeight,
-        0,
-      ),
+      respondsToPriorCount: classifications.filter(
+        (item) => item.respondsToPrior.value,
+      ).length,
+      referencesTaskItemCount: classifications.filter(
+        (item) => item.referencesTaskItem.value,
+      ).length,
+      hasDiscussionStructureCount: classifications.filter(
+        (item) => item.hasDiscussionStructure.value,
+      ).length,
+      invitesParticipationCount: classifications.filter(
+        (item) => item.invitesParticipation.value,
+      ).length,
+      meaningfulnessScoreMean:
+        classifications.length > 0
+          ? classifications.reduce((sum, item) => sum + item.meaningfulnessScore, 0) /
+            classifications.length
+          : 0,
     };
   });
 }
