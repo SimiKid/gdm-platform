@@ -14,6 +14,9 @@ export interface TimelineEvent {
 
 type EventHandler = (event: TimelineEvent) => void;
 
+/** The two comparison-mode bots: "a" = rule-based, "b" = rule + LLM. */
+export const COMPARISON_BOT_KINDS = ["a", "b"] as const;
+
 /**
  * The Chat Service's Matrix presence: a single bot user that joins every
  * managed room and tails the /sync stream. Open registration is enabled on the
@@ -53,6 +56,18 @@ export class MatrixBotService implements OnModuleInit {
 
   get botUserId(): string {
     return this.userId;
+  }
+
+  /**
+   * Matrix user ids of the comparison bots, registering them on first use.
+   * The Session Manager needs these to invite them into the invite-only
+   * study rooms before the bots can join.
+   */
+  async comparisonBotUserIds(): Promise<string[]> {
+    const identities = await Promise.all(
+      COMPARISON_BOT_KINDS.map((kind) => this.ensureIdentity(kind)),
+    );
+    return identities.map((identity) => identity.userId);
   }
 
   /** Subscribe to every timeline event across all joined rooms. */

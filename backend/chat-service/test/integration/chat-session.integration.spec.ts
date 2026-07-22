@@ -6,7 +6,9 @@ import type { Condition } from "@gdm/shared";
 import { SessionsService } from "../../src/sessions/sessions.service";
 import {
   createChatApp,
+  createInviteOnlyRoom,
   createPublicRoom,
+  inviteUser,
   joinRoom,
   joinedMembers,
   redactEvent,
@@ -225,12 +227,37 @@ describe("chat-service ↔ real Synapse (integration)", () => {
     });
   });
 
-  it("comparison mode: Assistant A and Assistant B both nudge in the same room", async () => {
+  it("comparison mode: Assistant A and Assistant B both nudge in an invite-only room like production", async () => {
     const alice = await registerUser("alice");
     const berta = await registerUser("berta");
     const condition = testCondition("public");
     condition.config.comparisonMode = true;
-    const { sessionId, roomId } = await startSession(alice, [berta], condition, 10);
+
+    // Mirror the Session Manager's production provisioning: an invite-only
+    // room (invite PL 100) where every bot must be invited before it can
+    // join — an uninvited bot's join is rejected with 403.
+    const roomId = await createInviteOnlyRoom(alice, `GDM it · ${condition.id}-cmp`);
+    await inviteUser(alice, roomId, berta.userId);
+    await joinRoom(berta, roomId);
+    const bots = (await request(t.http).get("/internal/bot").expect(200)).body as {
+      userId: string;
+      comparisonUserIds: string[];
+    };
+    expect(bots.comparisonUserIds).toHaveLength(2);
+    await inviteUser(alice, roomId, bots.userId);
+    for (const botUserId of bots.comparisonUserIds) {
+      await inviteUser(alice, roomId, botUserId);
+    }
+
+    const sessionId = randomUUID();
+    await request(t.http)
+      .post("/internal/sessions/start")
+      .send({ sessionId, roomId, condition, durationMinutes: 10 })
+      .expect(201);
+    await until(
+      async () => (await joinedMembers(alice, roomId)).includes(bots.userId),
+      "the bot to join the room",
+    );
 
     // One dominant message triggers both detection arms (without an API key
     // the LLM arm falls back to 0.9 × share, still above the threshold).
