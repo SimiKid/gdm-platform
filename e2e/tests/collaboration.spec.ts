@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import {
   closeGroup,
   createCondition,
@@ -59,55 +59,16 @@ test("@collaboration live feedback, reactions, ranking and telemetry work togeth
       });
     });
 
-    await test.step("the first-message picker opens below and reactions add, sync and remove", async () => {
+    await test.step("emoji reactions are not offered (turn-taking design)", async () => {
+      // Study protocol: reactions are removed so participants engage by
+      // talking/typing. No reaction affordance may render, even on hover.
       const message = observer.page.locator(".message", { hasText: FIRST_MESSAGE });
-      await message.getByRole("button", { name: "Add reaction" }).click();
-      const picker = message.locator(".emoji-picker.below");
-      await expect(picker).toBeVisible();
-      const [messageBox, pickerBox] = await Promise.all([
-        message.boundingBox(),
-        picker.boundingBox(),
-      ]);
-      expect(messageBox).not.toBeNull();
-      expect(pickerBox).not.toBeNull();
-      expect(pickerBox!.y).toBeGreaterThanOrEqual(
-        messageBox!.y + messageBox!.height - 1,
-      );
-
-      await picker.getByRole("button", { name: "👍" }).click();
-      await Promise.all(
-        group!.pages.map((page) =>
-          expect(reactionFor(page, FIRST_MESSAGE)).toHaveText("👍 1", {
-            timeout: 30_000,
-          }),
-        ),
-      );
-      await pollAdminSession(request, group!.sessionId, (session) =>
-        session.chat.messages.some(
-          (item) =>
-            item.text === FIRST_MESSAGE &&
-            item.reactions.some((reaction) => reaction.key === "👍"),
-        ),
-      );
-
-      await reactionFor(observer.page, FIRST_MESSAGE).click();
-      await Promise.all(
-        group!.pages.map((page) =>
-          expect(reactionFor(page, FIRST_MESSAGE)).toHaveCount(0, {
-            timeout: 30_000,
-          }),
-        ),
-      );
-      await pollAdminSession(
-        request,
-        group!.sessionId,
-        (session) => {
-          const item = session.chat.messages.find(
-            (messageItem) => messageItem.text === FIRST_MESSAGE,
-          );
-          return Boolean(item) && item!.reactions.length === 0;
-        },
-      );
+      await message.hover();
+      await expect(
+        message.getByRole("button", { name: "Add reaction" }),
+      ).toHaveCount(0);
+      await expect(observer.page.locator(".react-btn")).toHaveCount(0);
+      await expect(observer.page.locator(".reactions")).toHaveCount(0);
     });
 
     await test.step("remote ranking movement is identified and animated", async () => {
@@ -215,12 +176,6 @@ function identityFor(userId: string, group: ProvisionedGroup): string {
     .map((member) => member.matrix.userId)
     .sort();
   return PARTICIPANT_IDENTITIES[participantIds.indexOf(userId)];
-}
-
-function reactionFor(page: Page, messageText: string) {
-  return page
-    .locator(".message", { hasText: messageText })
-    .locator("button.reaction");
 }
 
 async function elementWidth(locator: Locator): Promise<number> {

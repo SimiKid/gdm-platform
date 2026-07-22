@@ -26,6 +26,41 @@ describe("MatrixBotService", () => {
     vi.unstubAllGlobals();
   });
 
+  it("registers a named comparison identity once and sends under its token", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/register")) {
+        return {
+          ok: true,
+          json: async () => ({
+            user_id: "@gdm_bot_b_x1:localhost",
+            access_token: "token-b",
+          }),
+        };
+      }
+      return { ok: true };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const bot = new MatrixBotService();
+
+    await bot.joinAs("b", "!r");
+    await bot.sendTextAs("b", "!r", "nudge from B");
+
+    const registerCalls = fetchMock.mock.calls.filter(([url]) =>
+      (url as string).includes("/register"),
+    );
+    expect(registerCalls).toHaveLength(1);
+    expect(JSON.parse(registerCalls[0][1]!.body as string).username).toMatch(
+      /^gdm_bot_b_/,
+    );
+    const sendCall = fetchMock.mock.calls.find(([url]) =>
+      (url as string).includes("/send/m.room.message/"),
+    );
+    expect(sendCall![1]!.headers).toMatchObject({
+      Authorization: "Bearer token-b",
+    });
+    vi.unstubAllGlobals();
+  });
+
   it("join throws on a non-ok response", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 403 })));
     await expect(new MatrixBotService().join("!r")).rejects.toThrow(/join failed/);

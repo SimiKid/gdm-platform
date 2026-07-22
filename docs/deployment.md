@@ -154,11 +154,12 @@ delete existing study rows.
 1. Create an API key in the Anthropic Console and fund/enable the workspace.
 2. Put `ANTHROPIC_API_KEY=...` in the VM's `infra/.env`; never commit it.
 3. Keep `ANTHROPIC_MODEL=claude-haiku-4-5-20251001` for reproducible results.
-4. Redeploy the chat service, then select `shadow` for the intended conditions
-   in Admin -> Settings. Alternatively, `LLM_MODE=shadow` forces every arm
-   into shadow mode; `LLM_MODE=off` is an emergency global kill switch.
+4. Redeploy the chat service, then set Detection to "Rule-based + LLM shadow
+   (log only)" for the intended conditions in Admin -> Settings.
+   Alternatively, `LLM_MODE=shadow` forces every arm into shadow mode;
+   `LLM_MODE=off` is an emergency global kill switch.
 5. Run a fake pilot and download **Contributions & behavioral telemetry**.
-   Confirm classifications and `llm-shadow-trigger` events before recruitment.
+   Confirm the meaningfulness classifications before recruitment.
 
 Shadow mode sends pseudonymized participant labels plus chat text to Anthropic.
 It records model, prompt, raw output, and decisions, but never emits an LLM

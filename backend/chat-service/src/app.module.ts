@@ -3,7 +3,7 @@ import { HealthController } from "./health/health.controller";
 import { SessionsController } from "./sessions/sessions.controller";
 import { SessionsService } from "./sessions/sessions.service";
 import { MatrixBotService } from "./matrix/matrix-bot.service";
-import { ContributionBotRules } from "./rules/bot-rules";
+import { StudyBotRules } from "./rules/bot-rules";
 import { BOT_RULES } from "./rules/bot-rules.token";
 import { InternalGuard } from "./auth/internal.guard";
 import { AnthropicContributionClassifier } from "./classifier/anthropic-contribution-classifier";
@@ -19,7 +19,7 @@ import { CONTRIBUTION_CLASSIFIER } from "./classifier/contribution-classifier.to
       provide: CONTRIBUTION_CLASSIFIER,
       useExisting: AnthropicContributionClassifier,
     },
-    { provide: BOT_RULES, useClass: ContributionBotRules },
+    { provide: BOT_RULES, useClass: StudyBotRules },
     InternalGuard,
   ],
 })

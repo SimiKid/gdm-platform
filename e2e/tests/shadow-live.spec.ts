@@ -13,13 +13,16 @@ const LIVE_ENABLED = process.env.E2E_LIVE_ANTHROPIC === "1";
 const EXPECTED_MODEL =
   process.env.E2E_EXPECTED_ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
 
+// Each message exercises different meaningfulness indicators:
+// [0] opens with a task item + stance, [1] replies and invites participation,
+// [2] is calibration noise that should score zero.
 const MESSAGES = [
   "We should rank the oxygen tanks first because a crew cannot survive without breathable oxygen.",
+  "I agree with you that the oxygen tanks belong at the top. What would you put second?",
   "Calibration phrase: purple rectangle, violin, tram 741.",
-  "Calibration phrase: pineapple, notebook, window 902.",
 ] as const;
 
-test("@shadow-live the deployed Anthropic classifier records an ignored contribution without nudging", async ({
+test("@shadow-live the deployed Anthropic classifier records meaningfulness indicators without nudging", async ({
   browser,
   request,
 }) => {
@@ -39,12 +42,10 @@ test("@shadow-live the deployed Anthropic classifier records an ignored contribu
       contributionThreshold: 0.55,
       protectedStartMinutes: 0,
       protectedEndMinutes: 0,
-      interventionWindowMinutes: 30,
+      cooldownSeconds: 1800,
       contributionWindowMinutes: 30,
-      scoreWeights: { messages: 1, characters: 0.01 },
+      scoreWeights: { messages: 1, words: 0.05 },
       llmMode: "shadow",
-      ignoredGraceSeconds: 0,
-      ignoredMinSubsequentMessages: 2,
     },
   });
   let group: Awaited<ReturnType<typeof provisionGroup>> | undefined;
@@ -72,73 +73,64 @@ test("@shadow-live the deployed Anthropic classifier records an ignored contribu
     const detail = await pollAdminSession(
       request,
       group.sessionId,
-      (session) =>
-        session.contributionClassifications.length >= 3 &&
-        session.contributionClassifications.some(
-          (classification) => classification.ignoredInShadow === true,
-        ) &&
-        session.behavioralEvents.some(
-          (event) => event.type === "llm-shadow-trigger",
-        ),
+      (session) => session.contributionClassifications.length >= 3,
       45_000,
     );
 
     expect(detail.contributionClassifications).toHaveLength(3);
-    const recorded = new Map(
-      detail.chat.messages.map((message, index) => [message.id, index]),
-    );
-    const firstMessage = detail.chat.messages.find(
-      (message) => message.text === MESSAGES[0],
-    );
-    expect(firstMessage).toBeDefined();
-    const first = detail.contributionClassifications.find(
-      (classification) => classification.messageId === firstMessage!.id,
-    );
-    expect(first).toMatchObject({
-      senderId: group.members[0].matrix.userId,
-      substantive: true,
-      ignoredInShadow: true,
-      model: EXPECTED_MODEL,
-      promptVersion: "ignored-contribution-v1",
-    });
-    expect(first!.relevanceWeight).toBeGreaterThanOrEqual(0);
-    expect(first!.relevanceWeight).toBeLessThanOrEqual(2);
+    const byText = (text: string) => {
+      const message = detail.chat.messages.find((item) => item.text === text);
+      expect(message).toBeDefined();
+      const classification = detail.contributionClassifications.find(
+        (item) => item.messageId === message!.id,
+      );
+      expect(classification).toBeDefined();
+      return classification!;
+    };
+
+    const opener = byText(MESSAGES[0]);
+    expect(opener.senderId).toBe(group.members[0].matrix.userId);
+    expect(opener.respondsToPrior.value).toBe(false);
+    expect(opener.referencesTaskItem.value).toBe(true);
+    expect(opener.invitesParticipation.value).toBe(false);
+
+    const reply = byText(MESSAGES[1]);
+    expect(reply.respondsToPrior.value).toBe(true);
+    expect(reply.invitesParticipation.value).toBe(true);
+
+    const noise = byText(MESSAGES[2]);
+    expect(noise.meaningfulnessScore).toBe(0);
 
     for (const classification of detail.contributionClassifications) {
-      expect(recorded.has(classification.messageId)).toBe(true);
-      const messageIndex = recorded.get(classification.messageId)!;
-      for (const reference of classification.references) {
-        expect(recorded.has(reference)).toBe(true);
-        expect(recorded.get(reference)!).toBeLessThan(messageIndex);
-      }
+      expect(classification).toMatchObject({
+        model: EXPECTED_MODEL,
+        promptVersion: "meaningfulness-v1",
+      });
       for (const member of group.members) {
         expect(classification.prompt).not.toContain(member.matrix.userId);
       }
-      expect(classification.prompt).toContain(
-        "Transcript (participants are pseudonymous):",
-      );
-      expect(classification.prompt).toMatch(/(?:Red|Blue):/);
+      expect(classification.prompt).toContain("MESSAGE TO CLASSIFY:");
+      expect(classification.prompt).toContain("TASK ITEMS:");
+      expect(classification.prompt).toContain("GROUP MEMBERS:");
+      expect(classification.prompt).toMatch(/Sender: (?:Red|Blue)/);
 
+      const indicatorShape = { value: expect.any(Boolean), reason: expect.any(String) };
       const raw = JSON.parse(classification.rawOutput) as Record<string, unknown>;
       expect(raw).toEqual({
-        substantive: expect.any(Boolean),
-        relevanceWeight: expect.any(Number),
-        references: expect.any(Array),
-        explanation: expect.any(String),
+        responds_to_prior: indicatorShape,
+        references_task_item: indicatorShape,
+        has_discussion_structure: indicatorShape,
+        invites_participation: indicatorShape,
       });
+
+      const trueCount = [
+        classification.respondsToPrior,
+        classification.referencesTaskItem,
+        classification.hasDiscussionStructure,
+      ].filter((indicator) => indicator.value).length;
+      expect(classification.meaningfulnessScore).toBeCloseTo(trueCount / 3);
     }
 
-    const shadowEvents = detail.behavioralEvents.filter(
-      (event) => event.type === "llm-shadow-trigger",
-    );
-    expect(shadowEvents).toHaveLength(1);
-    expect(shadowEvents[0]).toMatchObject({
-      participantId: group.members[0].matrix.userId,
-      payload: {
-        messageId: firstMessage!.id,
-        subsequentMessages: 2,
-      },
-    });
     expect(detail.interventions).toEqual([]);
     await Promise.all(
       group.pages.map((page) => expect(page.locator(".bot-message")).toHaveCount(0)),

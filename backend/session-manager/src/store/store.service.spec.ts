@@ -20,10 +20,10 @@ describe("StoreService", () => {
     expect(conditions[0]).toMatchObject({ active: true, goal: 5, groupSize: 3 });
     expect(conditions.map((c) => c.config.interventionMode)).toEqual([
       "baseline",
-      "public-neutral",
-      "public-engaging",
-      "private-neutral",
-      "private-engaging",
+      "public",
+      "public",
+      "private",
+      "private",
     ]);
   });
 

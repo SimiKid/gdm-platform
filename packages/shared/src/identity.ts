@@ -30,6 +30,18 @@ export function isBot(userId: string): boolean {
   return /_bot[:_]/i.test(userId);
 }
 
+/**
+ * Participant-facing label for a bot user. In the two-bot comparison mode the
+ * bots post as `gdm_bot_a_…` / `gdm_bot_b_…` and are labeled neutrally so
+ * participants stay blind to which detection arm is which (A = rule-based,
+ * B = rule-based + LLM — mapping documented in the bot rulebook).
+ */
+export function botLabel(userId: string): string {
+  if (/_bot_a_/i.test(userId)) return "Assistant A";
+  if (/_bot_b_/i.test(userId)) return "Assistant B";
+  return "Assistant";
+}
+
 /** Bot / orchestrator service accounts that should not get a participant slot. */
 export function isServiceUser(userId: string): boolean {
   return /orchestrator/i.test(userId) || isBot(userId);

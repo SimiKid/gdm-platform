@@ -895,8 +895,9 @@ body {
 
 .bot-label {
   display: flex;
-  justify-content: space-between;
-  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
   font-size: 0.7rem;
   font-weight: 600;
   color: #b8860b;
@@ -905,6 +906,7 @@ body {
 
 .bot-meta {
   flex-shrink: 0;
+  margin-left: auto;
   color: #667781;
   font-weight: 400;
 }
@@ -913,89 +915,27 @@ body {
   color: var(--accent);
 }
 
+/* Zoom-style delivery badge: who can see this nudge must be unmistakable. */
+.audience-badge {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.badge-public {
+  background: #b8860b;
+  color: #fff;
+}
+
+.badge-private {
+  background: var(--accent);
+  color: #fff;
+}
+
 .bot-body {
   line-height: 1.35;
   color: #333;
-}
-
-/* ── Reactions ───────────────────────────────── */
-
-.react-btn {
-  position: absolute;
-  top: 50%;
-  right: -1.85rem;
-  transform: translateY(-50%);
-  width: 1.4rem;
-  height: 1.4rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid #ccc;
-  border-radius: 50%;
-  background: #fff;
-  color: #667781;
-  cursor: pointer;
-  font-size: 1rem;
-  line-height: 1;
-  opacity: 0.35;
-  transition: opacity 0.15s;
-}
-
-.message:hover .react-btn {
-  opacity: 1;
-}
-
-.emoji-picker {
-  position: absolute;
-  top: -2.2rem;
-  right: 0;
-  z-index: 5;
-  display: flex;
-  gap: 0.1rem;
-  padding: 0.25rem;
-  background: #fff;
-  border-radius: 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
-
-/* The first message has no room above it inside the scroll container. */
-.emoji-picker.below {
-  top: calc(100% + 0.25rem);
-}
-
-.emoji-picker button {
-  border: none;
-  background: none;
-  cursor: pointer;
-  font-size: 1.1rem;
-  padding: 0.1rem 0.2rem;
-  border-radius: 50%;
-}
-
-.emoji-picker button:hover {
-  background: #f0f0f0;
-}
-
-.reactions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
-  margin-top: 0.4rem;
-}
-
-.reaction {
-  border: 1px solid #d0d0d0;
-  background: #fff;
-  border-radius: 12px;
-  padding: 0.05rem 0.4rem;
-  font-size: 0.75rem;
-  cursor: pointer;
-  line-height: 1.4;
-}
-
-.reaction.mine {
-  background: var(--accent-tint);
-  border-color: var(--accent);
 }
 
 /* ── Message input ───────────────────────────── */

@@ -128,7 +128,6 @@ model InterventionRecord {
   conditionId                String        @map("condition_id")
   mode                       String
   audience                   String
-  tone                       String
   timestamp                  DateTime
   trigger                    String
   threshold                  Float

@@ -30,10 +30,10 @@ describe("matchmaking & lifecycle (integration)", () => {
     const conditions = res.body as Condition[];
     expect(conditions.map((c) => c.id)).toEqual([
       "baseline",
-      "public-neutral",
-      "public-engaging",
-      "private-neutral",
-      "private-engaging",
+      "public-rule",
+      "public-llm",
+      "private-rule",
+      "private-llm",
     ]);
     expect(conditions[0]).toMatchObject({
       active: true,
@@ -43,7 +43,7 @@ describe("matchmaking & lifecycle (integration)", () => {
     });
     // Condition knobs (JSON column) survive the round-trip.
     expect(conditions[0].config.interventionMode).toBe("baseline");
-    expect(conditions[0].config.scoreWeights).toEqual({ messages: 1, characters: 0.01 });
+    expect(conditions[0].config.scoreWeights).toEqual({ messages: 1, words: 0.05 });
   });
 
   it("fills a group seat by seat and provisions the room on the last seat", async () => {
@@ -100,7 +100,7 @@ describe("matchmaking & lifecycle (integration)", () => {
     await fillSession(t, "baseline");
 
     const fourth = await openSession(t, "Dora");
-    expect(fourth.session.condition.id).toBe("public-neutral");
+    expect(fourth.session.condition.id).toBe("public-rule");
     expect(fourth.session.status).toBe("waiting");
 
     // The next unforced participant joins that forming session instead of

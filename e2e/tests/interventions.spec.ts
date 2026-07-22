@@ -14,43 +14,17 @@ const DOMINANT_MESSAGE =
 const FOLLOW_UP =
   "Additional detail: the oxygen supply also supports the pressurized suits throughout the journey.";
 
-type InterventionMode =
-  | "baseline"
-  | "public-neutral"
-  | "public-engaging"
-  | "private-neutral"
-  | "private-engaging";
+// Nudge texts are identical across both delivery modes (study protocol:
+// only delivery differs). The first nudge always uses the first template.
+const FIRST_NUDGE_TEXT = "a lot of energy";
 
 const SCENARIOS: Array<{
-  mode: Exclude<InterventionMode, "baseline">;
+  mode: "public" | "private";
   audience: "public" | "private";
-  tone: "neutral" | "engaging";
   text: string;
 }> = [
-  {
-    mode: "public-neutral",
-    audience: "public",
-    tone: "neutral",
-    text: "@all, consider this info",
-  },
-  {
-    mode: "public-engaging",
-    audience: "public",
-    tone: "engaging",
-    text: "you are the top contributor",
-  },
-  {
-    mode: "private-neutral",
-    audience: "private",
-    tone: "neutral",
-    text: "consider this info as you continue",
-  },
-  {
-    mode: "private-engaging",
-    audience: "private",
-    tone: "engaging",
-    text: "check in with group members",
-  },
+  { mode: "public", audience: "public", text: FIRST_NUDGE_TEXT },
+  { mode: "private", audience: "private", text: FIRST_NUDGE_TEXT },
 ];
 
 for (const scenario of SCENARIOS) {
@@ -68,12 +42,10 @@ for (const scenario of SCENARIOS) {
         contributionThreshold: 0.55,
         protectedStartMinutes: 0,
         protectedEndMinutes: 0,
-        interventionWindowMinutes: 30,
+        cooldownSeconds: 1800,
         contributionWindowMinutes: 30,
-        scoreWeights: { messages: 1, characters: 0.01 },
+        scoreWeights: { messages: 1, words: 0.05 },
         llmMode: "off",
-        ignoredGraceSeconds: 0,
-        ignoredMinSubsequentMessages: 2,
       },
     });
     let group: Awaited<ReturnType<typeof provisionGroup>> | undefined;
@@ -90,16 +62,19 @@ for (const scenario of SCENARIOS) {
       await expect(targetNudge).toHaveCount(1, { timeout: 30_000 });
       if (scenario.audience === "private") {
         await expect(targetNudge).toHaveClass(/private/);
-        await expect(targetNudge.locator(".bot-label")).toContainText(
-          "only you can see this",
+        await expect(targetNudge.locator(".audience-badge")).toContainText(
+          "Private message to you",
         );
       } else {
         await expect(
           observer.locator(".bot-message", { hasText: scenario.text }),
         ).toHaveCount(1, { timeout: 30_000 });
+        await expect(targetNudge.locator(".audience-badge")).toContainText(
+          "Message to ALL in the group",
+        );
       }
 
-      // A second dominant message is inside the 30-minute cooldown. The
+      // A second dominant message is inside the 30-minute global cooldown. The
       // observer's message also gives private-event filtering time to settle.
       await sendChat(target, FOLLOW_UP);
       await sendChat(observer, "ok");
@@ -130,9 +105,9 @@ for (const scenario of SCENARIOS) {
         conditionId: condition.id,
         mode: scenario.mode,
         audience: scenario.audience,
-        tone: scenario.tone,
         trigger: "contribution-threshold",
         threshold: 0.55,
+        llmMode: "off",
         contributionWindowMinutes: 30,
       });
       expect(intervention.targets).toEqual([

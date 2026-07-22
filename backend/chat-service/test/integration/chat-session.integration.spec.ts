@@ -155,7 +155,7 @@ describe("chat-service ↔ real Synapse (integration)", () => {
     const { sessionId, roomId } = await startSession(
       alice,
       [berta],
-      testCondition("public-engaging"),
+      testCondition("public"),
       0.3,
     );
 
@@ -164,21 +164,23 @@ describe("chat-service ↔ real Synapse (integration)", () => {
     await sendText(berta, roomId, "ok");
 
     const nudge = await botMessageIn(alice, roomId);
-    expect(nudge.content.body).toContain("Current participation split");
-    expect(nudge.content.body).toContain("top contributor");
+    // First nudge in a session uses the first template variant, addressing
+    // only the top contributor with their own percentage.
+    expect(nudge.content.body).toContain("a lot of energy");
+    expect(nudge.content.body).toContain("% of the airtime");
+    expect(nudge.content.body).not.toContain("Current participation split");
     // Public nudge: no private-recipient key.
     expect(nudge.content[GDM_RECIPIENT_KEY]).toBeUndefined();
 
     const call = await finalizeFor(sessionId, 40_000);
-    // The intervention window blocks a second nudge, so exactly one is logged.
+    // The global cooldown blocks a second nudge, so exactly one is logged.
     expect(call.body.interventions).toHaveLength(1);
     const logged = call.body.interventions![0];
     expect(logged).toMatchObject({
       sessionId,
       roomId,
-      mode: "public-engaging",
+      mode: "public",
       audience: "public",
-      tone: "engaging",
       trigger: "contribution-threshold",
     });
     expect(logged.targets).toEqual([
@@ -200,7 +202,7 @@ describe("chat-service ↔ real Synapse (integration)", () => {
     const { sessionId, roomId } = await startSession(
       alice,
       [berta],
-      testCondition("private-neutral"),
+      testCondition("private"),
       10,
     );
 
@@ -210,7 +212,8 @@ describe("chat-service ↔ real Synapse (integration)", () => {
     const nudge = await botMessageIn(alice, roomId);
     // Soft privacy: the event carries the recipient; clients filter on it.
     expect(nudge.content[GDM_RECIPIENT_KEY]).toBe(alice.userId);
-    expect(nudge.content.body).toContain("consider this info as you continue");
+    // Private delivery uses the identical template texts (no confounds).
+    expect(nudge.content.body).toContain("a lot of energy");
 
     // End the session the way the timer would, and check the handover.
     await t.moduleRef.get(SessionsService).endSession(roomId);
@@ -218,8 +221,49 @@ describe("chat-service ↔ real Synapse (integration)", () => {
     expect(call.body.interventions).toHaveLength(1);
     expect(call.body.interventions![0]).toMatchObject({
       audience: "private",
-      tone: "neutral",
       targets: [expect.objectContaining({ userId: alice.userId })],
     });
+  });
+
+  it("comparison mode: Assistant A and Assistant B both nudge in the same room", async () => {
+    const alice = await registerUser("alice");
+    const berta = await registerUser("berta");
+    const condition = testCondition("public");
+    condition.config.comparisonMode = true;
+    const { sessionId, roomId } = await startSession(alice, [berta], condition, 10);
+
+    // One dominant message triggers both detection arms (without an API key
+    // the LLM arm falls back to 0.9 × share, still above the threshold).
+    await sendText(
+      alice,
+      roomId,
+      "My extensive oxygen plan covers rations suits water and every possible route across the lunar surface for the whole crew.",
+    );
+
+    const nudges = await until(async () => {
+      const events = (await roomMessages(alice, roomId)).filter(
+        (ev) => ev.type === "m.room.message" && /_bot_[ab]_/.test(ev.sender),
+      );
+      return events.length >= 2 ? events : undefined;
+    }, "both comparison bots to nudge");
+
+    const senders = nudges.map((ev) => ev.sender);
+    expect(senders.some((sender) => /_bot_a_/.test(sender))).toBe(true);
+    expect(senders.some((sender) => /_bot_b_/.test(sender))).toBe(true);
+    for (const nudge of nudges) {
+      expect(nudge.content.body).toContain("a lot of energy");
+      // Comparison nudges are always public.
+      expect(nudge.content[GDM_RECIPIENT_KEY]).toBeUndefined();
+    }
+
+    await t.moduleRef.get(SessionsService).endSession(roomId);
+    const call = await finalizeFor(sessionId, 10_000);
+    expect(call.body.interventions).toHaveLength(2);
+    expect(call.body.interventions!.map((item) => item.llmMode).sort()).toEqual([
+      "active",
+      "off",
+    ]);
+    // The comparison bots' own nudges never count as discussion messages.
+    expect(call.body.messages.map((m) => m.senderId)).toEqual([alice.userId]);
   });
 });

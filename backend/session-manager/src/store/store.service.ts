@@ -5,6 +5,7 @@ import {
   DEFAULT_INTERVENTION_CONFIG,
   MOON_SURVIVAL,
   MOON_SURVIVAL_BRIEFING,
+  normalizeInterventionMode,
 } from "@gdm/shared";
 import type {
   Briefing,
@@ -522,7 +523,6 @@ export class StoreService implements OnModuleInit {
           conditionId: intervention.conditionId,
           mode: intervention.mode,
           audience: intervention.audience,
-          tone: intervention.tone,
           timestamp: toDate(intervention.timestamp),
           trigger: intervention.trigger,
           threshold: intervention.threshold,
@@ -551,13 +551,23 @@ export function shuffleRankingOrder(
   return shuffled;
 }
 
+/**
+ * The study's 2×2 + baseline design: delivery (public/private) × detection
+ * (rule-based / rule-based + LLM meaningfulness). Detection is carried by
+ * `llmMode` ("off" = rule-based, "active" = rule + LLM).
+ */
 function seedConditions(): Condition[] {
-  const arms: { id: string; name: string; mode: InterventionMode }[] = [
-    { id: "baseline", name: "Baseline", mode: "baseline" },
-    { id: "public-neutral", name: "Public Neutral", mode: "public-neutral" },
-    { id: "public-engaging", name: "Public Engaging", mode: "public-engaging" },
-    { id: "private-neutral", name: "Private Neutral", mode: "private-neutral" },
-    { id: "private-engaging", name: "Private Engaging", mode: "private-engaging" },
+  const arms: {
+    id: string;
+    name: string;
+    mode: InterventionMode;
+    llmMode: "off" | "active";
+  }[] = [
+    { id: "baseline", name: "Baseline", mode: "baseline", llmMode: "off" },
+    { id: "public-rule", name: "Public × Rule-based", mode: "public", llmMode: "off" },
+    { id: "public-llm", name: "Public × Rule+LLM", mode: "public", llmMode: "active" },
+    { id: "private-rule", name: "Private × Rule-based", mode: "private", llmMode: "off" },
+    { id: "private-llm", name: "Private × Rule+LLM", mode: "private", llmMode: "active" },
   ];
 
   return arms.map((arm) =>
@@ -571,6 +581,7 @@ function seedConditions(): Condition[] {
       config: {
         ...DEFAULT_INTERVENTION_CONFIG,
         interventionMode: arm.mode,
+        llmMode: arm.llmMode,
         scoreWeights: { ...DEFAULT_INTERVENTION_CONFIG.scoreWeights },
       },
     }),
@@ -588,17 +599,43 @@ function normalizeCondition(condition: Condition): Condition {
     config: {
       ...DEFAULT_INTERVENTION_CONFIG,
       ...condition.config,
+      // Conditions stored before the tone axis was retired carry old mode
+      // strings like "public-engaging" — fold them onto the delivery axis.
+      interventionMode: normalizeInterventionMode(
+        condition.config.interventionMode ??
+          DEFAULT_INTERVENTION_CONFIG.interventionMode,
+      ),
       scoreWeights: {
         ...DEFAULT_INTERVENTION_CONFIG.scoreWeights,
         ...condition.config.scoreWeights,
+      },
+      dominanceWeights: {
+        ...DEFAULT_INTERVENTION_CONFIG.dominanceWeights,
+        ...condition.config.dominanceWeights,
       },
       contributionWindowMinutes: clampInt(
         condition.config.contributionWindowMinutes ??
           DEFAULT_INTERVENTION_CONFIG.contributionWindowMinutes,
         1,
       ),
+      contributionThreshold: clampFraction(
+        condition.config.contributionThreshold ??
+          DEFAULT_INTERVENTION_CONFIG.contributionThreshold,
+        DEFAULT_INTERVENTION_CONFIG.contributionThreshold,
+      ),
+      cooldownSeconds: clampInt(
+        condition.config.cooldownSeconds ??
+          DEFAULT_INTERVENTION_CONFIG.cooldownSeconds,
+        0,
+      ),
     },
   };
+}
+
+/** Clamp a 0..1 fraction from admin input (NaN/empty → the fallback). */
+function clampFraction(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(0.01, Math.min(1, value));
 }
 
 /** Round to an integer and enforce a lower bound (NaN → the bound). */

@@ -31,9 +31,11 @@ function makeBot() {
     botUserId: "@bot:localhost",
     onTimelineEvent: (h: (e: TimelineEvent) => void) => handlers.push(h),
     join: vi.fn(async () => undefined),
+    joinAs: vi.fn(async () => undefined),
     start: vi.fn(),
     ensureReady: vi.fn(async () => undefined),
     sendText: vi.fn(async () => undefined),
+    sendTextAs: vi.fn(async () => undefined),
     getJoinedMemberIds: vi.fn(async () => ["@u:localhost", "@u2:localhost"]),
   };
   return { bot: bot as unknown as MatrixBotService, emit: (e: TimelineEvent) => handlers.forEach((h) => h(e)) };
@@ -63,6 +65,20 @@ describe("SessionsService (chat-service)", () => {
   it("startSession joins the room", async () => {
     await svc.startSession(note);
     expect(bot.join).toHaveBeenCalledWith("!r");
+    expect(bot.joinAs).not.toHaveBeenCalled();
+  });
+
+  it("startSession also joins both comparison bots when the condition asks for it", async () => {
+    await svc.startSession({
+      ...note,
+      condition: {
+        ...condition,
+        config: { ...condition.config, comparisonMode: true },
+      },
+    });
+    expect(bot.join).toHaveBeenCalledWith("!r");
+    expect(bot.joinAs).toHaveBeenCalledWith("a", "!r");
+    expect(bot.joinAs).toHaveBeenCalledWith("b", "!r");
   });
 
   it("does not start the same room twice", async () => {

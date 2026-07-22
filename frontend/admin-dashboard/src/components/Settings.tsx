@@ -121,13 +121,16 @@ export function ConditionsTable({ rows, onSaved }: Props) {
         <thead>
           <tr>
             <th>Condition</th>
-            <th>Semantic analysis</th>
+            <th>Detection</th>
             <th>Bot mode</th>
+            <th>2-bot test</th>
             <th>Active</th>
             <th>Goal</th>
             <th>Discussion time (min)</th>
             <th># People</th>
             <th>Rolling window (min)</th>
+            <th>Trigger at (%)</th>
+            <th>Cooldown (s)</th>
             <th>Progress</th>
             <th />
           </tr>
@@ -192,26 +195,47 @@ function ConditionRow({ row, onSaved }: { row: ConditionProgress; onSaved: () =>
         <span className="muted">{draft.id}</span>
       </td>
       <td>
+        {/* The detection arm of the study design (stored as config.llmMode).
+            "Shadow" records LLM classifications without affecting nudges —
+            use it to validate the classifier in pilots. */}
         <select
           value={draft.config.llmMode ?? "off"}
           onChange={(e) =>
             patch({
               config: {
                 ...draft.config,
-                llmMode: e.target.value as "off" | "shadow",
+                llmMode: e.target.value as "off" | "shadow" | "active",
               },
             })
           }
-          aria-label={`${draft.name} semantic analysis`}
+          aria-label={`${draft.name} detection`}
         >
-          <option value="off">off</option>
-          <option value="shadow">shadow</option>
+          <option value="off">Rule-based</option>
+          <option value="shadow">Rule-based + LLM shadow (log only)</option>
+          <option value="active">Rule-based + LLM</option>
         </select>
       </td>
       <td>
         {/* Read-only: which nudge behavior the bot runs (baseline = none).
             Tuning stays backend-only by design. */}
         <span className="bot-mode">{draft.config.interventionMode}</span>
+      </td>
+      <td>
+        {/* Pilot/user-testing only: Assistant A (rule) + Assistant B (rule+LLM)
+            nudge side by side, both public. Never for real study sessions. */}
+        <label className="switch">
+          <input
+            type="checkbox"
+            checked={draft.config.comparisonMode === true}
+            onChange={(e) =>
+              patch({
+                config: { ...draft.config, comparisonMode: e.target.checked },
+              })
+            }
+            aria-label={`${draft.name} two-bot comparison test`}
+          />
+          <span>{draft.config.comparisonMode ? "on" : "off"}</span>
+        </label>
       </td>
       <td>
         <label className="switch">
@@ -248,6 +272,34 @@ function ConditionRow({ row, onSaved }: { row: ConditionProgress; onSaved: () =>
           onChange={(contributionWindowMinutes) =>
             patch({
               config: { ...draft.config, contributionWindowMinutes },
+            })
+          }
+        />
+      </td>
+      <td className="num">
+        {/* Dominance-score threshold, shown as a percentage (protocol: 40%,
+            pilot range 40-50). Stored as a 0..1 fraction. */}
+        <NumberInput
+          value={Math.round(draft.config.contributionThreshold * 100)}
+          min={1}
+          onChange={(percent) =>
+            patch({
+              config: {
+                ...draft.config,
+                contributionThreshold: percent / 100,
+              },
+            })
+          }
+        />
+      </td>
+      <td className="num">
+        {/* Global nudge cooldown (protocol: 120s, pilot range 90-120). */}
+        <NumberInput
+          value={draft.config.cooldownSeconds}
+          min={0}
+          onChange={(cooldownSeconds) =>
+            patch({
+              config: { ...draft.config, cooldownSeconds },
             })
           }
         />

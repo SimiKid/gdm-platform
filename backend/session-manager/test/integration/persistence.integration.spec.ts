@@ -75,21 +75,23 @@ describe("persistence & exports (integration)", () => {
       sessionId,
       roomId,
       conditionId: "baseline",
-      mode: "public-neutral",
+      mode: "public",
       audience: "public",
-      tone: "neutral",
       timestamp: "2026-07-07T10:04:00.000Z",
       trigger: "contribution-threshold",
       threshold: 0.4,
+      llmMode: "off",
       contributionWindowMinutes: 4,
       contributionSplit: [
         {
           userId: userIds[0],
           identityName: "Crimson",
           messageCount: 5,
-          characterCount: 220,
+          wordCount: 44,
           score: 7.2,
           share: 0.55,
+          meaningfulnessScore: 0,
+          dominanceScore: 0.55,
         },
       ],
       targets: [{ userId: userIds[0], identityName: "Crimson" }],
@@ -229,8 +231,8 @@ describe("persistence & exports (integration)", () => {
       })
       .expect(201);
 
-    // Session 2 (public-neutral): finalized empty.
-    const other = await fillSession(t, "public-neutral");
+    // Session 2 (public-rule): finalized empty.
+    const other = await fillSession(t, "public-rule");
     await request(t.http)
       .post(`/api/sessions/${other[0].session.id}/finalize`)
       .send({ messages: [], rankingHistory: [] })

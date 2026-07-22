@@ -270,9 +270,9 @@ export function testCondition(
       contributionThreshold: 0.55,
       protectedStartMinutes: 0,
       protectedEndMinutes: 0,
-      interventionWindowMinutes: 30,
+      cooldownSeconds: 1800,
       contributionWindowMinutes: 30,
-      scoreWeights: { messages: 1, characters: 0.01 },
+      scoreWeights: { messages: 1, words: 0.05 },
     },
     ...overrides,
   };

@@ -87,13 +87,15 @@ describe("SessionsController", () => {
       durationMinutes: 10,
       groupSize: 3,
       config: {
-        interventionMode: "public-neutral",
+        interventionMode: "public",
         contributionThreshold: 0.4,
         protectedStartMinutes: 3,
         protectedEndMinutes: 2,
-        interventionWindowMinutes: 4,
+        cooldownSeconds: 120,
+        inviteGraceSeconds: 60,
         contributionWindowMinutes: 4,
-        scoreWeights: { messages: 1, characters: 0.01 },
+        scoreWeights: { messages: 1, words: 0.05 },
+        dominanceWeights: { share: 0.9, meaningfulness: 0.1 },
       },
     } as const;
     await expect(ctrl.upsertCondition("c1", { condition })).resolves.toMatchObject({
@@ -107,29 +109,29 @@ describe("SessionsController", () => {
   });
 
   it("exports JSON and CSV with optional condition filters", async () => {
-    await expect(ctrl.exportSessions("public-neutral,public-engaging")).resolves.toEqual({
+    await expect(ctrl.exportSessions("public-rule,public-llm")).resolves.toEqual({
       generatedAt: "now",
       sessions: [],
     });
     expect(sessions.exportBundle).toHaveBeenCalledWith([
-      "public-neutral",
-      "public-engaging",
+      "public-rule",
+      "public-llm",
     ]);
 
-    await expect(ctrl.exportSessionsCsv("public-neutral")).resolves.toBe("session_id\n");
-    expect(sessions.exportCsv).toHaveBeenCalledWith(["public-neutral"]);
+    await expect(ctrl.exportSessionsCsv("public-rule")).resolves.toBe("session_id\n");
+    expect(sessions.exportCsv).toHaveBeenCalledWith(["public-rule"]);
   });
 
   it("exports chat logs, nudge events, and surveys per data set", async () => {
-    await ctrl.exportMessages("public-neutral");
-    expect(sessions.exportMessages).toHaveBeenCalledWith(["public-neutral"]);
+    await ctrl.exportMessages("public-rule");
+    expect(sessions.exportMessages).toHaveBeenCalledWith(["public-rule"]);
     await expect(ctrl.exportMessagesCsv(undefined)).resolves.toBe("message_id\n");
     expect(sessions.exportMessagesCsv).toHaveBeenCalledWith([]);
 
     await ctrl.exportInterventions(undefined);
     expect(sessions.exportInterventions).toHaveBeenCalledWith([]);
-    await expect(ctrl.exportInterventionsCsv("private-engaging")).resolves.toBe("mode\n");
-    expect(sessions.exportInterventionsCsv).toHaveBeenCalledWith(["private-engaging"]);
+    await expect(ctrl.exportInterventionsCsv("private-llm")).resolves.toBe("mode\n");
+    expect(sessions.exportInterventionsCsv).toHaveBeenCalledWith(["private-llm"]);
 
     await ctrl.exportSurveys(undefined);
     expect(sessions.exportSurveys).toHaveBeenCalledWith([]);
