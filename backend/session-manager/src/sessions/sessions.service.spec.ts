@@ -58,9 +58,9 @@ describe("SessionsService (session-manager)", () => {
   it("openSession can force a condition for pilot testing", async () => {
     const res = await svc.openSession({
       ...open(),
-      conditionId: "private-engaging",
+      conditionId: "private-llm",
     });
-    expect(res.session.condition.id).toBe("private-engaging");
+    expect(res.session.condition.id).toBe("private-llm");
   });
 
   it("provisions the room once the group is full and notifies the chat service", async () => {
@@ -88,7 +88,7 @@ describe("SessionsService (session-manager)", () => {
       await store.saveSession(session);
     }
     const res = await svc.openSession(open());
-    expect(res.session.condition.id).toBe("public-neutral");
+    expect(res.session.condition.id).toBe("public-rule");
   });
 
   it("throws ConflictException when the whole study is full", async () => {
@@ -126,10 +126,10 @@ describe("SessionsService (session-manager)", () => {
         conditionId: "baseline",
         mode: "baseline",
         audience: "none",
-        tone: "none",
         timestamp: "2026-01-01T00:00:00.000Z",
         trigger: "contribution-threshold",
         threshold: 0.4,
+        llmMode: "off",
         contributionWindowMinutes: 4,
         contributionSplit: [],
         targets: [],
@@ -213,15 +213,15 @@ describe("SessionsService (session-manager)", () => {
           messageId: "m1",
           senderId: "@u1:localhost",
           classifiedAt: "2026-01-01T00:00:02.000Z",
-          substantive: true,
-          relevanceWeight: 1.5,
-          references: [],
-          ignoredInShadow: true,
+          respondsToPrior: { value: false, reason: "opens the discussion" },
+          referencesTaskItem: { value: true, reason: "names oxygen" },
+          hasDiscussionStructure: { value: true, reason: "proposes a ranking" },
+          invitesParticipation: { value: false, reason: "no invitation" },
+          meaningfulnessScore: 2 / 3,
           model: "test",
           promptVersion: "v1",
           prompt: "prompt",
           rawOutput: "{}",
-          explanation: "proposal",
         },
       ],
       processedEventIds: ["m1", "t1"],
@@ -234,9 +234,11 @@ describe("SessionsService (session-manager)", () => {
       participantId: "@u1:localhost",
       messageCount: 1,
       typingDurationMs: 1200,
-      substantiveMessageCount: 1,
-      ignoredContributionCount: 1,
-      semanticWeightedScore: 1.5,
+      respondsToPriorCount: 0,
+      referencesTaskItemCount: 1,
+      hasDiscussionStructureCount: 1,
+      invitesParticipationCount: 0,
+      meaningfulnessScoreMean: 2 / 3,
     });
   });
 
@@ -272,7 +274,7 @@ describe("SessionsService (session-manager)", () => {
   it("exports sessions as JSON bundle and CSV summary", async () => {
     await svc.openSession(open());
     expect((await svc.exportBundle()).sessions).toHaveLength(1);
-    expect((await svc.exportBundle(["private-neutral"])).sessions).toHaveLength(0);
+    expect((await svc.exportBundle(["private-rule"])).sessions).toHaveLength(0);
 
     const csv = await svc.exportCsv();
     expect(csv).toContain("session_id,condition_id");
@@ -307,10 +309,10 @@ describe("SessionsService (session-manager)", () => {
           conditionId: "baseline",
           mode: "baseline",
           audience: "none",
-          tone: "none",
           timestamp: "2026-01-01T00:00:00.000Z",
           trigger: "contribution-threshold",
           threshold: 0.4,
+          llmMode: "off",
           contributionWindowMinutes: 4,
           contributionSplit: [],
           targets: [{ userId: "u1", identityName: "Rot" }],
@@ -337,11 +339,11 @@ describe("SessionsService (session-manager)", () => {
     });
 
     // Condition filter applies to every data set.
-    expect((await svc.exportMessages(["private-neutral"])).messages).toHaveLength(0);
+    expect((await svc.exportMessages(["private-rule"])).messages).toHaveLength(0);
     expect(
-      (await svc.exportInterventions(["private-neutral"])).interventions,
+      (await svc.exportInterventions(["private-rule"])).interventions,
     ).toHaveLength(0);
-    expect((await svc.exportSurveys(["private-neutral"])).surveys).toHaveLength(0);
+    expect((await svc.exportSurveys(["private-rule"])).surveys).toHaveLength(0);
 
     // CSV variants: headers, escaping, serialized details.
     const messagesCsv = await svc.exportMessagesCsv();
@@ -350,7 +352,7 @@ describe("SessionsService (session-manager)", () => {
     expect(messagesCsv).toContain("👍");
 
     const interventionsCsv = await svc.exportInterventionsCsv();
-    expect(interventionsCsv).toContain("mode,audience,tone");
+    expect(interventionsCsv).toContain("mode,audience,trigger");
     expect(interventionsCsv).toContain("Rot");
 
     const surveysCsv = await svc.exportSurveysCsv();

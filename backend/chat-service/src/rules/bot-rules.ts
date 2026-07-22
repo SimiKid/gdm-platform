@@ -2,17 +2,17 @@ import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import {
   DEFAULT_INTERVENTION_CONFIG,
+  MOON_SURVIVAL,
   audienceForMode,
   buildIdentities,
   identityFor,
-  toneForMode,
+  normalizeInterventionMode,
 } from "@gdm/shared";
 import type {
-  ContributionScoreWeights,
+  ContributionClassification,
   ContributionShare,
   InterventionConfig,
   InterventionLog,
-  InterventionMode,
   InterventionTarget,
   Message,
 } from "@gdm/shared";
@@ -40,18 +40,42 @@ export interface BotRules {
 }
 
 interface RuleState {
-  lastInterventionAtByTarget: Record<string, number>;
+  /**
+   * When the last nudge was sent (any target, any audience). Doubles as the
+   * global cool-down stamp and the contribution-tracker reset point: messages
+   * older than this never count toward dominance again ("back to 20-20-20").
+   */
+  lastInterventionAtMs?: number;
+  /** userId -> epoch ms until which the invite grace period suppresses flags. */
+  inviteGraceUntilByUser: Record<string, number>;
 }
+
+type LlmMode = "off" | "shadow" | "active";
 
 const STATE_KEY = "contributionBotRules";
 
+/** Tuning knobs for one rule-engine instance (used by the comparison mode). */
+export interface RuleEngineOptions {
+  /** Where this engine keeps its cooldown/reset/grace state on the runtime. */
+  stateKey?: string;
+  /** Force the detection arm, overriding condition config and env. */
+  forceLlmMode?: LlmMode;
+  /**
+   * Deliver nudges publicly as this named comparison bot ("a" / "b") instead
+   * of the primary bot, ignoring the condition's delivery audience.
+   */
+  deliverAs?: string;
+}
+
 /**
- * Deterministic first-pass intervention logic for the current study design.
+ * Deterministic turn-equalization logic for the current study design.
  *
- * The study currently has four intervention methods:
- * public/private x neutral/engaging. A participant is considered dominating
- * when their contribution share crosses the condition threshold. Contribution
- * is intentionally simple for now: message count + message length.
+ * A participant dominates once their dominance score crosses the condition
+ * threshold. Rule-based detection scores message count + word count in a
+ * rolling window; with `llmMode: "active"` the score becomes the composite
+ * `0.90 × contribution share + 0.10 × mean meaningfulness` (study protocol).
+ * Detection is identical across delivery conditions — only public vs. private
+ * delivery differs.
  */
 @Injectable()
 export class ContributionBotRules implements BotRules {
@@ -61,75 +85,76 @@ export class ContributionBotRules implements BotRules {
     @Optional()
     @Inject(CONTRIBUTION_CLASSIFIER)
     private readonly classifier?: ContributionClassifier,
+    private readonly options: RuleEngineOptions = {},
   ) {}
 
   async onEvent(runtime: SessionRuntime, event: TimelineEvent): Promise<void> {
     if (event.type !== "m.room.message") return;
 
     const config = normalizeConfig(runtime.condition.config);
-    await this.classifyForShadowMode(runtime, event, config);
-    if (!isInsideInterventionWindow(runtime, event.ts, config)) return;
-
+    const llmMode = this.options.forceLlmMode ?? resolveLlmMode(config);
     const participantIds = await this.getParticipantIds(runtime);
+    const state = getRuleState(runtime, this.options.stateKey ?? STATE_KEY);
+    await this.classifyMessage(runtime, event, config, llmMode, participantIds, state);
+
+    if (!isInsideInterventionWindow(runtime, event.ts, config)) return;
     if (participantIds.length < 2) return;
+    if (!globalCooldownElapsed(state, event.ts, config)) return;
 
     const split = contributionSplit(
       runtime.messages,
+      runtime.contributionClassifications,
       participantIds,
-      config.scoreWeights,
+      config,
       event.ts,
-      config.contributionWindowMinutes,
+      llmMode,
+      state.lastInterventionAtMs,
     );
     const targets = split
-      .filter((entry) => entry.share >= config.contributionThreshold)
-      .sort((a, b) => b.share - a.share || b.score - a.score);
+      .filter((entry) => entry.dominanceScore >= config.contributionThreshold)
+      .filter((entry) => !isInInviteGrace(state, entry.userId, event.ts))
+      .sort(
+        (a, b) => b.dominanceScore - a.dominanceScore || b.score - a.score,
+      );
     if (targets.length === 0) return;
 
-    const state = getRuleState(runtime);
-    const eligibleTargets = targets.filter((target) =>
-      canInterveneForTarget(state, target.userId, event.ts, config),
-    );
-    if (eligibleTargets.length === 0) return;
-
     const mode = config.interventionMode;
-    const audience = audienceForMode(mode);
+    // Comparison bots always deliver publicly, whatever the condition says.
+    const audience = this.options.deliverAs
+      ? "public"
+      : audienceForMode(mode);
     if (audience === "none") return;
-    const selectedTargets =
-      audience === "private" ? eligibleTargets : [eligibleTargets[0]];
-    const quietMembers = quietestMembers(
-      split,
-      selectedTargets,
-      config.contributionThreshold,
-    );
+    const target = targets[0];
+    const quietMembers = quietestMembers(split, target, config.contributionThreshold);
+    // Rotate per detection arm so each comparison bot cycles its own variants.
+    const nudgeIndex = runtime.interventions.filter(
+      (item) => item.llmMode === llmMode,
+    ).length;
+    const message = buildMessage(target, nudgeIndex);
 
-    if (audience === "public") {
-      const message = buildMessage(mode, split, selectedTargets[0], quietMembers);
+    if (this.options.deliverAs) {
+      await runtime.postAs(this.options.deliverAs, message);
+    } else if (audience === "public") {
       await runtime.post(message);
-      markIntervened(state, selectedTargets, event.ts);
-      runtime.recordIntervention(
-        buildLog(runtime, config, split, selectedTargets, quietMembers, message),
-      );
-      return;
-    }
-
-    for (const target of selectedTargets) {
-      const message = buildMessage(mode, split, target, quietMembers);
+    } else {
       await runtime.postPrivate(target.userId, message);
-      markIntervened(state, [target], event.ts);
-      runtime.recordIntervention(
-        buildLog(runtime, config, split, [target], quietMembers, message),
-      );
     }
+    // One stamp does both: global cool-down AND contribution-tracker reset.
+    state.lastInterventionAtMs = event.ts;
+    runtime.recordIntervention(
+      buildLog(runtime, config, llmMode, audience, split, target, quietMembers, message),
+    );
   }
 
-  private async classifyForShadowMode(
+  private async classifyMessage(
     runtime: SessionRuntime,
     event: TimelineEvent,
     config: InterventionConfig,
+    llmMode: LlmMode,
+    participantIds: string[],
+    state: RuleState,
   ): Promise<void> {
-    const envMode = process.env.LLM_MODE;
-    const mode = envMode === "shadow" || envMode === "off" ? envMode : config.llmMode;
-    if (mode !== "shadow" || !this.classifier) return;
+    if (llmMode === "off" || !this.classifier) return;
     const messageIndex = runtime.messages.findIndex(
       (message) => message.id === event.eventId,
     );
@@ -137,13 +162,19 @@ export class ContributionBotRules implements BotRules {
     if (!message || runtime.contributionClassifications.some((c) => c.messageId === message.id)) {
       return;
     }
-    const classification = await this.classifier.classify(
-      message,
-      runtime.messages.slice(0, messageIndex),
-    );
+    const classification = await this.classifier.classify(message, {
+      priorMessages: runtime.messages.slice(0, messageIndex),
+      taskItems: MOON_SURVIVAL.items.map((item) => item.label),
+      participantIds,
+    });
     if (!classification) return;
     runtime.recordClassification(classification);
-    detectIgnoredContributions(runtime, event.ts, config);
+    // Self-correction reward: inviting others suppresses being flagged for a
+    // moment. Shadow mode must never influence interventions, so active only.
+    if (llmMode === "active" && classification.invitesParticipation.value) {
+      state.inviteGraceUntilByUser[message.senderId] =
+        event.ts + config.inviteGraceSeconds * 1000;
+    }
   }
 
   private async getParticipantIds(runtime: SessionRuntime): Promise<string[]> {
@@ -158,43 +189,12 @@ export class ContributionBotRules implements BotRules {
   }
 }
 
-function detectIgnoredContributions(
-  runtime: SessionRuntime,
-  nowMs: number,
-  config: InterventionConfig,
-): void {
-  const graceMs = (config.ignoredGraceSeconds ?? 75) * 1000;
-  const minSubsequent = config.ignoredMinSubsequentMessages ?? 2;
-  for (const candidate of runtime.contributionClassifications) {
-    if (!candidate.substantive || candidate.ignoredInShadow) continue;
-    const message = runtime.messages.find((item) => item.id === candidate.messageId);
-    if (!message) continue;
-    const messageMs = new Date(message.timestamp).getTime();
-    if (nowMs - messageMs < graceMs) continue;
-    const laterFromOthers = runtime.messages.filter(
-      (item) =>
-        new Date(item.timestamp).getTime() > messageMs &&
-        item.senderId !== message.senderId,
-    );
-    if (laterFromOthers.length < minSubsequent) continue;
-    const acknowledged = runtime.contributionClassifications.some(
-      (item) =>
-        item.senderId !== message.senderId &&
-        item.references.includes(message.id),
-    );
-    if (acknowledged) continue;
-    candidate.ignoredInShadow = true;
-    runtime.recordBehavior({
-      id: `llm-shadow:${message.id}`,
-      type: "llm-shadow-trigger",
-      participantId: message.senderId,
-      timestamp: new Date(nowMs).toISOString(),
-      payload: {
-        messageId: message.id,
-        subsequentMessages: laterFromOthers.length,
-      },
-    });
+function resolveLlmMode(config: InterventionConfig): LlmMode {
+  const envMode = process.env.LLM_MODE;
+  if (envMode === "off" || envMode === "shadow" || envMode === "active") {
+    return envMode;
   }
+  return config.llmMode ?? "off";
 }
 
 function normalizeConfig(
@@ -203,19 +203,30 @@ function normalizeConfig(
   return {
     ...DEFAULT_INTERVENTION_CONFIG,
     ...config,
+    // Sessions checkpointed before the tone axis was retired may still carry
+    // old mode strings like "public-engaging".
+    interventionMode: normalizeInterventionMode(
+      config.interventionMode ?? DEFAULT_INTERVENTION_CONFIG.interventionMode,
+    ),
     scoreWeights: {
       ...DEFAULT_INTERVENTION_CONFIG.scoreWeights,
       ...config.scoreWeights,
     },
+    dominanceWeights: {
+      ...DEFAULT_INTERVENTION_CONFIG.dominanceWeights,
+      ...config.dominanceWeights,
+    },
   };
 }
 
-function getRuleState(runtime: SessionRuntime): RuleState {
-  const existing = runtime.state[STATE_KEY] as RuleState | undefined;
-  if (existing) return existing;
-  const created: RuleState = { lastInterventionAtByTarget: {} };
-  runtime.state[STATE_KEY] = created;
-  return created;
+function getRuleState(runtime: SessionRuntime, stateKey: string): RuleState {
+  const existing = runtime.state[stateKey] as Partial<RuleState> | undefined;
+  const state: RuleState = {
+    lastInterventionAtMs: existing?.lastInterventionAtMs,
+    inviteGraceUntilByUser: existing?.inviteGraceUntilByUser ?? {},
+  };
+  runtime.state[stateKey] = state;
+  return state;
 }
 
 function isInsideInterventionWindow(
@@ -234,85 +245,110 @@ function isInsideInterventionWindow(
   return true;
 }
 
+function globalCooldownElapsed(
+  state: RuleState,
+  nowMs: number,
+  config: InterventionConfig,
+): boolean {
+  if (state.lastInterventionAtMs === undefined) return true;
+  return nowMs - state.lastInterventionAtMs >= config.cooldownSeconds * 1000;
+}
+
+function isInInviteGrace(
+  state: RuleState,
+  userId: string,
+  nowMs: number,
+): boolean {
+  const until = state.inviteGraceUntilByUser[userId];
+  return until !== undefined && nowMs < until;
+}
+
 function contributionSplit(
   messages: Message[],
+  classifications: ContributionClassification[],
   participantIds: string[],
-  weights: ContributionScoreWeights,
+  config: InterventionConfig,
   nowMs: number,
-  windowMinutes: number,
+  llmMode: LlmMode,
+  trackerResetAtMs: number | undefined,
 ): ContributionShare[] {
   const identities = buildIdentities(participantIds);
-  const cutoffMs = nowMs - windowMinutes * 60_000;
+  const windowCutoffMs = nowMs - config.contributionWindowMinutes * 60_000;
   const byUser = new Map<
     string,
-    { messageCount: number; characterCount: number }
+    { messageCount: number; wordCount: number; meaningfulness: number[] }
   >();
 
   for (const id of participantIds) {
-    byUser.set(id, { messageCount: 0, characterCount: 0 });
+    byUser.set(id, { messageCount: 0, wordCount: 0, meaningfulness: [] });
   }
 
+  const scoreByMessageId = new Map(
+    classifications.map((item) => [item.messageId, item.meaningfulnessScore]),
+  );
   for (const message of messages) {
     const messageMs = new Date(message.timestamp).getTime();
-    if (Number.isFinite(messageMs) && messageMs < cutoffMs) continue;
+    if (Number.isFinite(messageMs)) {
+      if (messageMs < windowCutoffMs) continue;
+      // Tracker reset: everything up to and including the nudge moment is
+      // wiped — everyone restarts at parity and dominance must re-emerge.
+      if (trackerResetAtMs !== undefined && messageMs <= trackerResetAtMs) continue;
+    }
     const stats = byUser.get(message.senderId);
     if (!stats) continue;
     stats.messageCount += 1;
-    stats.characterCount += message.text.trim().length;
+    stats.wordCount += countWords(message.text);
+    const meaningfulness = scoreByMessageId.get(message.id);
+    if (meaningfulness !== undefined) stats.meaningfulness.push(meaningfulness);
   }
 
   const scores = participantIds.map((userId) => {
-    const stats = byUser.get(userId) ?? { messageCount: 0, characterCount: 0 };
+    const stats = byUser.get(userId)!;
     const score =
-      stats.messageCount * weights.messages +
-      stats.characterCount * weights.characters;
+      stats.messageCount * config.scoreWeights.messages +
+      stats.wordCount * config.scoreWeights.words;
+    const meaningfulnessScore =
+      stats.meaningfulness.length > 0
+        ? stats.meaningfulness.reduce((sum, value) => sum + value, 0) /
+          stats.meaningfulness.length
+        : 0;
     return {
       userId,
       identityName: identityFor(identities, userId).name,
       messageCount: stats.messageCount,
-      characterCount: stats.characterCount,
+      wordCount: stats.wordCount,
       score,
       share: 0,
+      meaningfulnessScore,
+      dominanceScore: 0,
     };
   });
 
   const total = scores.reduce((sum, entry) => sum + entry.score, 0);
-  return scores.map((entry) => ({
-    ...entry,
-    share: total > 0 ? entry.score / total : 0,
-  }));
+  return scores.map((entry) => {
+    const share = total > 0 ? entry.score / total : 0;
+    const dominanceScore =
+      llmMode === "active"
+        ? config.dominanceWeights.share * share +
+          config.dominanceWeights.meaningfulness * entry.meaningfulnessScore
+        : share;
+    return { ...entry, share, dominanceScore };
+  });
 }
 
-function canInterveneForTarget(
-  state: RuleState,
-  userId: string,
-  nowMs: number,
-  config: InterventionConfig,
-): boolean {
-  const last = state.lastInterventionAtByTarget[userId];
-  if (last === undefined) return true;
-  return nowMs - last >= config.interventionWindowMinutes * 60_000;
-}
-
-function markIntervened(
-  state: RuleState,
-  targets: ContributionShare[],
-  nowMs: number,
-): void {
-  for (const target of targets) {
-    state.lastInterventionAtByTarget[target.userId] = nowMs;
-  }
+function countWords(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
 function quietestMembers(
   split: ContributionShare[],
-  targets: ContributionShare[],
+  target: ContributionShare,
   threshold: number,
 ): InterventionTarget[] {
-  const targetIds = new Set(targets.map((target) => target.userId));
   return split
     .filter(
-      (entry) => !targetIds.has(entry.userId) && entry.share < threshold,
+      (entry) =>
+        entry.userId !== target.userId && entry.dominanceScore < threshold,
     )
     .sort(
       (a, b) => a.share - b.share || a.identityName.localeCompare(b.identityName),
@@ -321,64 +357,41 @@ function quietestMembers(
     .map(toTarget);
 }
 
-function buildMessage(
-  mode: InterventionMode,
-  split: ContributionShare[],
-  target: ContributionShare,
-  quietMembers: InterventionTarget[],
-): string {
-  const status = `Current participation split:\n\n${formatSplit(split)}.`;
-  const quiet = formatQuietMembers(quietMembers);
-  const topPhrase = isShareLeader(split, target)
-    ? "you are the top contributor"
-    : "you are among the top contributors";
+/**
+ * Study-protocol nudge texts. Identical for private and public delivery to
+ * avoid confounds, and they reveal ONLY the top contributor's percentage —
+ * never the other members' shares.
+ */
+const NUDGE_TEMPLATES: ReadonlyArray<(name: string, pct: number) => string> = [
+  (name, pct) =>
+    `@${name}, you've brought a lot of energy to this — ${pct}% of the airtime so far! Might be a good moment to hear from the others, too.`,
+  (name, pct) =>
+    `@${name}, you're leading the discussion right now at ${pct}% of the messages. Curious what the rest of the group thinks — want to pull them in?`,
+  (name, pct) =>
+    `Nice momentum, @${name} — you're at ${pct}% of the conversation so far. The group might benefit from a few more voices in the mix.`,
+  (name, pct) =>
+    `@${name}, you've been really active — ${pct}% of the airtime! Worth checking in with the quieter folks before you move on?`,
+  (name, pct) =>
+    `@${name}, you've carried a good chunk of this discussion (${pct}%). Maybe toss the next question over to someone else in the group?`,
+];
 
-  switch (mode) {
-    case "public-neutral":
-      return `${status}\n\n@all, consider this info as you continue with your conversations.`;
-    case "public-engaging":
-      return (
-        `${status}\n\n@${target.identityName}, ${topPhrase} right now. ` +
-        `Now might be a good time to check in with group members who did not contribute as much, such as ${quiet} - you might be missing something useful.`
-      );
-    case "private-neutral":
-      return `${status}\n\n@${target.identityName}, consider this info as you continue.`;
-    case "private-engaging":
-      return (
-        `${status}\n\n@${target.identityName}, ${topPhrase} right now. ` +
-        `Now might be a good time to check in with group members who did not contribute as much, such as ${quiet} - you might be missing something useful.`
-      );
-    case "baseline":
-      return "";
-  }
-}
-
-function isShareLeader(
-  split: ContributionShare[],
-  target: ContributionShare,
-): boolean {
-  return split.every(
-    (entry) => entry.userId === target.userId || entry.share <= target.share,
-  );
-}
-
-function formatSplit(split: ContributionShare[]): string {
-  return split
-    .map((entry) => `${entry.identityName}: ${Math.round(entry.share * 100)}%`)
-    .join(", ");
-}
-
-function formatQuietMembers(quietMembers: InterventionTarget[]): string {
-  if (quietMembers.length === 0) return "others";
-  if (quietMembers.length === 1) return quietMembers[0].identityName;
-  return quietMembers.map((member) => member.identityName).join(" and ");
+/**
+ * Rotates deterministically through the template variants per nudge, so
+ * repeated interventions do not read like a stuck bot and every session's
+ * wording stays reproducible from its intervention log.
+ */
+function buildMessage(target: ContributionShare, nudgeIndex: number): string {
+  const template = NUDGE_TEMPLATES[nudgeIndex % NUDGE_TEMPLATES.length];
+  return template(target.identityName, Math.round(target.share * 100));
 }
 
 function buildLog(
   runtime: SessionRuntime,
   config: InterventionConfig,
+  llmMode: LlmMode,
+  audience: "public" | "private",
   split: ContributionShare[],
-  targets: ContributionShare[],
+  target: ContributionShare,
   quietMembers: InterventionTarget[],
   message: string,
 ): InterventionLog {
@@ -388,14 +401,14 @@ function buildLog(
     roomId: runtime.roomId,
     conditionId: runtime.condition.id,
     mode: config.interventionMode,
-    audience: audienceForMode(config.interventionMode),
-    tone: toneForMode(config.interventionMode),
+    audience,
     timestamp: new Date().toISOString(),
     trigger: "contribution-threshold",
     threshold: config.contributionThreshold,
+    llmMode,
     contributionWindowMinutes: config.contributionWindowMinutes,
     contributionSplit: split,
-    targets: targets.map(toTarget),
+    targets: [toTarget(target)],
     quietMembers,
     message,
   };
@@ -406,6 +419,51 @@ function toTarget(entry: ContributionShare): InterventionTarget {
     userId: entry.userId,
     identityName: entry.identityName,
   };
+}
+
+/**
+ * The rules implementation wired into the Chat Service. Normal sessions run a
+ * single engine that follows the condition config. When a condition sets
+ * `comparisonMode: true` (pilot/user-testing only), BOTH detection arms run
+ * side by side with independent cooldown/reset/grace state:
+ *
+ *   - "Assistant A" (`gdm_bot_a_…`) — rule-based detection
+ *   - "Assistant B" (`gdm_bot_b_…`) — rule-based + LLM meaningfulness
+ *
+ * Both deliver publicly so testers can watch and compare their behavior live.
+ */
+@Injectable()
+export class StudyBotRules implements BotRules {
+  private readonly single: ContributionBotRules;
+  private readonly ruleArm: ContributionBotRules;
+  private readonly llmArm: ContributionBotRules;
+
+  constructor(
+    @Optional()
+    @Inject(CONTRIBUTION_CLASSIFIER)
+    classifier?: ContributionClassifier,
+  ) {
+    this.single = new ContributionBotRules(classifier);
+    this.ruleArm = new ContributionBotRules(classifier, {
+      stateKey: `${STATE_KEY}:A`,
+      forceLlmMode: "off",
+      deliverAs: "a",
+    });
+    this.llmArm = new ContributionBotRules(classifier, {
+      stateKey: `${STATE_KEY}:B`,
+      forceLlmMode: "active",
+      deliverAs: "b",
+    });
+  }
+
+  async onEvent(runtime: SessionRuntime, event: TimelineEvent): Promise<void> {
+    if (runtime.condition.config.comparisonMode === true) {
+      await this.ruleArm.onEvent(runtime, event);
+      await this.llmArm.onEvent(runtime, event);
+      return;
+    }
+    await this.single.onEvent(runtime, event);
+  }
 }
 
 @Injectable()

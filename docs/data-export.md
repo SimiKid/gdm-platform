@@ -33,7 +33,7 @@ The most complete export. Contains every session as a nested JSON object with al
         "goal": 5,
         "durationMinutes": 30,
         "groupSize": 5,
-        "config": { "interventionMode": "none" }
+        "config": { "interventionMode": "baseline", "llmMode": "off" }
       },
 
       "participants": [
@@ -73,10 +73,10 @@ The most complete export. Contains every session as a nested JSON object with al
           "conditionId": "cond-2",
           "timestamp": "2026-07-13T10:15:00Z",
           "mode": "public",
-          "audience": "group",
-          "tone": "neutral",
-          "trigger": "non-acknowledgment",
-          "threshold": 40,
+          "audience": "public",
+          "trigger": "contribution-threshold",
+          "threshold": 0.4,
+          "llmMode": "off",
           "targets": [{ "identityName": "blue" }],
           "quietMembers": [{ "identityName": "red" }],
           "message": "Blue raised a point that hasn't been addressed yet."
@@ -108,13 +108,13 @@ The most complete export. Contains every session as a nested JSON object with al
           "messageId": "msg-uuid",
           "senderId": "participant-uuid",
           "classifiedAt": "2026-07-13T10:07:05Z",
-          "substantive": true,
-          "relevanceWeight": 0.85,
-          "references": [],
-          "ignoredInShadow": true,
+          "respondsToPrior": { "value": true, "reason": "Agrees with Red's oxygen proposal." },
+          "referencesTaskItem": { "value": true, "reason": "Names the oxygen tanks." },
+          "hasDiscussionStructure": { "value": false, "reason": "No explicit stance or proposal." },
+          "invitesParticipation": { "value": false, "reason": "Does not address another member." },
+          "meaningfulnessScore": 0.667,
           "model": "claude-haiku-4-5-20251001",
-          "promptVersion": "v1",
-          "explanation": "Introduces a new argument about a specific candidate with concrete reasoning."
+          "promptVersion": "meaningfulness-v1"
         }
       ]
     }
@@ -132,7 +132,6 @@ The most complete export. Contains every session as a nested JSON object with al
 | `tab-visible` | Browser tab returned |
 | `cursor-activity` | Mouse/cursor movement recorded |
 | `ranking-move` | Participant dragged an item in the shared ranking |
-| `llm-shadow-trigger` | LLM classifier was invoked for a message |
 
 ---
 
@@ -150,7 +149,7 @@ One row per session. Intended for a quick overview of study progress and session
 | `status` | `waiting`, `running`, `completed`, or `aborted` |
 | `participant_count` | Number of participants who joined |
 | `message_count` | Total messages sent in the session |
-| `reaction_count` | Total emoji reactions across all messages |
+| `reaction_count` | Total emoji reactions across all messages (always 0 since the reaction UI was removed per study protocol; kept for schema stability) |
 | `ranking_edit_count` | Number of times the shared ranking was modified |
 | `intervention_count` | Number of bot nudges fired |
 | `created_at` | ISO 8601 timestamp, session created |
@@ -229,10 +228,10 @@ One record per bot intervention across all sessions.
       "conditionName": "Public Neutral",
       "timestamp": "2026-07-13T10:15:00Z",
       "mode": "public",
-      "audience": "group",
-      "tone": "neutral",
-      "trigger": "non-acknowledgment",
-      "threshold": 40,
+      "audience": "public",
+      "trigger": "contribution-threshold",
+      "threshold": 0.4,
+      "llmMode": "off",
       "targets": [{ "identityName": "blue" }],
       "quietMembers": [{ "identityName": "red" }],
       "message": "Blue raised a point that hasn't been addressed yet."
@@ -249,11 +248,11 @@ One record per bot intervention across all sessions.
 | `condition_id` | Condition identifier |
 | `condition_name` | Condition name |
 | `timestamp` | ISO 8601 time the nudge was sent |
-| `mode` | `public` or `private` |
-| `audience` | `group` or individual participant id |
-| `tone` | `neutral` or `engaging` |
-| `trigger` | What caused the nudge (e.g. `non-acknowledgment`) |
-| `threshold` | Contribution imbalance threshold that was exceeded (%) |
+| `mode` | Delivery: `public` or `private` |
+| `audience` | `public` or `private` |
+| `trigger` | What caused the nudge (`contribution-threshold`) |
+| `threshold` | Dominance-score threshold that was exceeded (0..1) |
+| `llm_mode` | Detection arm: `off` (rule-based), `shadow`, or `active` (composite score) |
 | `targets` | Pipe-separated identity names of nudged participants |
 | `quiet_members` | Pipe-separated identity names of participants whose contribution was low |
 | `message` | The exact text the bot sent |
@@ -329,9 +328,11 @@ The JSON export contains three arrays. The CSV contains only the aggregate contr
       "reactionCount": 5,
       "rankingMoveCount": 3,
       "typingDurationMs": 42000,
-      "substantiveMessageCount": 8,
-      "ignoredContributionCount": 2,
-      "semanticWeightedScore": 6.4
+      "respondsToPriorCount": 8,
+      "referencesTaskItemCount": 6,
+      "hasDiscussionStructureCount": 5,
+      "invitesParticipationCount": 2,
+      "meaningfulnessScoreMean": 0.58
     }
   ],
 
@@ -355,13 +356,13 @@ The JSON export contains three arrays. The CSV contains only the aggregate contr
       "messageId": "msg-uuid",
       "senderId": "participant-uuid",
       "classifiedAt": "2026-07-13T10:07:05Z",
-      "substantive": true,
-      "relevanceWeight": 0.85,
-      "references": ["msg-uuid-2"],
-      "ignoredInShadow": true,
+      "respondsToPrior": { "value": true, "reason": "Agrees with Red's oxygen proposal." },
+      "referencesTaskItem": { "value": true, "reason": "Names the oxygen tanks." },
+      "hasDiscussionStructure": { "value": false, "reason": "No explicit stance or proposal." },
+      "invitesParticipation": { "value": false, "reason": "Does not address another member." },
+      "meaningfulnessScore": 0.667,
       "model": "claude-haiku-4-5-20251001",
-      "promptVersion": "v1",
-      "explanation": "Introduces a new argument about a specific candidate with concrete reasoning."
+      "promptVersion": "meaningfulness-v1"
     }
   ]
 }
@@ -376,19 +377,21 @@ The JSON export contains three arrays. The CSV contains only the aggregate contr
 | `reactionCount` | Total emoji reactions given by this participant |
 | `rankingMoveCount` | Number of times this participant moved an item in the shared ranking |
 | `typingDurationMs` | Total milliseconds spent typing (from behavioral events) |
-| `substantiveMessageCount` | Messages classified as substantive by the LLM |
-| `ignoredContributionCount` | Substantive messages that received no acknowledgment |
-| `semanticWeightedScore` | Sum of `relevanceWeight` across all classified messages. This is the composite contribution score. |
+| `respondsToPriorCount` | Messages that address, react to, or build on a prior message/member |
+| `referencesTaskItemCount` | Messages that explicitly name a ranking-task item |
+| `hasDiscussionStructureCount` | Messages with an explicit stance, proposal, or structured discourse move |
+| `invitesParticipationCount` | Messages that explicitly invite another member to contribute |
+| `meaningfulnessScoreMean` | Mean `meaningfulnessScore` across this participant's classified messages (0..1) |
 
 **`classifications` fields**
 
 | Field | Description |
 |---|---|
-| `substantive` | Whether the LLM judged this message as a real contribution |
-| `relevanceWeight` | Quality score 0–2 assigned by the LLM (0 = noise/empty agreement, 1 = normal task content, up to 2 = strong concrete contribution) |
-| `references` | Message ids this message explicitly responds to or builds on |
-| `ignoredInShadow` | `true` if this message was substantive but received no follow-up. This is the primary nudge trigger. |
-| `explanation` | Plain-text LLM reasoning for the classification |
+| `respondsToPrior` | `{ value, reason }` — addresses, reacts to, builds on, or refers to a specific prior message or member |
+| `referencesTaskItem` | `{ value, reason }` — explicitly names one or more ranking-task items |
+| `hasDiscussionStructure` | `{ value, reason }` — explicit stance, proposal, or structured discourse move |
+| `invitesParticipation` | `{ value, reason }` — explicitly invites another member to contribute. Tracked separately; never part of the meaningfulness score. |
+| `meaningfulnessScore` | Mean of the first three indicator values (0, 1/3, 2/3, or 1) |
 
 **CSV columns** (aggregate scores only; use the JSON export for behavioral events and per-message classifications)
 
@@ -402,6 +405,8 @@ The JSON export contains three arrays. The CSV contains only the aggregate contr
 | `reaction_count` | Total reactions given |
 | `ranking_move_count` | Shared ranking edits made |
 | `typing_duration_ms` | Total typing time in milliseconds |
-| `substantive_message_count` | Messages classified as substantive |
-| `ignored_contribution_count` | Substantive messages that went unacknowledged |
-| `semantic_weighted_score` | Composite contribution score (sum of relevance weights) |
+| `responds_to_prior_count` | Messages addressing or building on a prior message/member |
+| `references_task_item_count` | Messages naming a ranking-task item |
+| `has_discussion_structure_count` | Messages with an explicit stance or proposal |
+| `invites_participation_count` | Messages inviting another member to contribute |
+| `meaningfulness_score_mean` | Mean meaningfulness score across classified messages (0..1) |

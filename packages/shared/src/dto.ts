@@ -119,7 +119,6 @@ export interface InterventionSummary {
   timestamp: string;
   mode: InterventionLog["mode"];
   audience: InterventionLog["audience"];
-  tone: InterventionLog["tone"];
   targets: InterventionLog["targets"];
   quietMembers: InterventionLog["quietMembers"];
   contributionSplit: InterventionLog["contributionSplit"];
@@ -217,7 +216,10 @@ export interface ContributionAggregate {
   reactionCount: number;
   rankingMoveCount: number;
   typingDurationMs: number;
-  substantiveMessageCount: number;
-  ignoredContributionCount: number;
-  semanticWeightedScore: number;
+  respondsToPriorCount: number;
+  referencesTaskItemCount: number;
+  hasDiscussionStructureCount: number;
+  invitesParticipationCount: number;
+  /** Mean meaningfulnessScore across this participant's classified messages. */
+  meaningfulnessScoreMean: number;
 }

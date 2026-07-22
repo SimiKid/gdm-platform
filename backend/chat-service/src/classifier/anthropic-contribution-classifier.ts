@@ -1,17 +1,41 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { buildIdentities, identityFor } from "@gdm/shared";
-import type { ContributionClassification, Message } from "@gdm/shared";
-import type { ContributionClassifier } from "./contribution-classifier";
+import type {
+  ClassifierIndicator,
+  ContributionClassification,
+  Message,
+} from "@gdm/shared";
+import type {
+  ClassifierContext,
+  ContributionClassifier,
+} from "./contribution-classifier";
 
-const PROMPT_VERSION = "ignored-contribution-v1";
+const PROMPT_VERSION = "meaningfulness-v1";
 const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
+/** Preceding messages included for reference resolution (study protocol). */
+const CONTEXT_MESSAGES = 3;
+
+interface IndicatorOutput {
+  value: boolean;
+  reason: string;
+}
 
 interface ClassificationOutput {
-  substantive: boolean;
-  relevanceWeight: number;
-  references: string[];
-  explanation: string;
+  responds_to_prior: IndicatorOutput;
+  references_task_item: IndicatorOutput;
+  has_discussion_structure: IndicatorOutput;
+  invites_participation: IndicatorOutput;
 }
+
+const INDICATOR_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    value: { type: "boolean" },
+    reason: { type: "string" },
+  },
+  required: ["value", "reason"],
+} as const;
 
 @Injectable()
 export class AnthropicContributionClassifier implements ContributionClassifier {
@@ -20,13 +44,13 @@ export class AnthropicContributionClassifier implements ContributionClassifier {
 
   async classify(
     message: Message,
-    context: Message[],
+    context: ClassifierContext,
   ): Promise<ContributionClassification | null> {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
       if (!this.warnedMissingKey) {
         this.warnedMissingKey = true;
-        this.log.warn("ANTHROPIC_API_KEY is missing; semantic shadow mode is silent");
+        this.log.warn("ANTHROPIC_API_KEY is missing; semantic classification is silent");
       }
       return null;
     }
@@ -43,11 +67,13 @@ export class AnthropicContributionClassifier implements ContributionClassifier {
         },
         body: JSON.stringify({
           model,
-          max_tokens: 300,
+          max_tokens: 500,
           temperature: 0,
           system:
-            "You classify group-decision chat messages. Return only the requested JSON. " +
-            "Disagreement counts as engagement. Do not infer identities beyond the labels given.",
+            "You classify structural features of group-decision chat messages. " +
+            "Judge only what is explicitly present in the text — never quality, " +
+            "correctness, or writing style. Do not infer identities beyond the " +
+            "labels given. Return only the requested JSON.",
           messages: [{ role: "user", content: prompt }],
           output_config: {
             format: {
@@ -56,16 +82,16 @@ export class AnthropicContributionClassifier implements ContributionClassifier {
                 type: "object",
                 additionalProperties: false,
                 properties: {
-                  substantive: { type: "boolean" },
-                  relevanceWeight: { type: "number" },
-                  references: { type: "array", items: { type: "string" } },
-                  explanation: { type: "string" },
+                  responds_to_prior: INDICATOR_SCHEMA,
+                  references_task_item: INDICATOR_SCHEMA,
+                  has_discussion_structure: INDICATOR_SCHEMA,
+                  invites_participation: INDICATOR_SCHEMA,
                 },
                 required: [
-                  "substantive",
-                  "relevanceWeight",
-                  "references",
-                  "explanation",
+                  "responds_to_prior",
+                  "references_task_item",
+                  "has_discussion_structure",
+                  "invites_participation",
                 ],
               },
             },
@@ -79,20 +105,26 @@ export class AnthropicContributionClassifier implements ContributionClassifier {
       const rawOutput = response.content?.find((block) => block.type === "text")?.text;
       if (!rawOutput) throw new Error("Anthropic response contained no text block");
       const output = JSON.parse(rawOutput) as ClassificationOutput;
-      const allowedIds = new Set(context.map((item) => item.id));
+      const respondsToPrior = toIndicator(output.responds_to_prior);
+      const referencesTaskItem = toIndicator(output.references_task_item);
+      const hasDiscussionStructure = toIndicator(output.has_discussion_structure);
       return {
         messageId: message.id,
         senderId: message.senderId,
         classifiedAt: new Date().toISOString(),
-        substantive: output.substantive,
-        relevanceWeight: clamp(output.relevanceWeight, 0, 2),
-        references: output.references.filter((id) => allowedIds.has(id)),
-        ignoredInShadow: false,
+        respondsToPrior,
+        referencesTaskItem,
+        hasDiscussionStructure,
+        invitesParticipation: toIndicator(output.invites_participation),
+        meaningfulnessScore: meanOf(
+          respondsToPrior,
+          referencesTaskItem,
+          hasDiscussionStructure,
+        ),
         model,
         promptVersion: PROMPT_VERSION,
         prompt,
         rawOutput,
-        explanation: output.explanation,
       };
     } catch (err) {
       this.log.warn(`semantic classification failed: ${String(err)}`);
@@ -101,25 +133,69 @@ export class AnthropicContributionClassifier implements ContributionClassifier {
   }
 }
 
-function buildPrompt(message: Message, context: Message[]): string {
-  const messages = [...context, message].slice(-21);
-  const identities = buildIdentities(messages.map((item) => item.senderId));
-  const transcript = messages
-    .map(
-      (item) =>
-        `[${item.id}] ${identityFor(identities, item.senderId).name}: ${item.text}`,
-    )
-    .join("\n");
+function buildPrompt(message: Message, context: ClassifierContext): string {
+  const identities = buildIdentities([
+    ...new Set([
+      ...context.participantIds,
+      ...context.priorMessages.map((m) => m.senderId),
+      message.senderId,
+    ]),
+  ]);
+  const nameFor = (senderId: string) => identityFor(identities, senderId).name;
+  const preceding = context.priorMessages.slice(-CONTEXT_MESSAGES);
+  const precedingBlock =
+    preceding.length > 0
+      ? preceding.map((item) => `${nameFor(item.senderId)}: "${item.text}"`).join("\n")
+      : "(no prior messages)";
+  const memberNames = context.participantIds.map(nameFor).join(", ");
+  const memberCount = context.participantIds.length;
+
   return [
-    "Classify the final message in this transcript.",
-    "substantive: it adds a proposal, reason, task fact, question, disagreement, or decision-relevant idea.",
-    "relevanceWeight: 0 for noise/empty agreement, 1 for normal task content, up to 2 for a strong concrete contribution.",
-    "references: IDs of earlier messages the final message acknowledges, answers, disputes, or develops.",
-    "Transcript (participants are pseudonymous):",
-    transcript,
+    `You are analyzing a single message from a group discussion where ${memberCount} ` +
+      "people are jointly ranking a list of items. Classify structural features " +
+      "of THIS message only — do not judge quality, correctness, or writing style.",
+    "",
+    "Answer each with true/false and a one-sentence justification. Do not infer",
+    "intent beyond what is explicitly present in the text.",
+    "",
+    "1. responds_to_prior: Does the message clearly address, react to, build on,",
+    "   or directly refer to a specific prior message or group member (agreement,",
+    "   disagreement, clarification, extension, or direct mention)?",
+    "",
+    "2. references_task_item: Does the message explicitly mention one or more",
+    "   items from the ranking task list, by name?",
+    "",
+    "3. has_discussion_structure: Does the message contain an explicit stance,",
+    '   proposal, or structured discourse move (e.g., "I disagree because...",',
+    '   "let\'s put X at position Y", a counterproposal)?',
+    "",
+    "4. invites_participation: Does the message explicitly invite another named",
+    "   or unnamed group member to contribute (a direct question to them, or an",
+    '   open prompt like "anyone else?")?',
+    "",
+    "MESSAGE TO CLASSIFY:",
+    `Sender: ${nameFor(message.senderId)}`,
+    `Text: "${message.text}"`,
+    "",
+    "PRECEDING CONTEXT:",
+    precedingBlock,
+    "",
+    "TASK ITEMS:",
+    context.taskItems.join(", "),
+    "",
+    "GROUP MEMBERS:",
+    memberNames,
   ].join("\n");
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : 0;
+function toIndicator(output: IndicatorOutput | undefined): ClassifierIndicator {
+  return {
+    value: output?.value === true,
+    reason: String(output?.reason ?? ""),
+  };
+}
+
+function meanOf(...indicators: ClassifierIndicator[]): number {
+  const trueCount = indicators.filter((item) => item.value).length;
+  return trueCount / indicators.length;
 }

@@ -60,6 +60,12 @@ export class SessionsService implements OnModuleInit {
     // guard above must not block the Session Manager's retry, or the session
     // would be orphaned (no bot, no timer, never finalized).
     await this.bot.join(note.roomId);
+    if (note.condition.config.comparisonMode === true) {
+      // Two-bot comparison test: Assistant A (rule-based) and Assistant B
+      // (rule-based + LLM) join alongside the primary sync bot.
+      await this.bot.joinAs("a", note.roomId);
+      await this.bot.joinAs("b", note.roomId);
+    }
     const runtime = new SessionRuntime(
       note.sessionId,
       note.roomId,

@@ -1,18 +1,41 @@
-export type InterventionMode =
-  | "baseline"
-  | "public-neutral"
-  | "public-engaging"
-  | "private-neutral"
-  | "private-engaging";
+/**
+ * Delivery axis of the study design. Detection (rule-based vs. rule-based +
+ * LLM meaningfulness) is the second axis, carried by `llmMode` — together
+ * they form the 2×2 + baseline condition set.
+ */
+export type InterventionMode = "baseline" | "public" | "private";
 
 export type InterventionAudience = "none" | "public" | "private";
-export type InterventionTone = "none" | "neutral" | "engaging";
+
+/**
+ * Map pre-restructure modes (which carried a retired tone suffix, e.g.
+ * "public-engaging") onto the current delivery axis, so conditions and
+ * checkpoints persisted before the change keep working.
+ */
+export function normalizeInterventionMode(mode: string): InterventionMode {
+  if (mode === "baseline" || mode === "public" || mode === "private") {
+    return mode;
+  }
+  if (mode.startsWith("private")) return "private";
+  if (mode.startsWith("public")) return "public";
+  return "baseline";
+}
 
 export interface ContributionScoreWeights {
   /** Points per message. */
   messages: number;
-  /** Points per character. Example: 0.01 means 100 chars = 1 point. */
-  characters: number;
+  /** Points per word. Example: 0.05 means 20 words = 1 point. */
+  words: number;
+}
+
+/**
+ * Weights of the composite dominance score used when the LLM classifier is
+ * active: `dominance = share × raw contribution share + meaningfulness ×
+ * mean meaningfulness score`. Study protocol: 0.90 / 0.10.
+ */
+export interface DominanceWeights {
+  share: number;
+  meaningfulness: number;
 }
 
 /**
@@ -30,26 +53,50 @@ export interface InterventionConfig {
   protectedStartMinutes: number;
   /** No interventions near the end of a discussion. */
   protectedEndMinutes: number;
-  /** Minimum time between interventions for the same target. */
-  interventionWindowMinutes: number;
+  /**
+   * Global (room-wide) cool-down: after any nudge, no further nudge to anyone
+   * until this many seconds passed. Applies to public and private delivery.
+   */
+  cooldownSeconds: number;
+  /**
+   * Self-correction grace period: once a participant's classified message
+   * invites others to participate, they cannot be flagged for this many
+   * seconds. Separate from — and never extending — the global cool-down.
+   * Only effective while the classifier is active.
+   */
+  inviteGraceSeconds: number;
   /** Rolling message window used to calculate the contribution split. */
   contributionWindowMinutes: number;
   scoreWeights: ContributionScoreWeights;
-  /** Semantic classifier mode. Shadow records detections but never nudges. */
-  llmMode?: "off" | "shadow";
-  /** Minimum age of a substantive message before it can count as ignored. */
-  ignoredGraceSeconds?: number;
-  /** Other-participant messages required after it before it counts as ignored. */
-  ignoredMinSubsequentMessages?: number;
+  dominanceWeights: DominanceWeights;
+  /**
+   * Semantic classifier mode. `shadow` records classifications but never
+   * influences nudging; `active` folds the meaningfulness score into the
+   * dominance score (rule-based + LLM detection arm).
+   */
+  llmMode?: "off" | "shadow" | "active";
+  /**
+   * Pilot/testing only: run BOTH detection bots side by side in the room —
+   * "Assistant A" (rule-based) and "Assistant B" (rule-based + LLM), each
+   * with its own cooldown/tracker state, both delivering publicly. Ignores
+   * the condition's `llmMode` and delivery audience. Never enable for real
+   * study sessions.
+   */
+  comparisonMode?: boolean;
 }
 
 export interface ContributionShare {
   userId: string;
   identityName: string;
   messageCount: number;
-  characterCount: number;
+  wordCount: number;
   score: number;
+  /** Raw contribution share (0..1 across the group). Shown in nudges. */
   share: number;
+  /** Mean meaningfulness of this member's classified window messages (0..1). */
+  meaningfulnessScore: number;
+  /** Trigger metric: composite when the LLM is active, otherwise = share. */
+  dominanceScore: number;
 }
 
 export interface InterventionTarget {
@@ -64,10 +111,11 @@ export interface InterventionLog {
   conditionId: string;
   mode: InterventionMode;
   audience: InterventionAudience;
-  tone: InterventionTone;
   timestamp: string;
   trigger: "contribution-threshold";
   threshold: number;
+  /** Detection arm that produced this intervention (off = rule-based only). */
+  llmMode: "off" | "shadow" | "active";
   contributionWindowMinutes: number;
   contributionSplit: ContributionShare[];
   targets: InterventionTarget[];
@@ -76,27 +124,24 @@ export interface InterventionLog {
 }
 
 export const DEFAULT_INTERVENTION_CONFIG: InterventionConfig = {
-  interventionMode: "public-neutral",
+  interventionMode: "public",
   contributionThreshold: 0.4,
   protectedStartMinutes: 3,
   protectedEndMinutes: 2,
-  interventionWindowMinutes: 4,
+  cooldownSeconds: 120,
+  inviteGraceSeconds: 60,
   contributionWindowMinutes: 4,
   scoreWeights: {
     messages: 1,
-    characters: 0.01,
+    words: 0.05,
+  },
+  dominanceWeights: {
+    share: 0.9,
+    meaningfulness: 0.1,
   },
   llmMode: "off",
-  ignoredGraceSeconds: 75,
-  ignoredMinSubsequentMessages: 2,
 };
 
 export function audienceForMode(mode: InterventionMode): InterventionAudience {
-  if (mode === "baseline") return "none";
-  return mode.startsWith("private") ? "private" : "public";
-}
-
-export function toneForMode(mode: InterventionMode): InterventionTone {
-  if (mode === "baseline") return "none";
-  return mode.endsWith("engaging") ? "engaging" : "neutral";
+  return mode === "baseline" ? "none" : mode;
 }

@@ -4,17 +4,32 @@ How the rule-based intervention bot works, from trigger to message delivery.
 
 ## Research Context
 
-The study uses a **2x2 between-subjects design** (public/private x neutral/engaging) plus a **no-intervention baseline** to test whether real-time AI nudges during group discussions improve decision quality and group experience.
+The study uses a **2x2 between-subjects design** — delivery (public/private)
+× detection (rule-based / rule-based + LLM meaningfulness) — plus a
+**no-intervention baseline** to test whether real-time AI nudges during group
+discussions improve decision quality and group experience.
+
+Delivery is carried by `interventionMode` (`public` / `private` / `baseline`);
+detection by `llmMode` (`off` = rule-based, `active` = rule + LLM composite
+dominance score). Detection/trigger logic is identical across delivery
+conditions — only public vs. private delivery differs, preserving internal
+validity, and the nudge text is identical everywhere.
 
 ## Experimental Conditions
 
-| Condition | Audience | Tone | Description |
+| Condition | Delivery (`interventionMode`) | Detection (`llmMode`) | Description |
 |---|---|---|---|
-| `baseline` | none | none | No bot intervention; messages are recorded but the bot stays silent |
-| `public-neutral` | whole group | informational | Shows the participation split to everyone |
-| `public-engaging` | whole group | directive | Shows the split and prompts the top contributor to include quieter members |
-| `private-neutral` | target only | informational | Privately shows the participation split to the dominant participant |
-| `private-engaging` | target only | directive | Privately shows the split and prompts them to include quieter members |
+| `baseline` | baseline | off | No bot intervention; messages are recorded but the bot stays silent |
+| `public-rule` | public | off | Public nudges, rule-based detection |
+| `public-llm` | public | active | Public nudges, rule + LLM meaningfulness detection |
+| `private-rule` | private | off | Private nudges, rule-based detection |
+| `private-llm` | private | active | Private nudges, rule + LLM meaningfulness detection |
+
+Per the study protocol, the nudge **text is identical across all non-baseline
+conditions** — only the delivery (public vs. private) differs, so the message
+itself cannot confound the comparison. (An earlier neutral/engaging tone axis
+was retired; conditions persisted with old mode strings like
+`public-engaging` are folded onto the delivery axis automatically.)
 
 Each condition is assigned to a session at creation time and cannot change mid-session. Five conditions are seeded on first startup.
 
@@ -31,19 +46,22 @@ Matrix room event (m.room.message)
   (after protectedStart, before protectedEnd)
         |  no -> stop
         v
+  Has the global cooldown elapsed?
+  (cooldownSeconds since the last nudge, any target)
+        |  no -> stop
+        v
   Compute contribution split over rolling window
+  (messages after the last tracker reset only)
         |
         v
-  Any participant's share >= threshold?
+  Any participant's dominance score >= threshold?
+  (skipping members in an invite grace period)
         |  no -> stop
         v
-  Has cooldown elapsed for that target?
-        |  no -> stop
-        v
-  Build and send intervention message
+  Build and send intervention message to the top target
         |
         v
-  Log intervention to session runtime
+  Stamp cooldown + reset contribution tracker; log intervention
 ```
 
 ### Entry Point
@@ -59,78 +77,106 @@ No interventions fire during the warm-up or cool-down periods:
 
 This gives participants unmonitored time to settle in and wrap up.
 
-### Gate 2: Contribution Score
+### Gate 2: Global Cooldown
+
+After **any** nudge (public or private, any target), no further nudge fires
+until `cooldownSeconds` (default 120; pilot range down to 90) has elapsed.
+This is a room-wide sliding gate, not per person.
+
+### Gate 3: Contribution Score
 
 Over a rolling window (`contributionWindowMinutes`, default 4 minutes), the bot calculates each participant's contribution:
 
 ```
-score = messageCount * scoreWeights.messages + characterCount * scoreWeights.characters
+score = messageCount * scoreWeights.messages + wordCount * scoreWeights.words
 share = score / totalScore
 ```
 
-With default weights (`messages: 1`, `characters: 0.01`), a message counts as 1 point plus 0.01 per character. A 200-character message = 1 + 2 = 3 points.
+With default weights (`messages: 1`, `words: 0.05`), a message counts as 1 point plus 0.05 per word. A 20-word message = 1 + 1 = 2 points.
 
-Only messages within the rolling window are counted. Older messages fall off, so the score reflects recent activity, not cumulative history.
+Only messages within the rolling window **and after the last tracker reset**
+are counted (see Gate 5). Older messages fall off, so the score reflects
+recent activity, not cumulative history. Emoji reactions never count — the
+intervention is about turn-taking in talking/typing, and the chat UI no
+longer offers reactions at all (removed per study protocol for a cleaner
+design).
 
-### Gate 3: Threshold
+The trigger metric is the **dominance score**:
 
-If any participant's `share >= contributionThreshold` (default 0.40), they become a **target**. Multiple participants can exceed the threshold; they are sorted by share descending.
+- Rule-based arm (`llmMode: "off"` or `"shadow"`): `dominance = share`.
+- Rule-based + LLM arm (`llmMode: "active"`):
+  `dominance = 0.90 × share + 0.10 × meaningfulness`, where meaningfulness is
+  the mean `meaningfulnessScore` of the member's classified messages in the
+  window (0 when none are classified, e.g. on API failure). Weights are
+  configurable via `dominanceWeights`.
+
+### Gate 4: Threshold and Grace Period
+
+If any participant's `dominance score >= contributionThreshold` (default
+0.40), they become a candidate target. Candidates are sorted by dominance
+score descending and **only the top one** is nudged per trigger.
+
+A candidate is skipped while their **invite grace period** runs: when their
+classified message shows `invitesParticipation == true` (active LLM arm
+only), they cannot be flagged for `inviteGraceSeconds` (default 60) — a
+reward for self-correction. The grace period is separate from and never
+extends the global cooldown.
 
 If nobody crosses the threshold, no intervention fires.
 
-### Gate 4: Per-Target Cooldown
+### Gate 5: Tracker Reset
 
-Each target is checked against `interventionWindowMinutes` (default 4 minutes). If this target was already intervened on within that window, they are skipped. This prevents the bot from repeatedly nudging the same person.
+Sending a nudge stamps the reset point: all messages up to and including that
+moment are wiped from future dominance calculations, so the tracker restarts
+at parity ("back to 20-20-20-20-20"). The goal is equal turns from now on,
+not an equally balanced whole session — a dominant member who keeps dominating
+after a reset is quickly flagged again once the global cooldown allows.
 
 ## Message Templates
 
-### Public Neutral
+Five friendly variants (study protocol), rotated deterministically per nudge
+(1st nudge → variant 1, 2nd → variant 2, …). Each names **only the target and
+their own percentage** — the other members' shares are never revealed to
+participants (they remain in the audit log for analysis):
 
 ```
-Current participation split:
-
-Blue Jay: 62%, Red Fox: 23%, Green Turtle: 15%.
-
-@all, consider this info as you continue with your conversations.
+1. @Red, you've brought a lot of energy to this — 72% of the airtime so far!
+   Might be a good moment to hear from the others, too.
+2. @Red, you're leading the discussion right now at 72% of the messages.
+   Curious what the rest of the group thinks — want to pull them in?
+3. Nice momentum, @Red — you're at 72% of the conversation so far. The group
+   might benefit from a few more voices in the mix.
+4. @Red, you've been really active — 72% of the airtime! Worth checking in
+   with the quieter folks before you move on?
+5. @Red, you've carried a good chunk of this discussion (72%). Maybe toss the
+   next question over to someone else in the group?
 ```
 
-### Public Engaging
-
-```
-Current participation split:
-
-Blue Jay: 62%, Red Fox: 23%, Green Turtle: 15%.
-
-@Blue Jay, you are the top contributor right now. Now might be a good
-time to check in with group members who did not contribute as much,
-such as Green Turtle and Red Fox - you might be missing something useful.
-```
-
-### Private Neutral
-
-Same as public neutral, but addressed to the target by name and delivered as a private message (only visible to that participant).
-
-### Private Engaging
-
-Same as public engaging, but delivered as a private message.
+The percentage is the target's **raw contribution share** (airtime), not the
+composite dominance score. Public and private conditions send the identical
+text; only visibility differs.
 
 ## Private Message Delivery
 
 Private nudges are sent to the same Matrix room as regular messages, but with an extra content field (`de.gdm.recipient`) set to the target's Matrix user ID. The participant frontend filters messages: if a message has a `de.gdm.recipient` field, only the matching participant sees it. For public modes, no recipient field is set.
 
-In private mode, each eligible target gets their own separate private message.
+Every bot message carries a prominent Zoom-style delivery badge so
+participants are never unsure who can see a nudge:
+
+- Private: **🔒 Private message to you — only you can see this**
+- Public: **📢 Message to ALL in the group**
+
+In private mode, the single selected target gets the private message; with the
+global cooldown and tracker reset, exactly one nudge is sent per trigger in
+both delivery modes.
 
 ## Participant Identities
 
 Participants are not addressed by their real names or Matrix user IDs in bot messages. Instead, the system assigns **color-animal identities** (e.g., "Blue Jay", "Red Fox", "Green Turtle") based on a deterministic mapping from sorted participant user IDs. This is defined in `packages/shared/src/identity.ts`.
 
-## Quiet Members
+## Quiet Members (audit only)
 
-When the bot sends an engaging message, it identifies the **quietest members** — the participants with the lowest contribution share who are **below the threshold** and not themselves targets. Anyone above the threshold is never listed as a quiet member, even if their share is lower than the addressed target's (this happens when a higher-share co-dominator is skipped by cooldown). Up to 2 quiet members are named in the message.
-
-## "Top Contributor" Phrasing
-
-The engaging message calls the addressed target the **"top contributor"** only if their share is the highest in the split. If a higher-share participant exists but was skipped by cooldown, the wording softens to **"among the top contributors"** so the statement stays truthful.
+Each intervention log records the **quietest members** — up to 2 participants with the lowest contribution share whose dominance score is below the threshold and who are not the target. They are **never named in the participant-facing nudge** anymore; the field exists purely for analysis.
 
 ## Configurable Parameters
 
@@ -138,14 +184,19 @@ All parameters are editable per condition via the admin dashboard and are stored
 
 | Parameter | Field | Default | Description |
 |---|---|---|---|
-| Intervention mode | `interventionMode` | `public-neutral` | One of the five study conditions |
-| Threshold | `contributionThreshold` | `0.40` | Share at which a participant triggers an intervention |
+| Delivery mode | `interventionMode` | `public` | `baseline` / `public` / `private` |
+| Threshold | `contributionThreshold` | `0.40` | Dominance score at which a participant triggers an intervention |
 | Protected start | `protectedStartMinutes` | `3` | Minutes of no-intervention warm-up |
 | Protected end | `protectedEndMinutes` | `2` | Minutes of no-intervention cool-down |
-| Cooldown | `interventionWindowMinutes` | `4` | Minimum minutes between interventions for the same target |
+| Global cooldown | `cooldownSeconds` | `120` | Seconds after any nudge before the next one (room-wide) |
+| Invite grace | `inviteGraceSeconds` | `60` | Flag suppression after a member invites others (active LLM arm) |
 | Score window | `contributionWindowMinutes` | `4` | Rolling window for calculating contribution shares |
 | Message weight | `scoreWeights.messages` | `1` | Points per message |
-| Character weight | `scoreWeights.characters` | `0.01` | Points per character |
+| Word weight | `scoreWeights.words` | `0.05` | Points per word |
+| Share weight | `dominanceWeights.share` | `0.90` | Composite weight of the raw contribution share |
+| Meaningfulness weight | `dominanceWeights.meaningfulness` | `0.10` | Composite weight of the LLM meaningfulness score |
+| Classifier mode | `llmMode` | `off` | `off` / `shadow` (record only) / `active` (composite score + grace period) |
+| Two-bot test | `comparisonMode` | `false` | Pilot only: both detection bots nudge side by side (see below) |
 
 Defaults are defined in `packages/shared/src/interventions.ts` (`DEFAULT_INTERVENTION_CONFIG`). Conditions are seeded with these defaults by the session manager on first startup (see `seedConditions()` in `backend/session-manager/src/store/store.service.ts`).
 
@@ -156,7 +207,7 @@ Changes to a condition in the admin dashboard affect **future sessions only**. R
 Every intervention is recorded as an `InterventionLog` containing:
 
 - Session and condition IDs
-- Mode, audience, and tone
+- Delivery mode, audience, and detection arm (`llmMode`)
 - Timestamp
 - The full contribution split at the time of intervention
 - Target(s) and quiet member(s) identified
@@ -164,35 +215,75 @@ Every intervention is recorded as an `InterventionLog` containing:
 
 These logs are visible in the admin dashboard's **Intervention Audit** section and included in the JSON and CSV exports (`/api/export/sessions`, `/api/export/sessions.csv`).
 
-## Semantic Shadow Mode
+## Semantic Shadow Mode (Meaningfulness Classifier)
 
-Provide `ANTHROPIC_API_KEY` and select `shadow` for a condition in the admin
-dashboard to classify its participant messages with Anthropic's Messages API.
-`LLM_MODE=shadow` is an optional global override. The classifier records:
+Provide `ANTHROPIC_API_KEY` and set a condition's **Detection** to
+"Rule-based + LLM shadow (log only)" in the admin dashboard to classify its
+participant messages with Anthropic's Messages API.
+`LLM_MODE=shadow` is an optional global override. Per message, the classifier
+judges four structural indicators (each `true`/`false` plus a one-sentence
+reason), following the study protocol:
 
-- whether the message is substantive;
-- a relevance weight from 0 to 2;
-- earlier message IDs it acknowledges, answers, disputes, or develops;
-- model ID, prompt version, exact prompt, raw JSON output, and explanation.
+- `respondsToPrior` — addresses, reacts to, builds on, or directly refers to a
+  specific prior message or group member;
+- `referencesTaskItem` — explicitly names one or more ranking-task items;
+- `hasDiscussionStructure` — explicit stance, proposal, or structured
+  discourse move (agree/disagree, "X at position Y", counterproposal);
+- `invitesParticipation` — explicitly invites another (named or unnamed)
+  member to contribute. **Tracked separately** — it will feed the dominant
+  contributor's self-correction grace period, never the score.
 
-A substantive contribution is marked `ignoredInShadow` after the configured
-grace period when enough other-participant messages followed it and no later
-classification references it. This produces a persisted
-`llm-shadow-trigger` behavioral event. It never sends a nudge and therefore
-cannot alter a study condition. Classifications, raw behavioral events, and
-participant aggregates are available from `/api/export/contributions` and
+The mean of the first three indicators is stored as `meaningfulnessScore`
+(0..1). With `llmMode: "active"` it feeds the composite dominance score
+(`0.90 × contribution share + 0.10 × meaningfulness`, see Gate 3) and
+`invitesParticipation` drives the invite grace period; with `"shadow"` the
+same classifications are recorded but never influence nudging. Each classification
+also records the model ID, prompt version (`meaningfulness-v1`), the exact
+prompt, and the raw JSON output for auditability.
+
+The prompt contains the message, the sender's pseudonym, the immediately
+preceding 3 messages, the ranking-task item list, and the group member list.
+Shadow mode never sends a nudge and therefore cannot alter a study condition.
+Classifications and participant aggregates (per-indicator counts and the mean
+meaningfulness score) are available from `/api/export/contributions` and
 `/api/export/contributions.csv`.
 
-Defaults: `ignoredGraceSeconds=75` and
-`ignoredMinSubsequentMessages=2`. The API receives pseudonymous color labels,
+The API receives pseudonymous color labels,
 but it does receive chat text; consent and the data-processing documentation
 must state this before shadow mode is used with real participants.
+
+## Two-Bot Comparison Mode (pilot / user testing only)
+
+Setting `comparisonMode: true` on a condition (admin Settings → "2-bot test")
+runs **both detection arms in the same room** so testers can compare them
+live:
+
+| Bot | Matrix user | Detection |
+|---|---|---|
+| 🤖 Assistant A | `gdm_bot_a_<suffix>` | Rule-based (message + word counts) |
+| 🤖 Assistant B | `gdm_bot_b_<suffix>` | Rule-based + LLM meaningfulness (composite score + invite grace) |
+
+Mechanics:
+
+- Each arm runs the full rule engine with its **own** global cooldown,
+  tracker reset, and grace-period state — each bot behaves exactly as it
+  would alone, so their nudge timing can be compared directly.
+- Both deliver **publicly**, ignoring the condition's audience, and both use
+  the same 5 rotating templates (each rotates independently).
+- The labels are neutral (A/B) so testers stay blind to which arm is which;
+  the mapping above is the only place it's documented. Every intervention log
+  records `llmMode` (`off` = A, `active` = B) for the debrief.
+- The primary sync bot stays silent; Assistants A and B are separate Matrix
+  users that join on session start. The classifier runs once per message
+  (arms share the recorded classifications).
+- Never enable this for real study sessions — it exists to pilot the two
+  detection approaches against each other.
 
 ## Key Source Files
 
 | File | What it does |
 |---|---|
-| `packages/shared/src/interventions.ts` | Type definitions, defaults, audience/tone helpers |
+| `packages/shared/src/interventions.ts` | Type definitions, defaults, audience/legacy-mode helpers |
 | `packages/shared/src/identity.ts` | Color-animal identity assignment |
 | `backend/chat-service/src/rules/bot-rules.ts` | The rule engine (`ContributionBotRules`) |
 | `backend/chat-service/src/sessions/session-runtime.ts` | Per-session state, message recording, `post()` / `postPrivate()` |
@@ -200,5 +291,4 @@ must state this before shadow mode is used with real participants.
 
 ## Current Limitations
 
-- Semantic detection is shadow-only; it cannot send a participant-visible nudge.
 - Participant-visible bot messages remain fixed templates rather than LLM-generated text.
