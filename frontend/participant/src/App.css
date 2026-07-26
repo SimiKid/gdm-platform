@@ -962,8 +962,9 @@ body {
 .mention-menu {
   position: absolute;
   left: 1rem;
-  right: 1rem;
   bottom: calc(100% - 0.2rem);
+  min-width: 12rem;
+  max-width: min(20rem, calc(100% - 2rem));
   max-height: 12rem;
   overflow-y: auto;
   margin: 0;
