@@ -21,7 +21,7 @@ const DEFAULT_INFRA_DIR = existsSync(resolve(process.cwd(), "../infra"))
   ? resolve(process.cwd(), "../infra")
   : resolve(process.cwd(), "infra");
 
-test("@recovery live messages, ranking and intervention cooldown survive service restarts", async ({
+test("@recovery live messages, ranking and intervention state survive service restarts", async ({
   browser,
   request,
 }) => {
@@ -70,14 +70,15 @@ test("@recovery live messages, ranking and intervention cooldown survive service
     id: uniqueId("recovery"),
     name: "E2E Restart Recovery",
     groupSize: 2,
-    durationMinutes: 2,
+    // Enough time for a nudge, a controlled restart, and a second nudge.
+    durationMinutes: 3,
     config: {
       interventionMode: "public",
       contributionThreshold: 0.55,
       protectedStartMinutes: 0,
       protectedEndMinutes: 0,
-      cooldownSeconds: 1800,
-      contributionWindowMinutes: 30,
+      // 15s windows: nudges follow within one boundary of each marker.
+      contributionWindowMinutes: 0.25,
       scoreWeights: { messages: 1, words: 0.05 },
       llmMode: "off",
     },
@@ -123,13 +124,16 @@ test("@recovery live messages, ranking and intervention cooldown survive service
     await waitForHealth(CHAT_HEALTH, 60_000);
     servicesStopped = false;
 
+    // The post-restart message draws a nudge at the next window boundary
+    // (the recovered service re-arms the window timer from startedAt) —
+    // proving the rule engine picked the recovered session back up.
     await sendChat(group.pages[0], afterText);
     const recovered = await pollAdminSession(
       request,
       group.sessionId,
       (session) =>
         session.chat.messages.filter((message) => message.text === afterText)
-          .length === 1 && session.interventions.length === 1,
+          .length === 1 && session.interventions.length === 2,
       30_000,
     );
 
@@ -143,11 +147,12 @@ test("@recovery live messages, ranking and intervention cooldown survive service
       recovered.chat.messages.find((message) => message.text === beforeText)?.id,
     ).toBe(beforeMessageId);
     expect(recovered.rankingHistory?.length ?? 0).toBeGreaterThanOrEqual(1);
-    expect(recovered.interventions).toHaveLength(1);
+    expect(recovered.interventions).toHaveLength(2);
+    expect(recovered.interventions[0].id).toBe(before.interventions[0].id);
     expect(new Set(recovered.processedEventIds ?? []).size).toBe(
       recovered.processedEventIds?.length ?? 0,
     );
-    await expect(group.pages[0].locator(".bot-message")).toHaveCount(1);
+    await expect(group.pages[0].locator(".bot-message")).toHaveCount(2);
   } finally {
     if (servicesStopped) {
       compose(infraDir, composeEnvFile, ["start", "session-manager"]);

@@ -25,7 +25,10 @@ import type { ContributionClassifier } from "../classifier/contribution-classifi
  * Extension point for the intervention logic — THIS IS WHERE THE RULES GO.
  *
  * `onEvent` is called for every timeline event in an active session's room,
- * EXCEPT the bot's own events. It's where the study's rule-based bot lives.
+ * EXCEPT the bot's own events — it observes the discussion (recording,
+ * classification). `onWindowElapsed` is called by the session service each
+ * time a contribution window closes (every `contributionWindowMinutes`) and
+ * is where nudges are decided: at most one per window.
  *
  * Available context:
  *   - runtime.messages   — the discussion so far (accumulated)
@@ -37,13 +40,17 @@ import type { ContributionClassifier } from "../classifier/contribution-classifi
  */
 export interface BotRules {
   onEvent(runtime: SessionRuntime, event: TimelineEvent): Promise<void> | void;
+  onWindowElapsed?(
+    runtime: SessionRuntime,
+    windowEndMs: number,
+  ): Promise<void> | void;
 }
 
 interface RuleState {
   /**
-   * When the last nudge was sent (any target, any audience). Doubles as the
-   * global cool-down stamp and the contribution-tracker reset point: messages
-   * older than this never count toward dominance again ("back to 20-20-20").
+   * When the last nudge was sent (any target, any audience) — the
+   * contribution-tracker reset point: messages older than this never count
+   * toward dominance again ("back to 20-20-20").
    */
   lastInterventionAtMs?: number;
   /** userId -> epoch ms until which the invite grace period suppresses flags. */
@@ -56,7 +63,7 @@ const STATE_KEY = "contributionBotRules";
 
 /** Tuning knobs for one rule-engine instance (used by the comparison mode). */
 export interface RuleEngineOptions {
-  /** Where this engine keeps its cooldown/reset/grace state on the runtime. */
+  /** Where this engine keeps its reset/grace state on the runtime. */
   stateKey?: string;
   /** Force the detection arm, overriding condition config and env. */
   forceLlmMode?: LlmMode;
@@ -70,10 +77,12 @@ export interface RuleEngineOptions {
 /**
  * Deterministic turn-equalization logic for the current study design.
  *
- * A participant dominates once their dominance score crosses the condition
- * threshold. Rule-based detection scores message count + word count in a
- * rolling window; with `llmMode: "active"` the score becomes the composite
- * `0.90 × contribution share + 0.10 × mean meaningfulness` (study protocol).
+ * The bot evaluates at the end of every contribution window (every
+ * `contributionWindowMinutes`): a participant dominates once their dominance
+ * score over that window crosses the condition threshold, and at most one
+ * nudge is sent per window. Rule-based detection scores message count + word
+ * count; with `llmMode: "active"` the score becomes the composite `0.90 ×
+ * contribution share + 0.10 × mean meaningfulness` (study protocol).
  * Detection is identical across delivery conditions — only public vs. private
  * delivery differs.
  */
@@ -96,23 +105,37 @@ export class ContributionBotRules implements BotRules {
     const participantIds = await this.getParticipantIds(runtime);
     const state = getRuleState(runtime, this.options.stateKey ?? STATE_KEY);
     await this.classifyMessage(runtime, event, config, llmMode, participantIds, state);
+  }
 
-    if (!isInsideInterventionWindow(runtime, event.ts, config)) return;
+  /** Evaluate the closed window and nudge (at most once per window). */
+  async onWindowElapsed(
+    runtime: SessionRuntime,
+    windowEndMs: number,
+  ): Promise<void> {
+    const config = normalizeConfig(runtime.condition.config);
+    const llmMode = this.options.forceLlmMode ?? resolveLlmMode(config);
+    if (!isInsideInterventionWindow(runtime, windowEndMs, config)) return;
+    const participantIds = await this.getParticipantIds(runtime);
     if (participantIds.length < 2) return;
-    if (!globalCooldownElapsed(state, event.ts, config)) return;
+    const state = getRuleState(runtime, this.options.stateKey ?? STATE_KEY);
 
+    // Warm-up messages never count, even if a window overlaps the warm-up
+    // (the timer grid normally starts at warm-up end; this is the backstop
+    // for restored checkpoints or skewed boundaries).
+    const warmupEndMs =
+      runtime.startedAtMs + config.protectedStartMinutes * 60_000;
     const split = contributionSplit(
       runtime.messages,
       runtime.contributionClassifications,
       participantIds,
       config,
-      event.ts,
+      windowEndMs,
       llmMode,
-      state.lastInterventionAtMs,
+      Math.max(state.lastInterventionAtMs ?? 0, warmupEndMs),
     );
     const targets = split
       .filter((entry) => entry.dominanceScore >= config.contributionThreshold)
-      .filter((entry) => !isInInviteGrace(state, entry.userId, event.ts))
+      .filter((entry) => !isInInviteGrace(state, entry.userId, windowEndMs))
       .sort(
         (a, b) => b.dominanceScore - a.dominanceScore || b.score - a.score,
       );
@@ -139,8 +162,8 @@ export class ContributionBotRules implements BotRules {
     } else {
       await runtime.postPrivate(target.userId, message);
     }
-    // One stamp does both: global cool-down AND contribution-tracker reset.
-    state.lastInterventionAtMs = event.ts;
+    // Stamp the contribution-tracker reset point.
+    state.lastInterventionAtMs = windowEndMs;
     runtime.recordIntervention(
       buildLog(runtime, config, llmMode, audience, split, target, quietMembers, message),
     );
@@ -245,15 +268,6 @@ function isInsideInterventionWindow(
   return true;
 }
 
-function globalCooldownElapsed(
-  state: RuleState,
-  nowMs: number,
-  config: InterventionConfig,
-): boolean {
-  if (state.lastInterventionAtMs === undefined) return true;
-  return nowMs - state.lastInterventionAtMs >= config.cooldownSeconds * 1000;
-}
-
 function isInInviteGrace(
   state: RuleState,
   userId: string,
@@ -289,7 +303,9 @@ function contributionSplit(
   for (const message of messages) {
     const messageMs = new Date(message.timestamp).getTime();
     if (Number.isFinite(messageMs)) {
-      if (messageMs < windowCutoffMs) continue;
+      // Only the just-closed window counts: nothing older than the window,
+      // nothing that arrived after its end.
+      if (messageMs < windowCutoffMs || messageMs > nowMs) continue;
       // Tracker reset: everything up to and including the nudge moment is
       // wiped — everyone restarts at parity and dominance must re-emerge.
       if (trackerResetAtMs !== undefined && messageMs <= trackerResetAtMs) continue;
@@ -425,7 +441,7 @@ function toTarget(entry: ContributionShare): InterventionTarget {
  * The rules implementation wired into the Chat Service. Normal sessions run a
  * single engine that follows the condition config. When a condition sets
  * `comparisonMode: true` (pilot/user-testing only), BOTH detection arms run
- * side by side with independent cooldown/reset/grace state:
+ * side by side with independent reset/grace state:
  *
  *   - "Assistant A" (`gdm_bot_a_…`) — rule-based detection
  *   - "Assistant B" (`gdm_bot_b_…`) — rule-based + LLM meaningfulness
@@ -463,6 +479,18 @@ export class StudyBotRules implements BotRules {
       return;
     }
     await this.single.onEvent(runtime, event);
+  }
+
+  async onWindowElapsed(
+    runtime: SessionRuntime,
+    windowEndMs: number,
+  ): Promise<void> {
+    if (runtime.condition.config.comparisonMode === true) {
+      await this.ruleArm.onWindowElapsed(runtime, windowEndMs);
+      await this.llmArm.onWindowElapsed(runtime, windowEndMs);
+      return;
+    }
+    await this.single.onWindowElapsed(runtime, windowEndMs);
   }
 }
 

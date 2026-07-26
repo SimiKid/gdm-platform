@@ -1,5 +1,9 @@
 import { Inject, Injectable, Logger, OnModuleInit } from "@nestjs/common";
-import { MATRIX_EVENT_TYPES, isServiceUser } from "@gdm/shared";
+import {
+  DEFAULT_INTERVENTION_CONFIG,
+  MATRIX_EVENT_TYPES,
+  isServiceUser,
+} from "@gdm/shared";
 import type {
   Message,
   Ranking,
@@ -34,6 +38,11 @@ export class SessionsService implements OnModuleInit {
    */
   private readonly ruleChains = new Map<string, Promise<void>>();
   private readonly checkpointTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
+  /** roomId -> timer for the next contribution-window boundary. */
+  private readonly windowTimers = new Map<
     string,
     ReturnType<typeof setTimeout>
   >();
@@ -97,6 +106,55 @@ export class SessionsService implements OnModuleInit {
       note.durationMinutes * 60_000 - elapsed,
     );
     setTimeout(() => void this.endSession(note.roomId), remaining);
+    // The bot nudges at window boundaries, not on messages. Aligned to
+    // startedAt, so a restart resumes the same window grid.
+    this.scheduleWindowTick(runtime);
+  }
+
+  private scheduleWindowTick(runtime: SessionRuntime): void {
+    const config = runtime.condition.config;
+    const windowMs =
+      (config.contributionWindowMinutes ??
+        DEFAULT_INTERVENTION_CONFIG.contributionWindowMinutes) * 60_000;
+    if (!(windowMs > 0)) return;
+    // The grid starts when the warm-up ends: people arriving during the
+    // protected start are neither counted nor nudged, and the first window
+    // closes one window length after the warm-up.
+    const warmupMs = Math.max(
+      0,
+      (config.protectedStartMinutes ??
+        DEFAULT_INTERVENTION_CONFIG.protectedStartMinutes) * 60_000,
+    );
+    const gridStartMs = runtime.startedAtMs + warmupMs;
+    const now = Date.now();
+    const elapsed = Math.max(0, now - gridStartMs);
+    const nextBoundary =
+      gridStartMs + (Math.floor(elapsed / windowMs) + 1) * windowMs;
+    this.windowTimers.set(
+      runtime.roomId,
+      setTimeout(() => this.onWindowBoundary(runtime, nextBoundary), nextBoundary - now),
+    );
+  }
+
+  private onWindowBoundary(runtime: SessionRuntime, windowEndMs: number): void {
+    this.windowTimers.delete(runtime.roomId);
+    if (
+      runtime.isEnded ||
+      this.finalizingRooms.has(runtime.roomId) ||
+      this.runtimes.get(runtime.roomId) !== runtime
+    ) {
+      return;
+    }
+    // Serialize with event handling: rules await network calls mid-evaluation.
+    const chain = this.ruleChains.get(runtime.roomId) ?? Promise.resolve();
+    this.ruleChains.set(
+      runtime.roomId,
+      chain
+        .then(() => this.rules.onWindowElapsed?.(runtime, windowEndMs))
+        .catch((err) => this.log.error(`window rules failed: ${String(err)}`))
+        .finally(() => this.scheduleCheckpoint(runtime)),
+    );
+    this.scheduleWindowTick(runtime);
   }
 
   private handleEvent(event: TimelineEvent): void {
@@ -211,6 +269,9 @@ export class SessionsService implements OnModuleInit {
     const runtime = this.runtimes.get(roomId);
     if (!runtime || runtime.isEnded || this.finalizingRooms.has(roomId)) return;
     this.finalizingRooms.add(roomId);
+    const windowTimer = this.windowTimers.get(roomId);
+    if (windowTimer) clearTimeout(windowTimer);
+    this.windowTimers.delete(roomId);
     await this.ruleChains.get(roomId);
     const timer = this.checkpointTimers.get(roomId);
     if (timer) clearTimeout(timer);

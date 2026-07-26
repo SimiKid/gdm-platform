@@ -11,12 +11,11 @@ import {
 
 const DOMINANT_MESSAGE =
   "Detailed proposal: rank the oxygen tanks first because the crew cannot survive without breathable oxygen while crossing the lunar surface.";
-const FOLLOW_UP =
-  "Additional detail: the oxygen supply also supports the pressurized suits throughout the journey.";
 
 // Nudge texts are identical across both delivery modes (study protocol:
 // only delivery differs). The first nudge always uses the first template.
 const FIRST_NUDGE_TEXT = "a lot of energy";
+const SECOND_NUDGE_TEXT = "leading the discussion";
 
 const SCENARIOS: Array<{
   mode: "public" | "private";
@@ -36,14 +35,15 @@ for (const scenario of SCENARIOS) {
       id: uniqueId(`intervention-${scenario.mode}`),
       name: `E2E ${scenario.mode}`,
       groupSize: 2,
-      durationMinutes: 1,
+      durationMinutes: 2,
       config: {
         interventionMode: scenario.mode,
         contributionThreshold: 0.55,
         protectedStartMinutes: 0,
         protectedEndMinutes: 0,
-        cooldownSeconds: 1800,
-        contributionWindowMinutes: 30,
+        // The bot evaluates at the end of every window: 15s here so both
+        // nudges happen well inside the 2-minute session.
+        contributionWindowMinutes: 0.25,
         scoreWeights: { messages: 1, words: 0.05 },
         llmMode: "off",
       },
@@ -74,29 +74,31 @@ for (const scenario of SCENARIOS) {
         );
       }
 
-      // A second dominant message is inside the 30-minute global cooldown. The
-      // observer's message also gives private-event filtering time to settle.
-      await sendChat(target, FOLLOW_UP);
+      // The nudge reset the tracker, so in the next window the observer's
+      // message makes them the sole (100%) contributor and draws the second
+      // nudge (template #2) at that window's end. Each participant must
+      // still see only the nudges addressed to them in private mode.
       await sendChat(observer, "ok");
-      await expect(
-        observer.locator(".message .body", { hasText: FOLLOW_UP }),
-      ).toBeVisible({ timeout: 30_000 });
       await expect(
         target.locator(".message .body", { hasText: "ok" }),
       ).toBeVisible({ timeout: 30_000 });
-
+      const observerNudge = observer.locator(".bot-message", {
+        hasText: SECOND_NUDGE_TEXT,
+      });
+      await expect(observerNudge).toHaveCount(1, { timeout: 30_000 });
       if (scenario.audience === "private") {
-        await expect(observer.locator(".bot-message")).toHaveCount(0);
-      } else {
         await expect(observer.locator(".bot-message")).toHaveCount(1);
+        await expect(target.locator(".bot-message")).toHaveCount(1);
+      } else {
+        await expect(observer.locator(".bot-message")).toHaveCount(2);
+        await expect(target.locator(".bot-message")).toHaveCount(2);
       }
-      await expect(target.locator(".bot-message")).toHaveCount(1);
 
       const detail = await pollAdminSession(
         request,
         group.sessionId,
         (session) =>
-          session.chat.messages.length >= 3 && session.interventions.length === 1,
+          session.chat.messages.length >= 2 && session.interventions.length === 2,
         30_000,
       );
       const intervention = detail.interventions[0];
@@ -108,7 +110,7 @@ for (const scenario of SCENARIOS) {
         trigger: "contribution-threshold",
         threshold: 0.55,
         llmMode: "off",
-        contributionWindowMinutes: 30,
+        contributionWindowMinutes: 0.25,
       });
       expect(intervention.targets).toEqual([
         expect.objectContaining({ userId: group.members[0].matrix.userId }),
@@ -128,9 +130,12 @@ for (const scenario of SCENARIOS) {
           }),
         ]),
       );
+      expect(detail.interventions[1].targets).toEqual([
+        expect.objectContaining({ userId: group.members[1].matrix.userId }),
+      ]);
       expect(detail.contributionClassifications).toEqual([]);
       expect(detail.chat.messages.map((message) => message.text)).toEqual(
-        expect.arrayContaining([DOMINANT_MESSAGE, FOLLOW_UP, "ok"]),
+        expect.arrayContaining([DOMINANT_MESSAGE, "ok"]),
       );
       expect(
         detail.chat.messages.some((message) =>

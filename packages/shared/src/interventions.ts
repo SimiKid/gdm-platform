@@ -49,23 +49,23 @@ export interface InterventionConfig {
   interventionMode: InterventionMode;
   /** Trigger once a participant owns at least this share of contribution. */
   contributionThreshold: number;
-  /** No interventions at the start of a discussion. */
+  /**
+   * Warm-up while people arrive: nothing is counted and no interventions
+   * fire. The first contribution window opens when the warm-up ends.
+   */
   protectedStartMinutes: number;
   /** No interventions near the end of a discussion. */
   protectedEndMinutes: number;
   /**
-   * Global (room-wide) cool-down: after any nudge, no further nudge to anyone
-   * until this many seconds passed. Applies to public and private delivery.
-   */
-  cooldownSeconds: number;
-  /**
    * Self-correction grace period: once a participant's classified message
    * invites others to participate, they cannot be flagged for this many
-   * seconds. Separate from — and never extending — the global cool-down.
-   * Only effective while the classifier is active.
+   * seconds. Only effective while the classifier is active.
    */
   inviteGraceSeconds: number;
-  /** Rolling message window used to calculate the contribution split. */
+  /**
+   * Length of the contribution window. At the end of every window the bot
+   * evaluates the split over that window and nudges at most once.
+   */
   contributionWindowMinutes: number;
   scoreWeights: ContributionScoreWeights;
   dominanceWeights: DominanceWeights;
@@ -78,7 +78,7 @@ export interface InterventionConfig {
   /**
    * Pilot/testing only: run BOTH detection bots side by side in the room —
    * "Assistant A" (rule-based) and "Assistant B" (rule-based + LLM), each
-   * with its own cooldown/tracker state, both delivering publicly. Ignores
+   * with its own tracker state, both delivering publicly. Ignores
    * the condition's `llmMode` and delivery audience. Never enable for real
    * study sessions.
    */
@@ -128,7 +128,6 @@ export const DEFAULT_INTERVENTION_CONFIG: InterventionConfig = {
   contributionThreshold: 0.4,
   protectedStartMinutes: 3,
   protectedEndMinutes: 2,
-  cooldownSeconds: 120,
   inviteGraceSeconds: 60,
   contributionWindowMinutes: 4,
   scoreWeights: {

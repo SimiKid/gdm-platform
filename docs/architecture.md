@@ -81,7 +81,7 @@ NestJS bot runtime responsible for:
 - **Bot rules** — the `ContributionBotRules` engine evaluates every message against the condition's intervention config and sends nudges when thresholds are crossed. See [bot-rulebook.md](bot-rulebook.md).
 - **Session runtime** — one `SessionRuntime` instance per active session, collecting messages, reactions, ranking history, and intervention logs.
 - **Durable checkpoints** — live runtimes checkpoint messages, behavioral events,
-  semantic classifications, processed Matrix event IDs, and rule cooldown state
+  semantic classifications, processed Matrix event IDs, and rule tracker state
   into the research database. After restart the service registers a new bot,
   asks the Session Manager to re-invite it, restores running sessions, and
   replays only unprocessed Matrix events.

@@ -35,22 +35,20 @@ Each condition is assigned to a session at creation time and cannot change mid-s
 
 ## Intervention Lifecycle
 
+The bot evaluates **at the end of every contribution window**, not on
+individual messages: once the warm-up ends, a window closes every
+`contributionWindowMinutes` and the just-finished window is scored. At most
+one nudge is sent per window.
+
 ```
-Matrix room event (m.room.message)
+Window boundary reached (every contributionWindowMinutes)
         |
-        v
-  Is mode "baseline"? ── yes ──> stop (no intervention)
-        |  no
         v
   Is it inside the intervention window?
   (after protectedStart, before protectedEnd)
         |  no -> stop
         v
-  Has the global cooldown elapsed?
-  (cooldownSeconds since the last nudge, any target)
-        |  no -> stop
-        v
-  Compute contribution split over rolling window
+  Compute contribution split over the closed window
   (messages after the last tracker reset only)
         |
         v
@@ -58,34 +56,34 @@ Matrix room event (m.room.message)
   (skipping members in an invite grace period)
         |  no -> stop
         v
+  Is mode "baseline"? ── yes ──> stop (no intervention)
+        |  no
+        v
   Build and send intervention message to the top target
         |
         v
-  Stamp cooldown + reset contribution tracker; log intervention
+  Reset contribution tracker; log intervention
 ```
 
-### Entry Point
+### Entry Points
 
-`ContributionBotRules.onEvent()` in `backend/chat-service/src/rules/bot-rules.ts` is called for **every timeline event** in an active session's room, except the bot's own events. Only `m.room.message` events proceed past the first check.
+`ContributionBotRules.onEvent()` in `backend/chat-service/src/rules/bot-rules.ts` is called for **every timeline event** in an active session's room, except the bot's own events; it only observes (records and, with an LLM arm, classifies messages). `ContributionBotRules.onWindowElapsed()` is called by the session service's per-session window timer at each boundary (aligned to the end of the warm-up, so restarts resume the same window grid) and decides the nudges.
 
-### Gate 1: Time Window
+### Gate 1: Warm-up and Protected End
 
-No interventions fire during the warm-up or cool-down periods:
-
-- **Protected start** (`protectedStartMinutes`, default 3): no interventions in the first N minutes after the chat room opens.
+- **Warm-up** (`protectedStartMinutes`, default 3): while participants
+  arrive, nothing is counted and no interventions fire. The window grid
+  starts when the warm-up ends — the first evaluation happens one window
+  length later, and warm-up messages are excluded from every window's
+  contribution split. (They are still recorded, and classified for
+  analysis, like all messages.)
 - **Protected end** (`protectedEndMinutes`, default 2): no interventions in the last N minutes before the timer expires.
 
 This gives participants unmonitored time to settle in and wrap up.
 
-### Gate 2: Global Cooldown
+### Gate 2: Contribution Score
 
-After **any** nudge (public or private, any target), no further nudge fires
-until `cooldownSeconds` (default 120; pilot range down to 90) has elapsed.
-This is a room-wide sliding gate, not per person.
-
-### Gate 3: Contribution Score
-
-Over a rolling window (`contributionWindowMinutes`, default 4 minutes), the bot calculates each participant's contribution:
+Over the just-closed window (`contributionWindowMinutes`, default 4 minutes), the bot calculates each participant's contribution:
 
 ```
 score = messageCount * scoreWeights.messages + wordCount * scoreWeights.words
@@ -94,8 +92,8 @@ share = score / totalScore
 
 With default weights (`messages: 1`, `words: 0.05`), a message counts as 1 point plus 0.05 per word. A 20-word message = 1 + 1 = 2 points.
 
-Only messages within the rolling window **and after the last tracker reset**
-are counted (see Gate 5). Older messages fall off, so the score reflects
+Only messages within the closed window **and after the last tracker reset**
+are counted (see Gate 4). Older messages fall off, so the score reflects
 recent activity, not cumulative history. Emoji reactions never count — the
 intervention is about turn-taking in talking/typing, and the chat UI no
 longer offers reactions at all (removed per study protocol for a cleaner
@@ -110,7 +108,7 @@ The trigger metric is the **dominance score**:
   window (0 when none are classified, e.g. on API failure). Weights are
   configurable via `dominanceWeights`.
 
-### Gate 4: Threshold and Grace Period
+### Gate 3: Threshold and Grace Period
 
 If any participant's `dominance score >= contributionThreshold` (default
 0.40), they become a candidate target. Candidates are sorted by dominance
@@ -119,18 +117,17 @@ score descending and **only the top one** is nudged per trigger.
 A candidate is skipped while their **invite grace period** runs: when their
 classified message shows `invitesParticipation == true` (active LLM arm
 only), they cannot be flagged for `inviteGraceSeconds` (default 60) — a
-reward for self-correction. The grace period is separate from and never
-extends the global cooldown.
+reward for self-correction.
 
 If nobody crosses the threshold, no intervention fires.
 
-### Gate 5: Tracker Reset
+### Gate 4: Tracker Reset
 
 Sending a nudge stamps the reset point: all messages up to and including that
 moment are wiped from future dominance calculations, so the tracker restarts
 at parity ("back to 20-20-20-20-20"). The goal is equal turns from now on,
 not an equally balanced whole session — a dominant member who keeps dominating
-after a reset is quickly flagged again once the global cooldown allows.
+after a reset is flagged again at the end of the next window.
 
 ## Message Templates
 
@@ -166,9 +163,8 @@ participants are never unsure who can see a nudge:
 - Private: **🔒 Private message to you — only you can see this**
 - Public: **📢 Message to ALL in the group**
 
-In private mode, the single selected target gets the private message; with the
-global cooldown and tracker reset, exactly one nudge is sent per trigger in
-both delivery modes.
+In private mode, the single selected target gets the private message; exactly
+one nudge is sent per trigger in both delivery modes.
 
 ## Participant Identities
 
@@ -186,11 +182,10 @@ All parameters are editable per condition via the admin dashboard and are stored
 |---|---|---|---|
 | Delivery mode | `interventionMode` | `public` | `baseline` / `public` / `private` |
 | Threshold | `contributionThreshold` | `0.40` | Dominance score at which a participant triggers an intervention |
-| Protected start | `protectedStartMinutes` | `3` | Minutes of no-intervention warm-up |
+| Warm-up | `protectedStartMinutes` | `3` | Arrival phase: nobody is counted or nudged; the first window starts when it ends |
 | Protected end | `protectedEndMinutes` | `2` | Minutes of no-intervention cool-down |
-| Global cooldown | `cooldownSeconds` | `120` | Seconds after any nudge before the next one (room-wide) |
 | Invite grace | `inviteGraceSeconds` | `60` | Flag suppression after a member invites others (active LLM arm) |
-| Score window | `contributionWindowMinutes` | `4` | Rolling window for calculating contribution shares |
+| Score window | `contributionWindowMinutes` | `4` | Window length; the bot evaluates (and can nudge once) at the end of every window |
 | Message weight | `scoreWeights.messages` | `1` | Points per message |
 | Word weight | `scoreWeights.words` | `0.05` | Points per word |
 | Share weight | `dominanceWeights.share` | `0.90` | Composite weight of the raw contribution share |
@@ -265,9 +260,9 @@ live:
 
 Mechanics:
 
-- Each arm runs the full rule engine with its **own** global cooldown,
-  tracker reset, and grace-period state — each bot behaves exactly as it
-  would alone, so their nudge timing can be compared directly.
+- Each arm runs the full rule engine with its **own** tracker reset and
+  grace-period state — each bot behaves exactly as it would alone, so their
+  nudge timing can be compared directly.
 - Both deliver **publicly**, ignoring the condition's audience, and both use
   the same 5 rotating templates (each rotates independently).
 - The labels are neutral (A/B) so testers stay blind to which arm is which;

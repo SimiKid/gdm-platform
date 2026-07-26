@@ -3,6 +3,7 @@ dist/
 .env
 .env.*
 !infra/.env.example
+!loadtest/.env.example
 
 # Structurizr Lite working files
 .structurizr/

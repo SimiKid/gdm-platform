@@ -28,7 +28,6 @@ function condition(mode: InterventionMode, overrides = {}): Condition {
       interventionMode: mode,
       protectedStartMinutes: 0,
       protectedEndMinutes: 0,
-      cooldownSeconds: 120,
       contributionThreshold: 0.4,
       ...overrides,
       scoreWeights: {
@@ -120,9 +119,9 @@ async function makeDominantRed(
 }
 
 describe("ContributionBotRules", () => {
-  it("public modes nudge the top contributor with their own percentage only", async () => {
+  it("public modes nudge the top contributor at the window end with their own percentage only", async () => {
     const { rt, bot, event } = await makeDominantRed("public");
-    await new ContributionBotRules().onEvent(rt, event);
+    await new ContributionBotRules().onWindowElapsed(rt, event.ts + 1_000);
 
     // Red: 2.0 of 3.05 points → 66%. Template #1 of the rotation.
     expect(bot.sendText).toHaveBeenCalledWith(
@@ -138,7 +137,7 @@ describe("ContributionBotRules", () => {
 
   it("never reveals the other members' names or percentages in the nudge", async () => {
     const { rt, bot, event } = await makeDominantRed("public");
-    await new ContributionBotRules().onEvent(rt, event);
+    await new ContributionBotRules().onWindowElapsed(rt, event.ts + 1_000);
 
     const message = (bot.sendText as unknown as ReturnType<typeof vi.fn>).mock
       .calls[0][1] as string;
@@ -153,7 +152,7 @@ describe("ContributionBotRules", () => {
 
   it("private mode sends the identical text, only to the dominating member", async () => {
     const { rt, bot, event } = await makeDominantRed("private");
-    await new ContributionBotRules().onEvent(rt, event);
+    await new ContributionBotRules().onWindowElapsed(rt, event.ts + 1_000);
 
     expect(bot.sendText).toHaveBeenCalledWith(
       "!r",
@@ -168,7 +167,7 @@ describe("ContributionBotRules", () => {
 
   it("baseline mode never sends any intervention", async () => {
     const { rt, bot, event } = await makeDominantRed("baseline");
-    await new ContributionBotRules().onEvent(rt, event);
+    await new ContributionBotRules().onWindowElapsed(rt, event.ts + 1_000);
 
     expect(bot.sendText).not.toHaveBeenCalled();
     expect(rt.interventions).toHaveLength(0);
@@ -178,56 +177,72 @@ describe("ContributionBotRules", () => {
     const start = await makeDominantRed("public", {
       protectedStartMinutes: 3,
     });
-    await new ContributionBotRules().onEvent(start.rt, {
-      ...start.event,
-      ts: start.rt.startedAtMs + 60_000,
-    });
+    await new ContributionBotRules().onWindowElapsed(
+      start.rt,
+      start.rt.startedAtMs + 60_000,
+    );
     expect(start.bot.sendText).not.toHaveBeenCalled();
 
     const end = await makeDominantRed("public", {
       protectedEndMinutes: 2,
     });
-    await new ContributionBotRules().onEvent(end.rt, {
-      ...end.event,
-      ts: end.rt.startedAtMs + 9 * 60_000,
-    });
+    await new ContributionBotRules().onWindowElapsed(
+      end.rt,
+      end.rt.startedAtMs + 9 * 60_000,
+    );
     expect(end.bot.sendText).not.toHaveBeenCalled();
   });
 
-  it("applies the global cooldown to every further nudge, regardless of target", async () => {
-    const { rt, bot, event } = await makeDominantRed("public");
-    const rules = new ContributionBotRules();
-    await rules.onEvent(rt, event);
-
-    // A different member dominating inside the cooldown must also stay unnudged.
-    const second = record(
+  it("never counts warm-up contributions, even when a window overlaps the warm-up", async () => {
+    const { rt, bot } = runtime("public", { protectedStartMinutes: 2 });
+    // Red dominates while the others are still arriving (inside the 2-minute
+    // warm-up)...
+    record(
+      rt,
+      MEMBERS[0],
+      "A long and dominant warm-up message from Red while the others are still arriving here.",
+      "warmup-red",
+      rt.startedAtMs + 90_000,
+    );
+    // ...then only Blue contributes after the warm-up.
+    record(
       rt,
       MEMBERS[1],
-      "Blue suddenly writes a really long dominant message with many many words.",
-      "m-blue-2",
-      event.ts + 30_000,
+      "Blue's first real message.",
+      "m-blue",
+      rt.startedAtMs + 3 * 60_000,
     );
-    await rules.onEvent(rt, second);
+    // A boundary whose 4-minute span reaches back into the warm-up: Red's
+    // message sits inside the span but must stay invisible.
+    await new ContributionBotRules().onWindowElapsed(
+      rt,
+      rt.startedAtMs + 5 * 60_000,
+    );
 
     expect(bot.sendText).toHaveBeenCalledTimes(1);
-    expect(rt.interventions).toHaveLength(1);
+    expect(rt.interventions[0].targets).toEqual([
+      { userId: MEMBERS[1], identityName: "Blue" },
+    ]);
+    const split = rt.interventions[0].contributionSplit;
+    expect(split.find((entry) => entry.userId === MEMBERS[0])?.share).toBe(0);
+    expect(split.find((entry) => entry.userId === MEMBERS[1])?.share).toBe(1);
   });
 
   it("resets the contribution tracker after a nudge (equal turns, not equal session)", async () => {
     const { rt, bot, event } = await makeDominantRed("public");
     const rules = new ContributionBotRules();
-    await rules.onEvent(rt, event);
+    await rules.onWindowElapsed(rt, event.ts + 1_000);
 
-    // After the cooldown, Red's pre-nudge dominance no longer counts: Blue is
-    // the only contributor since the reset and becomes the new target.
+    // Next window: Red's pre-nudge dominance no longer counts. Blue is the
+    // only contributor since the reset and becomes the new target.
     const later = record(
       rt,
       MEMBERS[1],
       "One single new message from Blue after the reset.",
       "m-blue-2",
-      event.ts + 121_000,
+      event.ts + 30_000,
     );
-    await rules.onEvent(rt, later);
+    await rules.onWindowElapsed(rt, later.ts + 1_000);
 
     expect(bot.sendText).toHaveBeenCalledTimes(2);
     expect(rt.interventions[1].targets).toEqual([
@@ -240,6 +255,11 @@ describe("ContributionBotRules", () => {
     expect(rt.interventions[1].message).toBe(
       "@Blue, you're leading the discussion right now at 100% of the messages. Curious what the rest of the group thinks — want to pull them in?",
     );
+
+    // A window with no fresh contributions stays silent.
+    await rules.onWindowElapsed(rt, later.ts + 5 * 60_000);
+    expect(bot.sendText).toHaveBeenCalledTimes(2);
+    expect(rt.interventions).toHaveLength(2);
   });
 
   it("uses the composite dominance score when the classifier is active", async () => {
@@ -258,6 +278,7 @@ describe("ContributionBotRules", () => {
     const event = record(rt, MEMBERS[0], "same amount of words okay", "m-red", ts + 1_000);
 
     await rules.onEvent(rt, event);
+    await rules.onWindowElapsed(rt, event.ts + 1_000);
 
     // Red's classified meaningfulness lifts them over: 0.9×0.5 + 0.1×1 = 0.55.
     expect(bot.sendText).toHaveBeenCalledTimes(1);
@@ -287,6 +308,7 @@ describe("ContributionBotRules", () => {
     const event = record(rt, MEMBERS[0], "same amount of words okay", "m-red", ts + 1_000);
 
     await rules.onEvent(rt, event);
+    await rules.onWindowElapsed(rt, event.ts + 1_000);
 
     expect(rt.contributionClassifications).toHaveLength(1);
     expect(bot.sendText).not.toHaveBeenCalled();
@@ -312,6 +334,7 @@ describe("ContributionBotRules", () => {
       ts + 1_000,
     );
     await rules.onEvent(rt, invite);
+    await rules.onWindowElapsed(rt, invite.ts + 1_000);
     // Dominant, but self-correcting: the invite suppresses the flag.
     expect(bot.sendText).not.toHaveBeenCalled();
 
@@ -324,6 +347,7 @@ describe("ContributionBotRules", () => {
       invite.ts + 61_000,
     );
     await rules.onEvent(rt, followUp);
+    await rules.onWindowElapsed(rt, followUp.ts + 1_000);
     expect(bot.sendText).toHaveBeenCalledTimes(1);
     expect(rt.interventions[0].targets[0].userId).toBe(MEMBERS[0]);
   });
@@ -342,14 +366,7 @@ describe("ContributionBotRules", () => {
     );
     record(rt, MEMBERS[1], "Recent blue contribution.", "recent-blue", now);
 
-    await new ContributionBotRules().onEvent(rt, {
-      roomId: rt.roomId,
-      type: "m.room.message",
-      sender: MEMBERS[1],
-      eventId: "recent-blue",
-      ts: now,
-      content: { body: "Recent blue contribution." },
-    });
+    await new ContributionBotRules().onWindowElapsed(rt, now);
 
     expect(bot.sendText).toHaveBeenCalledWith(
       "!r",
@@ -450,6 +467,7 @@ describe("StudyBotRules (two-bot comparison mode)", () => {
     );
 
     await rules.onEvent(rt, event);
+    await rules.onWindowElapsed(rt, event.ts + 1_000);
 
     // Assistant A (rule-based) and Assistant B (rule+LLM) both nudge publicly.
     expect(bot.sendTextAs).toHaveBeenCalledWith(
@@ -465,7 +483,7 @@ describe("StudyBotRules (two-bot comparison mode)", () => {
     expect(bot.sendText).not.toHaveBeenCalled();
     expect(rt.interventions.map((item) => item.llmMode)).toEqual(["off", "active"]);
     expect(rt.interventions.every((item) => item.audience === "public")).toBe(true);
-    // Independent cooldown/reset/grace state per arm.
+    // Independent reset/grace state per arm.
     expect(rt.state["contributionBotRules:A"]).toBeDefined();
     expect(rt.state["contributionBotRules:B"]).toBeDefined();
     // Only the LLM arm classifies, and each message only once.
@@ -474,7 +492,9 @@ describe("StudyBotRules (two-bot comparison mode)", () => {
 
   it("delegates to the single engine when comparison mode is off", async () => {
     const { rt, bot, event } = await makeDominantRed("public");
-    await new StudyBotRules().onEvent(rt, event);
+    const rules = new StudyBotRules();
+    await rules.onEvent(rt, event);
+    await rules.onWindowElapsed(rt, event.ts + 1_000);
 
     expect(bot.sendText).toHaveBeenCalledTimes(1);
     expect(bot.sendTextAs).not.toHaveBeenCalled();
