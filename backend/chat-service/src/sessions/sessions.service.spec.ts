@@ -48,14 +48,17 @@ function makeBot() {
 describe("SessionsService (chat-service)", () => {
   let emit: (e: TimelineEvent) => void;
   let bot: MatrixBotService;
-  let rules: { onEvent: ReturnType<typeof vi.fn> };
+  let rules: {
+    onEvent: ReturnType<typeof vi.fn>;
+    onWindowElapsed: ReturnType<typeof vi.fn>;
+  };
   let svc: SessionsService;
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.useFakeTimers();
     ({ bot, emit } = makeBot());
-    rules = { onEvent: vi.fn() };
+    rules = { onEvent: vi.fn(), onWindowElapsed: vi.fn() };
     svc = new SessionsService(bot, rules as unknown as BotRules);
     fetchMock = vi.fn(async () => ({ ok: true }));
     vi.stubGlobal("fetch", fetchMock);
@@ -168,6 +171,20 @@ describe("SessionsService (chat-service)", () => {
     await svc.startSession(note);
     emit({ roomId: "!other", type: "m.room.message", sender: "@u:localhost", eventId: "x", ts: 1, content: { body: "hi" } });
     expect(rules.onEvent).not.toHaveBeenCalled();
+  });
+
+  it("evaluates the rules at every window boundary until the session ends", async () => {
+    await svc.startSession(note);
+    // Default config: 3-minute warm-up, then 4-minute contribution windows —
+    // no evaluation until the first window closes at minute 7.
+    await vi.advanceTimersByTimeAsync(6 * 60 * 1000);
+    expect(rules.onWindowElapsed).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(60 * 1000);
+    expect(rules.onWindowElapsed).toHaveBeenCalledTimes(1);
+
+    await svc.endSession("!r");
+    await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
+    expect(rules.onWindowElapsed).toHaveBeenCalledTimes(1);
   });
 
   it("finalizes automatically when the discussion timer ends", async () => {

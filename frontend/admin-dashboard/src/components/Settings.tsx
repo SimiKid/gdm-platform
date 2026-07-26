@@ -128,9 +128,9 @@ export function ConditionsTable({ rows, onSaved }: Props) {
             <th>Goal</th>
             <th>Discussion time (min)</th>
             <th># People</th>
-            <th>Rolling window (min)</th>
+            <th>Warm-up (min)</th>
+            <th>Window (min)</th>
             <th>Trigger at (%)</th>
-            <th>Cooldown (s)</th>
             <th>Progress</th>
             <th />
           </tr>
@@ -266,6 +266,19 @@ function ConditionRow({ row, onSaved }: { row: ConditionProgress; onSaved: () =>
         />
       </td>
       <td className="num">
+        {/* Warm-up: while people arrive nobody is counted or nudged; the
+            first contribution window starts when it ends. */}
+        <NumberInput
+          value={draft.config.protectedStartMinutes}
+          min={0}
+          onChange={(protectedStartMinutes) =>
+            patch({
+              config: { ...draft.config, protectedStartMinutes },
+            })
+          }
+        />
+      </td>
+      <td className="num">
         <NumberInput
           value={draft.config.contributionWindowMinutes}
           min={1}
@@ -288,18 +301,6 @@ function ConditionRow({ row, onSaved }: { row: ConditionProgress; onSaved: () =>
                 ...draft.config,
                 contributionThreshold: percent / 100,
               },
-            })
-          }
-        />
-      </td>
-      <td className="num">
-        {/* Global nudge cooldown (protocol: 120s, pilot range 90-120). */}
-        <NumberInput
-          value={draft.config.cooldownSeconds}
-          min={0}
-          onChange={(cooldownSeconds) =>
-            patch({
-              config: { ...draft.config, cooldownSeconds },
             })
           }
         />

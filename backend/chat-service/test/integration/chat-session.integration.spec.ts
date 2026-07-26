@@ -84,6 +84,8 @@ describe("chat-service ↔ real Synapse (integration)", () => {
           (ev) => ev.type === "m.room.message" && ev.sender === t.bot.botUserId,
         ),
       "a bot message in the room",
+      // Nudges only happen at window boundaries (12s windows in these tests).
+      30_000,
     );
 
   it("joins the room when the session manager hands over a session", async () => {
@@ -153,11 +155,14 @@ describe("chat-service ↔ real Synapse (integration)", () => {
   it("posts one public nudge when a participant dominates and logs it in finalize", async () => {
     const alice = await registerUser("alice");
     const berta = await registerUser("berta");
-    // 0.3 min = 18s timer; the nudge must fire well before that.
+    // 12s contribution windows inside an 18s session: exactly one window
+    // boundary falls into the discussion, so exactly one evaluation runs.
+    const condition = testCondition("public");
+    condition.config.contributionWindowMinutes = 0.2;
     const { sessionId, roomId } = await startSession(
       alice,
       [berta],
-      testCondition("public"),
+      condition,
       0.3,
     );
 
@@ -175,7 +180,8 @@ describe("chat-service ↔ real Synapse (integration)", () => {
     expect(nudge.content[GDM_RECIPIENT_KEY]).toBeUndefined();
 
     const call = await finalizeFor(sessionId, 40_000);
-    // The global cooldown blocks a second nudge, so exactly one is logged.
+    // One evaluation per window: the single boundary inside the session
+    // yields exactly one nudge, aimed at the dominant member.
     expect(call.body.interventions).toHaveLength(1);
     const logged = call.body.interventions![0];
     expect(logged).toMatchObject({
@@ -200,16 +206,18 @@ describe("chat-service ↔ real Synapse (integration)", () => {
   it("sends private nudges with the recipient key, visible in the finalize log", async () => {
     const alice = await registerUser("alice");
     const berta = await registerUser("berta");
-    // Long timer: this test ends the session explicitly instead.
+    // Long timer: this test ends the session explicitly instead. Short
+    // windows so the boundary evaluation happens within seconds.
+    const condition = testCondition("private");
+    condition.config.contributionWindowMinutes = 0.2;
     const { sessionId, roomId } = await startSession(
       alice,
       [berta],
-      testCondition("private"),
+      condition,
       10,
     );
 
     await sendText(alice, roomId, "Let me summarise everything myself at length here.");
-    await sendText(berta, roomId, "hm");
 
     const nudge = await botMessageIn(alice, roomId);
     // Soft privacy: the event carries the recipient; clients filter on it.
@@ -232,6 +240,7 @@ describe("chat-service ↔ real Synapse (integration)", () => {
     const berta = await registerUser("berta");
     const condition = testCondition("public");
     condition.config.comparisonMode = true;
+    condition.config.contributionWindowMinutes = 0.2;
 
     // Mirror the Session Manager's production provisioning: an invite-only
     // room (invite PL 100) where every bot must be invited before it can
@@ -272,7 +281,7 @@ describe("chat-service ↔ real Synapse (integration)", () => {
         (ev) => ev.type === "m.room.message" && /_bot_[ab]_/.test(ev.sender),
       );
       return events.length >= 2 ? events : undefined;
-    }, "both comparison bots to nudge");
+    }, "both comparison bots to nudge", 40_000);
 
     const senders = nudges.map((ev) => ev.sender);
     expect(senders.some((sender) => /_bot_a_/.test(sender))).toBe(true);

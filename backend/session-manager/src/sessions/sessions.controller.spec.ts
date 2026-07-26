@@ -91,7 +91,6 @@ describe("SessionsController", () => {
         contributionThreshold: 0.4,
         protectedStartMinutes: 3,
         protectedEndMinutes: 2,
-        cooldownSeconds: 120,
         inviteGraceSeconds: 60,
         contributionWindowMinutes: 4,
         scoreWeights: { messages: 1, words: 0.05 },

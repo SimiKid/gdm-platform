@@ -613,23 +613,37 @@ function normalizeCondition(condition: Condition): Condition {
         ...DEFAULT_INTERVENTION_CONFIG.dominanceWeights,
         ...condition.config.dominanceWeights,
       },
-      contributionWindowMinutes: clampInt(
+      // Warm-up can be 0 (none); fractions allowed like the window.
+      protectedStartMinutes: clampNonNegative(
+        condition.config.protectedStartMinutes ??
+          DEFAULT_INTERVENTION_CONFIG.protectedStartMinutes,
+        DEFAULT_INTERVENTION_CONFIG.protectedStartMinutes,
+      ),
+      // Fractional minutes allowed (pilots/tests use sub-minute windows).
+      contributionWindowMinutes: clampMinutes(
         condition.config.contributionWindowMinutes ??
           DEFAULT_INTERVENTION_CONFIG.contributionWindowMinutes,
-        1,
+        DEFAULT_INTERVENTION_CONFIG.contributionWindowMinutes,
       ),
       contributionThreshold: clampFraction(
         condition.config.contributionThreshold ??
           DEFAULT_INTERVENTION_CONFIG.contributionThreshold,
         DEFAULT_INTERVENTION_CONFIG.contributionThreshold,
       ),
-      cooldownSeconds: clampInt(
-        condition.config.cooldownSeconds ??
-          DEFAULT_INTERVENTION_CONFIG.cooldownSeconds,
-        0,
-      ),
     },
   };
+}
+
+/** Non-negative (possibly fractional) minutes (NaN/empty → the fallback). */
+function clampNonNegative(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(0, value);
+}
+
+/** Lower-bound a minutes value at 0.1, keeping fractions (NaN → fallback). */
+function clampMinutes(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(0.1, value);
 }
 
 /** Clamp a 0..1 fraction from admin input (NaN/empty → the fallback). */

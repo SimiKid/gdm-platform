@@ -271,7 +271,7 @@ describe("SessionsService (session-manager)", () => {
         },
       ],
       processedEventIds: ["m1", "t1"],
-      ruleState: { cooldown: 1 },
+      ruleState: { lastInterventionAtMs: 1 },
     });
 
     expect(session.status).toBe("waiting");
