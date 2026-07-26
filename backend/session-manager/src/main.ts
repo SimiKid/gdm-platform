@@ -1,7 +1,9 @@
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { Logger } from "@nestjs/common";
+import type { NestExpressApplication } from "@nestjs/platform-express";
 import { AppModule } from "./app.module";
+import { configureRequestBodyLimit } from "./request-body";
 
 /**
  * With GDM_ENV=production, an empty token silently disables the auth guards
@@ -36,7 +38,8 @@ function assertProductionConfig() {
 
 async function bootstrap() {
   assertProductionConfig();
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  configureRequestBodyLimit(app);
   // Dev: the Vite frontend runs on a different origin.
   app.enableCors();
   app.setGlobalPrefix("api");
