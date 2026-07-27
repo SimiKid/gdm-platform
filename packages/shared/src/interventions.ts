@@ -54,7 +54,12 @@ export interface InterventionConfig {
    * fire. The first contribution window opens when the warm-up ends.
    */
   protectedStartMinutes: number;
-  /** No interventions near the end of a discussion. */
+  /**
+   * Wrap-up window at the end of a discussion: no interventions fire once the
+   * time remaining drops to this. May be fractional (the admin dashboard edits
+   * it in seconds), so `1.5` means the last 90 seconds. Also drives the
+   * participant timer's "wrap up!" cue — see `protectedEndMs`.
+   */
   protectedEndMinutes: number;
   /**
    * Self-correction grace period: once a participant's classified message
@@ -143,4 +148,16 @@ export const DEFAULT_INTERVENTION_CONFIG: InterventionConfig = {
 
 export function audienceForMode(mode: InterventionMode): InterventionAudience {
   return mode === "baseline" ? "none" : mode;
+}
+
+/**
+ * The wrap-up window in milliseconds. Single source of truth shared by the
+ * Chat Service (suppresses nudges once the remaining time is within it) and
+ * the participant timer (turns "low"/red and shows "wrap up!" at the same
+ * point). Falls back to the default when a condition omits the field.
+ */
+export function protectedEndMs(config: Partial<InterventionConfig>): number {
+  const minutes =
+    config.protectedEndMinutes ?? DEFAULT_INTERVENTION_CONFIG.protectedEndMinutes;
+  return Math.max(0, minutes) * 60_000;
 }

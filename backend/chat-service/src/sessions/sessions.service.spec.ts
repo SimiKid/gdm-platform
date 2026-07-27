@@ -145,7 +145,7 @@ describe("SessionsService (chat-service)", () => {
     emit({ roomId: "!r", type: "m.room.redaction", sender: "@u2:localhost", eventId: "rd1", ts: 1004, content: {}, redacts: "re1" });
     emit({ roomId: "!r", type: "m.room.message", sender: "@bot:localhost", eventId: "b1", ts: 1004, content: { body: "own" } });
 
-    // rules run (serialized per room) for every non-own event.
+    // Rules run for every non-own event.
     await vi.advanceTimersByTimeAsync(0);
     expect(rules.onEvent).toHaveBeenCalledTimes(5);
 
@@ -185,6 +185,43 @@ describe("SessionsService (chat-service)", () => {
     await svc.endSession("!r");
     await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
     expect(rules.onWindowElapsed).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not delay a window boundary behind slow per-message rule work", async () => {
+    let finishClassification!: () => void;
+    rules.onEvent.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishClassification = resolve;
+        }),
+    );
+    await svc.startSession({
+      ...note,
+      condition: {
+        ...condition,
+        config: {
+          ...condition.config,
+          protectedStartMinutes: 0,
+          contributionWindowMinutes: 1,
+        },
+      },
+    });
+    emit({
+      roomId: "!r",
+      type: "m.room.message",
+      sender: "@u:localhost",
+      eventId: "slow-classification",
+      ts: Date.now(),
+      content: { body: "a message awaiting an external classifier" },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(rules.onEvent).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(rules.onWindowElapsed).toHaveBeenCalledTimes(1);
+
+    finishClassification();
+    await vi.advanceTimersByTimeAsync(0);
   });
 
   it("finalizes automatically when the discussion timer ends", async () => {

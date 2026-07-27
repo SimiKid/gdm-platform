@@ -32,11 +32,13 @@ export class SessionsService implements OnModuleInit {
   /** roomId -> live runtime. */
   private readonly runtimes = new Map<string, SessionRuntime>();
   /**
-   * roomId -> tail of the rule-evaluation chain. Rules await network calls
-   * mid-evaluation, so events must be processed one at a time per room or
-   * the intervention-window bookkeeping races (double nudges on a burst).
+   * In-flight per-message rule work. LLM classification is intentionally not
+   * serialized: a burst must not create a network-call queue that delays the
+   * contribution-window timer.
    */
-  private readonly ruleChains = new Map<string, Promise<void>>();
+  private readonly ruleRequests = new Map<string, Set<Promise<void>>>();
+  /** Window evaluations remain serialized with other window evaluations. */
+  private readonly windowRequests = new Map<string, Promise<void>>();
   private readonly checkpointTimers = new Map<
     string,
     ReturnType<typeof setTimeout>
@@ -145,14 +147,19 @@ export class SessionsService implements OnModuleInit {
     ) {
       return;
     }
-    // Serialize with event handling: rules await network calls mid-evaluation.
-    const chain = this.ruleChains.get(runtime.roomId) ?? Promise.resolve();
-    this.ruleChains.set(
+    const previous = this.windowRequests.get(runtime.roomId) ?? Promise.resolve();
+    const request = previous
+      .then(() => this.rules.onWindowElapsed?.(runtime, windowEndMs))
+      .catch((err) => this.log.error(`window rules failed: ${String(err)}`))
+      .finally(() => {
+        if (this.windowRequests.get(runtime.roomId) === request) {
+          this.windowRequests.delete(runtime.roomId);
+        }
+        this.scheduleCheckpoint(runtime);
+      });
+    this.windowRequests.set(
       runtime.roomId,
-      chain
-        .then(() => this.rules.onWindowElapsed?.(runtime, windowEndMs))
-        .catch((err) => this.log.error(`window rules failed: ${String(err)}`))
-        .finally(() => this.scheduleCheckpoint(runtime)),
+      request,
     );
     this.scheduleWindowTick(runtime);
   }
@@ -253,15 +260,20 @@ export class SessionsService implements OnModuleInit {
       }
     }
 
-    // Hand off to the (teammate-implemented) rules, serialized per room.
-    const chain = this.ruleChains.get(event.roomId) ?? Promise.resolve();
-    this.ruleChains.set(
-      event.roomId,
-      chain
-        .then(() => this.rules.onEvent(runtime, event))
-        .catch((err) => this.log.error(`rules failed: ${String(err)}`))
-        .finally(() => this.scheduleCheckpoint(runtime)),
-    );
+    // Start rule work immediately. In particular, independent Anthropic
+    // classifications run concurrently instead of blocking later events or
+    // the fixed window boundary.
+    const requests = this.ruleRequests.get(event.roomId) ?? new Set<Promise<void>>();
+    this.ruleRequests.set(event.roomId, requests);
+    const request = Promise.resolve()
+      .then(() => this.rules.onEvent(runtime, event))
+      .catch((err) => this.log.error(`rules failed: ${String(err)}`))
+      .finally(() => {
+        requests.delete(request);
+        if (requests.size === 0) this.ruleRequests.delete(event.roomId);
+        this.scheduleCheckpoint(runtime);
+      });
+    requests.add(request);
   }
 
   /** Finalise: send the collected discussion back to the Session Manager. */
@@ -272,7 +284,8 @@ export class SessionsService implements OnModuleInit {
     const windowTimer = this.windowTimers.get(roomId);
     if (windowTimer) clearTimeout(windowTimer);
     this.windowTimers.delete(roomId);
-    await this.ruleChains.get(roomId);
+    await this.windowRequests.get(roomId);
+    await Promise.allSettled([...(this.ruleRequests.get(roomId) ?? [])]);
     const timer = this.checkpointTimers.get(roomId);
     if (timer) clearTimeout(timer);
     this.checkpointTimers.delete(roomId);
@@ -299,7 +312,8 @@ export class SessionsService implements OnModuleInit {
     }
     runtime.markEnded();
     this.runtimes.delete(roomId);
-    this.ruleChains.delete(roomId);
+    this.ruleRequests.delete(roomId);
+    this.windowRequests.delete(roomId);
     this.checkpointRequests.delete(roomId);
     this.finalizingRooms.delete(roomId);
   }

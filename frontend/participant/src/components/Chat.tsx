@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 import type { MatrixClient } from "matrix-js-sdk";
 import { ClientEvent, RoomEvent, RoomMemberEvent } from "matrix-js-sdk";
-import { GDM_RECIPIENT_KEY, MATRIX_EVENT_TYPES } from "@gdm/shared";
+import { GDM_RECIPIENT_KEY, MATRIX_EVENT_TYPES, protectedEndMs } from "@gdm/shared";
 import type { PublicSession } from "@gdm/shared";
 import SharedRanking from "./SharedRanking";
 import { botLabel, buildIdentities, identityFor, isBot } from "../study/identity";
+import { detectMention, splitMentions } from "../study/mentions";
 
 interface Message {
   id: string;
@@ -75,8 +79,16 @@ export default function Chat({ client, session, onTimeUp }: Props) {
   const [groupOrder, setGroupOrder] = useState<string[]>(session?.ranking.order ?? []);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
+  // In-progress "@" mention: { start, query } while the picker is open, else null.
+  const [mention, setMention] = useState<{ start: number; query: string } | null>(
+    null,
+  );
+  const [mentionIndex, setMentionIndex] = useState(0);
   const [typingMembers, setTypingMembers] = useState<string[]>([]);
   const [newMessageCount, setNewMessageCount] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Caret position to restore after we programmatically rewrite the input value.
+  const desiredCaret = useRef<number | null>(null);
   const messagesViewportRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const previousMessageCount = useRef(0);
@@ -367,8 +379,21 @@ export default function Chat({ client, session, onTimeUp }: Props) {
     void sendBehavior("typing-stop", durationMs);
   }
 
-  function updateInput(value: string) {
+  // After we rewrite the input value ourselves (mention insertion), put the
+  // caret back where the participant expects it rather than at the end.
+  useEffect(() => {
+    if (desiredCaret.current === null || !inputRef.current) return;
+    inputRef.current.setSelectionRange(desiredCaret.current, desiredCaret.current);
+    inputRef.current.focus();
+    desiredCaret.current = null;
+  }, [input]);
+
+  function updateInput(value: string, caret?: number) {
     setInput(value);
+    const pos = caret ?? value.length;
+    const next = detectMention(value, pos);
+    setMention(next);
+    setMentionIndex(0);
     if (!activeRoomId) return;
     if (value.trim() && typingStartedAt.current === null) {
       typingStartedAt.current = Date.now();
@@ -393,6 +418,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
     const body = input.trim();
     stopTyping();
     setInput("");
+    setMention(null);
     setSendError(false);
     try {
       await client.sendTextMessage(activeRoomId, body);
@@ -405,12 +431,74 @@ export default function Chat({ client, session, onTimeUp }: Props) {
 
   const room = activeRoomId ? client.getRoom(activeRoomId) : null;
   const title = session?.condition.name ?? room?.name ?? "Group Chat";
-  const timerLow = remaining !== null && remaining <= 5 * 60_000;
+  // Turn the timer red and show "wrap up!" exactly when the bot stops nudging:
+  // the wrap-up window is the condition's protected-end period (config-driven).
+  const wrapUpMs = session ? protectedEndMs(session.condition.config) : 0;
+  const timerLow = remaining !== null && remaining <= wrapUpMs;
 
   const identities = buildIdentities(
     room?.getJoinedMembers().map((m) => m.userId) ?? [],
   );
   const me = identityFor(identities, userId);
+
+  // Every participant name in this room, used to highlight mentions on render.
+  const mentionNames = [...identities.values()].map((id) => id.name);
+
+  // Other participants offered in the "@" picker, filtered by what's typed.
+  const mentionCandidates =
+    mention === null
+      ? []
+      : [...identities.entries()]
+          .filter(([id]) => id !== userId)
+          .map(([, ident]) => ident)
+          .filter((ident) =>
+            ident.name.toLowerCase().startsWith(mention.query.toLowerCase()),
+          )
+          .sort((a, b) => a.name.localeCompare(b.name));
+  const mentionOpen = mentionCandidates.length > 0;
+
+  // Replace the half-typed "@query" with "@Name " and drop the picker.
+  function selectMention(name: string) {
+    if (mention === null) return;
+    const caret = inputRef.current?.selectionStart ?? input.length;
+    const before = input.slice(0, mention.start);
+    const after = input.slice(caret);
+    const insert = `@${name} `;
+    const next = before + insert + after;
+    desiredCaret.current = before.length + insert.length;
+    setMention(null);
+    setMentionIndex(0);
+    updateInput(next, desiredCaret.current);
+  }
+
+  function onInputKeyDown(e: ReactKeyboardEvent<HTMLInputElement>) {
+    if (mentionOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionIndex((i) => (i + 1) % mentionCandidates.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionIndex(
+          (i) => (i - 1 + mentionCandidates.length) % mentionCandidates.length,
+        );
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        const chosen = mentionCandidates[mentionIndex] ?? mentionCandidates[0];
+        selectMention(chosen.name);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMention(null);
+        return;
+      }
+    }
+    if (e.key === "Enter") void sendMessage();
+  }
 
   return (
     <div className="study-layout">
@@ -470,7 +558,17 @@ export default function Chat({ client, session, onTimeUp }: Props) {
                           {identityFor(identities, msg.sender).name}
                         </div>
                       )}
-                      <div className="body">{msg.body}</div>
+                      <div className="body">
+                        {splitMentions(msg.body, mentionNames).map((seg, i) =>
+                          seg.type === "mention" ? (
+                            <span key={i} className="mention">
+                              {seg.value}
+                            </span>
+                          ) : (
+                            seg.value
+                          ),
+                        )}
+                      </div>
                       <span className="meta">{formatClock(msg.ts)}</span>
                     </div>
                   );
@@ -499,11 +597,39 @@ export default function Chat({ client, session, onTimeUp }: Props) {
                 : "\u00a0"}
             </div>
             <div className="message-input">
+              {mentionOpen && (
+                <ul className="mention-menu" role="listbox">
+                  {mentionCandidates.map((ident, i) => (
+                    <li
+                      key={ident.name}
+                      role="option"
+                      aria-selected={i === mentionIndex}
+                      className={`mention-item ${i === mentionIndex ? "active" : ""}`}
+                      // mousedown, not click: keep focus on the input so the
+                      // caret restore works and the field never blurs.
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        selectMention(ident.name);
+                      }}
+                      onMouseEnter={() => setMentionIndex(i)}
+                    >
+                      <span
+                        className="mention-dot"
+                        style={{ background: ident.color }}
+                      />
+                      <span style={{ color: ident.color }}>{ident.name}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
               <input
+                ref={inputRef}
                 placeholder="Type a message"
                 value={input}
-                onChange={(e) => updateInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && void sendMessage()}
+                onChange={(e) =>
+                  updateInput(e.target.value, e.target.selectionStart ?? undefined)
+                }
+                onKeyDown={onInputKeyDown}
                 onPaste={(e) => e.preventDefault()}
                 autoFocus
               />

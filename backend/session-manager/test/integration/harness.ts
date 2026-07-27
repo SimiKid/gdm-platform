@@ -1,4 +1,5 @@
 import type { INestApplication } from "@nestjs/common";
+import type { NestExpressApplication } from "@nestjs/platform-express";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
 import { PrismaClient } from "@prisma/client";
@@ -6,6 +7,7 @@ import { inject } from "vitest";
 import type { OpenSessionResponse, StartSessionNotification } from "@gdm/shared";
 import { AppModule } from "../../src/app.module";
 import { MatrixService, type MatrixCreds } from "../../src/matrix/matrix.service";
+import { configureRequestBodyLimit } from "../../src/request-body";
 
 declare module "vitest" {
   export interface ProvidedContext {
@@ -138,7 +140,8 @@ export async function createTestApp(): Promise<TestApp> {
     .useValue(matrix)
     .compile();
 
-  const app = moduleRef.createNestApplication();
+  const app = moduleRef.createNestApplication<NestExpressApplication>();
+  configureRequestBodyLimit(app);
   app.setGlobalPrefix("api");
   await app.init();
 

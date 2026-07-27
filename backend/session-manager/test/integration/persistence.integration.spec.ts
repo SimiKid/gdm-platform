@@ -153,6 +153,42 @@ describe("persistence & exports (integration)", () => {
     expect(baseline).toMatchObject({ completed: 1, goal: 5 });
   });
 
+  it("accepts live checkpoints larger than Express's 100 KB default", async () => {
+    const responses = await fillSession(t, "public-llm");
+    const sessionId = responses[0].session.id;
+    const senderId = responses[0].matrix.userId;
+    const largePrompt = "classification context ".repeat(6_000);
+
+    const checkpoint = await request(t.http)
+      .put(`/api/sessions/${sessionId}/checkpoint`)
+      .send({
+        messages: [],
+        rankingHistory: [],
+        contributionClassifications: [
+          {
+            messageId: "$large:test",
+            senderId,
+            classifiedAt: "2026-07-07T10:00:00.000Z",
+            respondsToPrior: { value: false, reason: "" },
+            referencesTaskItem: { value: false, reason: "" },
+            hasDiscussionStructure: { value: false, reason: "" },
+            invitesParticipation: { value: false, reason: "" },
+            meaningfulnessScore: 0,
+            model: "test-model",
+            promptVersion: "test-v1",
+            prompt: largePrompt,
+            rawOutput: "{}",
+          },
+        ],
+      })
+      .expect(200);
+
+    expect(checkpoint.body.contributionClassifications).toHaveLength(1);
+    expect(checkpoint.body.contributionClassifications[0].prompt).toHaveLength(
+      largePrompt.length,
+    );
+  });
+
   it("stores entry and exit surveys and overwrites on resubmission", async () => {
     const opened = await openSession(t, "Solo", "baseline");
     const { participantId } = opened;
