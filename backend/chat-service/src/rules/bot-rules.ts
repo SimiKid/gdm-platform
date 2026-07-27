@@ -7,6 +7,7 @@ import {
   buildIdentities,
   identityFor,
   normalizeInterventionMode,
+  protectedEndMs,
 } from "@gdm/shared";
 import type {
   ContributionClassification,
@@ -261,9 +262,9 @@ function isInsideInterventionWindow(
   const protectedStartMs = config.protectedStartMinutes * 60_000;
   if (elapsedMs < protectedStartMs) return false;
 
-  const protectedEndMs = config.protectedEndMinutes * 60_000;
+  const wrapUpMs = protectedEndMs(config);
   const totalMs = runtime.durationMinutes * 60_000;
-  if (totalMs > 0 && totalMs - elapsedMs <= protectedEndMs) return false;
+  if (totalMs > 0 && totalMs - elapsedMs <= wrapUpMs) return false;
 
   return true;
 }

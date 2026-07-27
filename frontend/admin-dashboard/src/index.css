@@ -51,6 +51,19 @@ input[type="checkbox"] {
   height: 18px;
 }
 
+/* Seconds fields live in narrow table cells; the native spinner arrows overlap
+   the digits (e.g. "120" reads as "12"). Hide them so the full value shows. */
+.seconds-input {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.seconds-input::-webkit-inner-spin-button,
+.seconds-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 .shell {
   max-width: 1240px;
   margin: 0 auto;

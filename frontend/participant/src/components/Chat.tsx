@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { MatrixClient } from "matrix-js-sdk";
 import { ClientEvent, RoomEvent, RoomMemberEvent } from "matrix-js-sdk";
-import { GDM_RECIPIENT_KEY, MATRIX_EVENT_TYPES } from "@gdm/shared";
+import { GDM_RECIPIENT_KEY, MATRIX_EVENT_TYPES, protectedEndMs } from "@gdm/shared";
 import type { PublicSession } from "@gdm/shared";
 import SharedRanking from "./SharedRanking";
 import { botLabel, buildIdentities, identityFor, isBot } from "../study/identity";
@@ -405,7 +405,10 @@ export default function Chat({ client, session, onTimeUp }: Props) {
 
   const room = activeRoomId ? client.getRoom(activeRoomId) : null;
   const title = session?.condition.name ?? room?.name ?? "Group Chat";
-  const timerLow = remaining !== null && remaining <= 5 * 60_000;
+  // Turn the timer red and show "wrap up!" exactly when the bot stops nudging:
+  // the wrap-up window is the condition's protected-end period (config-driven).
+  const wrapUpMs = session ? protectedEndMs(session.condition.config) : 0;
+  const timerLow = remaining !== null && remaining <= wrapUpMs;
 
   const identities = buildIdentities(
     room?.getJoinedMembers().map((m) => m.userId) ?? [],
