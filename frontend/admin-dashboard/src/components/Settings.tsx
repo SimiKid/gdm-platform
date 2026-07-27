@@ -129,6 +129,7 @@ export function ConditionsTable({ rows, onSaved }: Props) {
             <th>Discussion time (min)</th>
             <th># People</th>
             <th>Warm-up (min)</th>
+            <th>Wrap-up (sec)</th>
             <th>Window (min)</th>
             <th>Trigger at (%)</th>
             <th>Progress</th>
@@ -279,6 +280,19 @@ function ConditionRow({ row, onSaved }: { row: ConditionProgress; onSaved: () =>
         />
       </td>
       <td className="num">
+        {/* Wrap-up window: no nudges fire in the final stretch, and the
+            participant timer turns red ("wrap up!") at the same point. Edited
+            in seconds for fine control; stored as (fractional) minutes. */}
+        <SecondsInput
+          minutes={draft.config.protectedEndMinutes}
+          onChange={(protectedEndMinutes) =>
+            patch({
+              config: { ...draft.config, protectedEndMinutes },
+            })
+          }
+        />
+      </td>
+      <td className="num">
         <NumberInput
           value={draft.config.contributionWindowMinutes}
           min={1}
@@ -343,6 +357,38 @@ function NumberInput({
       value={Number.isFinite(value) ? value : 0}
       min={min}
       onChange={(e) => onChange(Number(e.target.value))}
+    />
+  );
+}
+
+/**
+ * A window edited in whole seconds but stored (and reported) in minutes — the
+ * unit the bot config and timer use. Reusable for any protected window: the
+ * wrap-up (protectedEnd) today, and the warm-up (protectedStart) once that is
+ * switched from minutes to seconds. Hides the native spinner arrows so the
+ * value stays legible in the narrow table cells (e.g. "120", not "12").
+ */
+function SecondsInput({
+  minutes,
+  onChange,
+  min = 0,
+}: {
+  /** Current value in minutes (may be fractional). */
+  minutes: number;
+  /** Reports the new value back in minutes. */
+  onChange: (minutes: number) => void;
+  /** Lower bound in seconds. */
+  min?: number;
+}) {
+  const seconds = Number.isFinite(minutes) ? Math.round(minutes * 60) : 0;
+  return (
+    <input
+      type="number"
+      className="seconds-input"
+      value={seconds}
+      min={min}
+      step={1}
+      onChange={(e) => onChange(Number(e.target.value) / 60)}
     />
   );
 }
