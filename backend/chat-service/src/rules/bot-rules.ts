@@ -56,11 +56,19 @@ interface RuleState {
   lastInterventionAtMs?: number;
   /** userId -> epoch ms until which the invite grace period suppresses flags. */
   inviteGraceUntilByUser: Record<string, number>;
+  /** Event time that opened the current grace period for each user. */
+  inviteGraceStartedAtByUser: Record<string, number>;
 }
 
 type LlmMode = "off" | "shadow" | "active";
 
 const STATE_KEY = "contributionBotRules";
+const CLASSIFICATION_WAIT_MS = 2_000;
+
+interface PendingClassification {
+  eventTs: number;
+  request: Promise<void>;
+}
 
 /** Tuning knobs for one rule-engine instance (used by the comparison mode). */
 export interface RuleEngineOptions {
@@ -103,6 +111,7 @@ export class ContributionBotRules implements BotRules {
 
     const config = normalizeConfig(runtime.condition.config);
     const llmMode = this.options.forceLlmMode ?? resolveLlmMode(config);
+    if (llmMode === "off" || !this.classifier) return;
     const participantIds = await this.getParticipantIds(runtime);
     const state = getRuleState(runtime, this.options.stateKey ?? STATE_KEY);
     await this.classifyMessage(runtime, event, config, llmMode, participantIds, state);
@@ -196,8 +205,16 @@ export class ContributionBotRules implements BotRules {
     // Self-correction reward: inviting others suppresses being flagged for a
     // moment. Shadow mode must never influence interventions, so active only.
     if (llmMode === "active" && classification.invitesParticipation.value) {
-      state.inviteGraceUntilByUser[message.senderId] =
-        event.ts + config.inviteGraceSeconds * 1000;
+      const previousStart =
+        state.inviteGraceStartedAtByUser[message.senderId] ??
+        Number.NEGATIVE_INFINITY;
+      // Classifications finish concurrently and may resolve out of order.
+      // Keep the newest invitation, never whichever request happened to end last.
+      if (event.ts >= previousStart) {
+        state.inviteGraceStartedAtByUser[message.senderId] = event.ts;
+        state.inviteGraceUntilByUser[message.senderId] =
+          event.ts + config.inviteGraceSeconds * 1000;
+      }
     }
   }
 
@@ -248,6 +265,8 @@ function getRuleState(runtime: SessionRuntime, stateKey: string): RuleState {
   const state: RuleState = {
     lastInterventionAtMs: existing?.lastInterventionAtMs,
     inviteGraceUntilByUser: existing?.inviteGraceUntilByUser ?? {},
+    inviteGraceStartedAtByUser:
+      existing?.inviteGraceStartedAtByUser ?? {},
   };
   runtime.state[stateKey] = state;
   return state;
@@ -275,7 +294,11 @@ function isInInviteGrace(
   nowMs: number,
 ): boolean {
   const until = state.inviteGraceUntilByUser[userId];
-  return until !== undefined && nowMs < until;
+  if (until === undefined || nowMs >= until) return false;
+  const startedAt = state.inviteGraceStartedAtByUser[userId];
+  // A message arriving after this boundary must never affect the already
+  // closed window, even if its concurrent classification finishes first.
+  return startedAt === undefined || startedAt <= nowMs;
 }
 
 function contributionSplit(
@@ -454,6 +477,10 @@ export class StudyBotRules implements BotRules {
   private readonly single: ContributionBotRules;
   private readonly ruleArm: ContributionBotRules;
   private readonly llmArm: ContributionBotRules;
+  private readonly pending = new WeakMap<
+    SessionRuntime,
+    Map<string, PendingClassification>
+  >();
 
   constructor(
     @Optional()
@@ -474,12 +501,20 @@ export class StudyBotRules implements BotRules {
   }
 
   async onEvent(runtime: SessionRuntime, event: TimelineEvent): Promise<void> {
-    if (runtime.condition.config.comparisonMode === true) {
-      await this.ruleArm.onEvent(runtime, event);
-      await this.llmArm.onEvent(runtime, event);
-      return;
-    }
-    await this.single.onEvent(runtime, event);
+    const engine =
+      runtime.condition.config.comparisonMode === true
+        ? this.llmArm
+        : this.single;
+    const entries =
+      this.pending.get(runtime) ?? new Map<string, PendingClassification>();
+    this.pending.set(runtime, entries);
+    const request = engine.onEvent(runtime, event).finally(() => {
+      if (entries.get(event.eventId)?.request === request) {
+        entries.delete(event.eventId);
+      }
+    });
+    entries.set(event.eventId, { eventTs: event.ts, request });
+    await request;
   }
 
   async onWindowElapsed(
@@ -487,11 +522,46 @@ export class StudyBotRules implements BotRules {
     windowEndMs: number,
   ): Promise<void> {
     if (runtime.condition.config.comparisonMode === true) {
+      // Assistant A has no network classifier dependency and therefore sends
+      // at the fixed boundary. Assistant B gets a short, bounded chance to
+      // include classifications still in flight for this closed window.
       await this.ruleArm.onWindowElapsed(runtime, windowEndMs);
+      await this.waitForWindowClassifications(runtime, windowEndMs);
       await this.llmArm.onWindowElapsed(runtime, windowEndMs);
       return;
     }
+    await this.waitForWindowClassifications(runtime, windowEndMs);
     await this.single.onWindowElapsed(runtime, windowEndMs);
+  }
+
+  private async waitForWindowClassifications(
+    runtime: SessionRuntime,
+    windowEndMs: number,
+  ): Promise<void> {
+    const entries = this.pending.get(runtime);
+    if (!entries || entries.size === 0) return;
+    const config = normalizeConfig(runtime.condition.config);
+    const windowStartMs =
+      windowEndMs - config.contributionWindowMinutes * 60_000;
+    const requests = [...entries.values()]
+      .filter(
+        ({ eventTs }) =>
+          eventTs >= windowStartMs && eventTs <= windowEndMs,
+      )
+      .map(({ request }) => request);
+    if (requests.length === 0) return;
+
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        Promise.allSettled(requests),
+        new Promise<void>((resolve) => {
+          timeout = setTimeout(resolve, CLASSIFICATION_WAIT_MS);
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
   }
 }
 

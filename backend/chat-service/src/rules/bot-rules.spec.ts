@@ -490,6 +490,100 @@ describe("StudyBotRules (two-bot comparison mode)", () => {
     expect(classify).toHaveBeenCalledTimes(1);
   });
 
+  it("starts message classifications concurrently", async () => {
+    const pending: Array<{
+      message: Message;
+      context: ClassifierContext;
+      resolve: (value: ReturnType<typeof fakeClassification>) => void;
+    }> = [];
+    const classify = vi.fn(
+      (message: Message, context: ClassifierContext) =>
+        new Promise<ReturnType<typeof fakeClassification>>((resolve) => {
+          pending.push({ message, context, resolve });
+        }),
+    );
+    const { rt } = runtime("public", { comparisonMode: true });
+    const rules = new StudyBotRules({ classify });
+    const first = record(rt, MEMBERS[0], "oxygen first", "concurrent-1");
+    const second = record(rt, MEMBERS[1], "water second", "concurrent-2");
+
+    const firstRequest = rules.onEvent(rt, first);
+    const secondRequest = rules.onEvent(rt, second);
+    await vi.waitFor(() => expect(classify).toHaveBeenCalledTimes(2));
+
+    for (const item of pending) {
+      item.resolve(fakeClassification(item.message, item.context));
+    }
+    await Promise.all([firstRequest, secondRequest]);
+    expect(rt.contributionClassifications).toHaveLength(2);
+  });
+
+  it("sends Assistant A at the boundary and bounds Assistant B's classifier wait", async () => {
+    vi.useFakeTimers();
+    let finishClassification!: (
+      value: ReturnType<typeof fakeClassification>,
+    ) => void;
+    let classifiedMessage!: Message;
+    let classifierContext!: ClassifierContext;
+    const classify = vi.fn(
+      (message: Message, context: ClassifierContext) =>
+        new Promise<ReturnType<typeof fakeClassification>>((resolve) => {
+          classifiedMessage = message;
+          classifierContext = context;
+          finishClassification = resolve;
+        }),
+    );
+    const { rt, bot } = runtime("public", { comparisonMode: true });
+    const rules = new StudyBotRules({ classify });
+    record(rt, MEMBERS[1], "ok", "bounded-blue");
+    const event = record(
+      rt,
+      MEMBERS[0],
+      "A long contribution from Red that clearly dominates this window.",
+      "bounded-red",
+    );
+
+    try {
+      const classificationRequest = rules.onEvent(rt, event);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(classify).toHaveBeenCalledTimes(1);
+
+      const windowRequest = rules.onWindowElapsed(rt, event.ts + 1_000);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(bot.sendTextAs).toHaveBeenCalledWith(
+        "a",
+        "!r",
+        expect.any(String),
+      );
+      expect(bot.sendTextAs).not.toHaveBeenCalledWith(
+        "b",
+        "!r",
+        expect.any(String),
+      );
+
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(bot.sendTextAs).not.toHaveBeenCalledWith(
+        "b",
+        "!r",
+        expect.any(String),
+      );
+      await vi.advanceTimersByTimeAsync(1);
+      await windowRequest;
+      expect(bot.sendTextAs).toHaveBeenCalledWith(
+        "b",
+        "!r",
+        expect.any(String),
+      );
+
+      finishClassification(
+        fakeClassification(classifiedMessage, classifierContext),
+      );
+      await classificationRequest;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("delegates to the single engine when comparison mode is off", async () => {
     const { rt, bot, event } = await makeDominantRed("public");
     const rules = new StudyBotRules();

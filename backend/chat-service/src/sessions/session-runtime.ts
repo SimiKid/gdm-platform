@@ -39,6 +39,7 @@ export class SessionRuntime {
     { message: Message; reaction: Reaction }
   >();
   private readonly processedEventIds = new Set<string>();
+  private participantUserIds?: Promise<string[]>;
 
   constructor(
     readonly sessionId: string,
@@ -120,8 +121,16 @@ export class SessionRuntime {
   }
 
   async getParticipantUserIds(): Promise<string[]> {
-    const memberIds = await this.bot.getJoinedMemberIds(this.roomId);
-    return memberIds.filter((id) => !isServiceUser(id)).sort();
+    this.participantUserIds ??= this.bot
+      .getJoinedMemberIds(this.roomId)
+      .then((memberIds) =>
+        memberIds.filter((id) => !isServiceUser(id)).sort(),
+      )
+      .catch((error: unknown) => {
+        this.participantUserIds = undefined;
+        throw error;
+      });
+    return this.participantUserIds;
   }
 
   /** Post a nudge / message into the room as the bot (visible to everyone). */
