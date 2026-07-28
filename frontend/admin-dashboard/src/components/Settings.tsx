@@ -130,7 +130,7 @@ export function ConditionsTable({ rows, onSaved }: Props) {
             <th># People</th>
             <th>Warm-up (min)</th>
             <th>Wrap-up (sec)</th>
-            <th>Window (min)</th>
+            <th>Window (sec)</th>
             <th>Trigger at (%)</th>
             <th>Progress</th>
             <th />
@@ -293,8 +293,10 @@ function ConditionRow({ row, onSaved }: { row: ConditionProgress; onSaved: () =>
         />
       </td>
       <td className="num">
-        <NumberInput
-          value={draft.config.contributionWindowMinutes}
+        {/* Contribution window: edited in seconds for fine control; stored
+            as (fractional) minutes, the unit the bot config uses. */}
+        <SecondsInput
+          minutes={draft.config.contributionWindowMinutes}
           min={1}
           onChange={(contributionWindowMinutes) =>
             patch({
@@ -363,8 +365,8 @@ function NumberInput({
 
 /**
  * A window edited in whole seconds but stored (and reported) in minutes — the
- * unit the bot config and timer use. Reusable for any protected window: the
- * wrap-up (protectedEnd) today, and the warm-up (protectedStart) once that is
+ * unit the bot config and timer use. Used by the wrap-up (protectedEnd) and
+ * contribution window today; fits the warm-up (protectedStart) once that is
  * switched from minutes to seconds. Hides the native spinner arrows so the
  * value stays legible in the narrow table cells (e.g. "120", not "12").
  */
