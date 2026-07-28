@@ -261,8 +261,9 @@ Mechanics:
 - Each arm runs the full rule engine with its **own** tracker reset and
   grace-period state — each bot behaves exactly as it would alone, so their
   nudge timing can be compared directly.
-- Both deliver **publicly**, ignoring the condition's audience, and both use
-  the same 5 rotating templates (each rotates independently).
+- Both follow the **condition's delivery audience**: in a public condition
+  everyone sees A and B, in a private condition only the nudged member sees
+  them. Both use the same 5 rotating templates (each rotates independently).
 - The labels are neutral (A/B) so testers stay blind to which arm is which;
   the mapping above is the only place it's documented. Every intervention log
   records `llmMode` (`off` = A, `active` = B) for the debrief.

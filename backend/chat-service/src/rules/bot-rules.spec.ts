@@ -469,6 +469,62 @@ describe("StudyBotRules (two-bot comparison mode)", () => {
     expect(classify).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps both comparison bots private in a private condition", async () => {
+    const classify = vi.fn(async (message: Message, context: ClassifierContext) =>
+      fakeClassification(message, context, { meaningfulnessScore: 1 }),
+    );
+    const { rt, bot } = runtime("private", { comparisonMode: true });
+    const rules = new StudyBotRules({ classify });
+    record(rt, MEMBERS[1], "ok", "m-blue");
+    const event = record(
+      rt,
+      MEMBERS[0],
+      "I think oxygen matters most because without oxygen we cannot move or breathe at all on the lunar surface today.",
+      "m-red",
+    );
+
+    await rules.onEvent(rt, event);
+    await rules.onWindowElapsed(rt, event.ts + 1_000);
+
+    // A and B both nudge, but only the dominating member may see either.
+    expect(bot.sendTextAs).toHaveBeenCalledWith(
+      "a",
+      "!r",
+      expect.stringContaining("a lot of energy"),
+      expect.objectContaining({ [GDM_RECIPIENT_KEY]: MEMBERS[0] }),
+    );
+    expect(bot.sendTextAs).toHaveBeenCalledWith(
+      "b",
+      "!r",
+      expect.stringContaining("a lot of energy"),
+      expect.objectContaining({ [GDM_RECIPIENT_KEY]: MEMBERS[0] }),
+    );
+    expect(rt.interventions.every((item) => item.audience === "private")).toBe(
+      true,
+    );
+  });
+
+  it("comparison bots never nudge in a baseline condition", async () => {
+    const classify = vi.fn(async (message: Message, context: ClassifierContext) =>
+      fakeClassification(message, context, { meaningfulnessScore: 1 }),
+    );
+    const { rt, bot } = runtime("baseline", { comparisonMode: true });
+    const rules = new StudyBotRules({ classify });
+    record(rt, MEMBERS[1], "ok", "m-blue");
+    const event = record(
+      rt,
+      MEMBERS[0],
+      "I think oxygen matters most because without oxygen we cannot move or breathe at all on the lunar surface today.",
+      "m-red",
+    );
+
+    await rules.onEvent(rt, event);
+    await rules.onWindowElapsed(rt, event.ts + 1_000);
+
+    expect(bot.sendTextAs).not.toHaveBeenCalled();
+    expect(rt.interventions).toHaveLength(0);
+  });
+
   it("starts message classifications concurrently", async () => {
     const pending: Array<{
       message: Message;

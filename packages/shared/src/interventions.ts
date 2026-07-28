@@ -82,9 +82,9 @@ export interface InterventionConfig {
   /**
    * Pilot/testing only: run BOTH detection bots side by side in the room —
    * "Assistant A" (rule-based) and "Assistant B" (rule-based + LLM), each
-   * with its own tracker state, both delivering publicly. Ignores
-   * the condition's `llmMode` and delivery audience. Never enable for real
-   * study sessions.
+   * with its own tracker state. Delivery follows the condition's
+   * `interventionMode` (public/private); each arm forces its own detection,
+   * ignoring the condition's `llmMode`. Never enable for real study sessions.
    */
   comparisonMode?: boolean;
 }

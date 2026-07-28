@@ -213,7 +213,8 @@ function ConditionRow({ row, onSaved }: { row: ConditionProgress; onSaved: () =>
       </td>
       <td>
         {/* Pilot/user-testing only: Assistant A (rule) + Assistant B (rule+LLM)
-            nudge side by side, both public. Never for real study sessions. */}
+            nudge side by side, following the condition's public/private
+            delivery. Never for real study sessions. */}
         <label className="switch">
           <input
             type="checkbox"
