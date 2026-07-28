@@ -26,7 +26,7 @@ export interface TestCondition {
   groupSize: number;
   config: {
     interventionMode: string;
-    llmMode?: "off" | "shadow";
+    llmMode?: "off" | "active";
     [key: string]: unknown;
   };
 }
@@ -102,7 +102,7 @@ export interface AdminSession {
     timestamp: string;
     trigger: string;
     threshold: number;
-    llmMode: "off" | "shadow" | "active";
+    llmMode: "off" | "active";
     contributionWindowMinutes: number;
     contributionSplit: Array<{
       userId: string;

@@ -252,7 +252,7 @@ One record per bot intervention across all sessions.
 | `audience` | `public` or `private` |
 | `trigger` | What caused the nudge (`contribution-threshold`) |
 | `threshold` | Dominance-score threshold that was exceeded (0..1) |
-| `llm_mode` | Detection arm: `off` (rule-based), `shadow`, or `active` (composite score) |
+| `llm_mode` | Detection arm: `off` (rule-based) or `active` (composite score) |
 | `targets` | Pipe-separated identity names of nudged participants |
 | `quiet_members` | Pipe-separated identity names of participants whose contribution was low |
 | `message` | The exact text the bot sent |

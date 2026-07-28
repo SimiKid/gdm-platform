@@ -60,7 +60,7 @@ interface RuleState {
   inviteGraceStartedAtByUser: Record<string, number>;
 }
 
-type LlmMode = "off" | "shadow" | "active";
+type LlmMode = "off" | "active";
 
 const STATE_KEY = "contributionBotRules";
 const CLASSIFICATION_WAIT_MS = 2_000;
@@ -203,8 +203,8 @@ export class ContributionBotRules implements BotRules {
     if (!classification) return;
     runtime.recordClassification(classification);
     // Self-correction reward: inviting others suppresses being flagged for a
-    // moment. Shadow mode must never influence interventions, so active only.
-    if (llmMode === "active" && classification.invitesParticipation.value) {
+    // moment.
+    if (classification.invitesParticipation.value) {
       const previousStart =
         state.inviteGraceStartedAtByUser[message.senderId] ??
         Number.NEGATIVE_INFINITY;
@@ -232,7 +232,7 @@ export class ContributionBotRules implements BotRules {
 
 function resolveLlmMode(config: InterventionConfig): LlmMode {
   const envMode = process.env.LLM_MODE;
-  if (envMode === "off" || envMode === "shadow" || envMode === "active") {
+  if (envMode === "off" || envMode === "active") {
     return envMode;
   }
   return config.llmMode ?? "off";

@@ -42,5 +42,5 @@ See [docs/getting-started.md](docs/getting-started.md) for prerequisites, ports,
 
 ## Current Deferrals
 
-- Participant-visible semantic/LLM-triggered interventions (classification is shadow-only)
+- Purely LLM-triggered interventions (the classifier only feeds the dominance score and invite grace; nudges stay window-triggered)
 - Matrix appservice registration for the bot

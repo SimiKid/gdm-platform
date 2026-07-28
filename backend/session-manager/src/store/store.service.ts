@@ -295,7 +295,7 @@ export class StoreService implements OnModuleInit {
       id: randomUUID(),
       status: "waiting",
       condition,
-      bot: { llmEnabled: condition.config.llmMode === "shadow", condition },
+      bot: { llmEnabled: condition.config.llmMode === "active", condition },
       participants: [],
       chat: { messages: [] },
       briefing: BRIEFING,

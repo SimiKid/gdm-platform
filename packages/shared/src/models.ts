@@ -223,9 +223,9 @@ export interface Session {
   rankingHistory?: Ranking[];
   /** Bot interventions emitted during the live session. */
   interventions: InterventionLog[];
-  /** Typing, visibility, ranking movement, and shadow-trigger telemetry. */
+  /** Typing, visibility, and ranking movement telemetry. */
   behavioralEvents: BehavioralEvent[];
-  /** Per-message semantic judgments when LLM shadow mode is enabled. */
+  /** Per-message semantic judgments when the LLM classifier is enabled. */
   contributionClassifications: ContributionClassification[];
   /** Internal restart checkpoint metadata; not used by participant clients. */
   processedEventIds?: string[];

@@ -22,7 +22,7 @@ const MESSAGES = [
   "Calibration phrase: purple rectangle, violin, tram 741.",
 ] as const;
 
-test("@shadow-live the deployed Anthropic classifier records meaningfulness indicators without nudging", async ({
+test("@llm-live the deployed Anthropic classifier records meaningfulness indicators without nudging", async ({
   browser,
   request,
 }) => {
@@ -33,8 +33,8 @@ test("@shadow-live the deployed Anthropic classifier records meaningfulness indi
   test.setTimeout(120_000);
 
   const condition = await createCondition(request, {
-    id: uniqueId("shadow-live"),
-    name: "E2E Live Anthropic Shadow",
+    id: uniqueId("llm-live"),
+    name: "E2E Live Anthropic Classifier",
     groupSize: 2,
     durationMinutes: 2,
     config: {
@@ -44,7 +44,7 @@ test("@shadow-live the deployed Anthropic classifier records meaningfulness indi
       protectedEndMinutes: 0,
       contributionWindowMinutes: 30,
       scoreWeights: { messages: 1, words: 0.05 },
-      llmMode: "shadow",
+      llmMode: "active",
     },
   });
   let group: Awaited<ReturnType<typeof provisionGroup>> | undefined;

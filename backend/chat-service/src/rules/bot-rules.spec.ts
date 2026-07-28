@@ -294,27 +294,6 @@ describe("ContributionBotRules", () => {
     expect(red?.dominanceScore).toBeCloseTo(0.55);
   });
 
-  it("keeps shadow-mode classifications out of the trigger decision", async () => {
-    const classify = vi.fn(async (message: Message, context: ClassifierContext) =>
-      fakeClassification(message, context, { meaningfulnessScore: 1 }),
-    );
-    const { rt, bot } = runtime("public", {
-      llmMode: "shadow",
-      contributionThreshold: 0.52,
-    });
-    const rules = new ContributionBotRules({ classify });
-    const ts = Date.now() + 60_000;
-    record(rt, MEMBERS[1], "same amount of words here", "m-blue", ts);
-    const event = record(rt, MEMBERS[0], "same amount of words okay", "m-red", ts + 1_000);
-
-    await rules.onEvent(rt, event);
-    await rules.onWindowElapsed(rt, event.ts + 1_000);
-
-    expect(rt.contributionClassifications).toHaveLength(1);
-    expect(bot.sendText).not.toHaveBeenCalled();
-    expect(rt.interventions).toHaveLength(0);
-  });
-
   it("grants a grace period to a dominant member whose message invites others", async () => {
     const classify = vi.fn(
       async (message: Message, context: ClassifierContext) =>
@@ -378,9 +357,9 @@ describe("ContributionBotRules", () => {
     });
   });
 
-  it("records shadow-mode classifications with task and member context without nudging", async () => {
+  it("records classifications with task and member context without nudging", async () => {
     const previousMode = process.env.LLM_MODE;
-    process.env.LLM_MODE = "shadow";
+    process.env.LLM_MODE = "active";
     const classify = vi.fn(async (message: Message, context: ClassifierContext) =>
       fakeClassification(message, context),
     );
@@ -412,7 +391,7 @@ describe("ContributionBotRules", () => {
 
   it("classifies the message for each event when later messages are already buffered", async () => {
     const previousMode = process.env.LLM_MODE;
-    process.env.LLM_MODE = "shadow";
+    process.env.LLM_MODE = "active";
     const classify = vi.fn(async (message: Message, context: ClassifierContext) =>
       fakeClassification(message, context),
     );

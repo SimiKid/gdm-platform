@@ -111,8 +111,8 @@ E2E_COMPOSE_ENV_FILE=.env pnpm --dir e2e test:e2e:recovery
 
 The restart profile refuses non-local API URLs and refuses to run while a
 non-E2E session is waiting or running. The live profile is intentionally one
-test; it verifies the four meaningfulness indicators, pseudonymized prompts,
-and that shadow mode never renders a nudge.
+test; it verifies the four meaningfulness indicators and pseudonymized
+prompts on a baseline condition, where no nudge may ever render.
 
 First-time setup: `pnpm --filter @gdm/e2e exec playwright install chromium`.
 

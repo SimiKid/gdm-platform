@@ -75,11 +75,10 @@ export interface InterventionConfig {
   scoreWeights: ContributionScoreWeights;
   dominanceWeights: DominanceWeights;
   /**
-   * Semantic classifier mode. `shadow` records classifications but never
-   * influences nudging; `active` folds the meaningfulness score into the
-   * dominance score (rule-based + LLM detection arm).
+   * Semantic classifier mode. `active` folds the meaningfulness score into
+   * the dominance score (rule-based + LLM detection arm).
    */
-  llmMode?: "off" | "shadow" | "active";
+  llmMode?: "off" | "active";
   /**
    * Pilot/testing only: run BOTH detection bots side by side in the room —
    * "Assistant A" (rule-based) and "Assistant B" (rule-based + LLM), each
@@ -120,7 +119,7 @@ export interface InterventionLog {
   trigger: "contribution-threshold";
   threshold: number;
   /** Detection arm that produced this intervention (off = rule-based only). */
-  llmMode: "off" | "shadow" | "active";
+  llmMode: "off" | "active";
   contributionWindowMinutes: number;
   contributionSplit: ContributionShare[];
   targets: InterventionTarget[];

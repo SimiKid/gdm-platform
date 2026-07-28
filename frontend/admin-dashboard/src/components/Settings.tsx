@@ -146,6 +146,11 @@ export function ConditionsTable({ rows, onSaved }: Props) {
   );
 }
 
+const DETECTION_LABELS: Record<"off" | "active", string> = {
+  off: "Rule-based",
+  active: "Rule + LLM",
+};
+
 function ConditionRow({ row, onSaved }: { row: ConditionProgress; onSaved: () => void }) {
   const [draft, setDraft] = useState<Condition>(row.condition);
   const [state, setState] = useState<SaveState>("idle");
@@ -196,25 +201,10 @@ function ConditionRow({ row, onSaved }: { row: ConditionProgress; onSaved: () =>
         <span className="muted">{draft.id}</span>
       </td>
       <td>
-        {/* The detection arm of the study design (stored as config.llmMode).
-            "Shadow" records LLM classifications without affecting nudges —
-            use it to validate the classifier in pilots. */}
-        <select
-          value={draft.config.llmMode ?? "off"}
-          onChange={(e) =>
-            patch({
-              config: {
-                ...draft.config,
-                llmMode: e.target.value as "off" | "shadow" | "active",
-              },
-            })
-          }
-          aria-label={`${draft.name} detection`}
-        >
-          <option value="off">Rule-based</option>
-          <option value="shadow">Rule-based + LLM shadow (log only)</option>
-          <option value="active">Rule-based + LLM</option>
-        </select>
+        {/* Read-only: the detection arm of the study design (stored as
+            config.llmMode). Fixed per condition — editing it here would let
+            the condition name lie about what the arm runs. */}
+        <span className="bot-mode">{DETECTION_LABELS[draft.config.llmMode ?? "off"]}</span>
       </td>
       <td>
         {/* Read-only: which nudge behavior the bot runs (baseline = none).
