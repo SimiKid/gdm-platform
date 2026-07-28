@@ -101,7 +101,7 @@ design).
 
 The trigger metric is the **dominance score**:
 
-- Rule-based arm (`llmMode: "off"` or `"shadow"`): `dominance = share`.
+- Rule-based arm (`llmMode: "off"`): `dominance = share`.
 - Rule-based + LLM arm (`llmMode: "active"`):
   `dominance = 0.90 × share + 0.10 × meaningfulness`, where meaningfulness is
   the mean `meaningfulnessScore` of the member's classified messages in the
@@ -190,7 +190,7 @@ All parameters are editable per condition via the admin dashboard and are stored
 | Word weight | `scoreWeights.words` | `0.05` | Points per word |
 | Share weight | `dominanceWeights.share` | `0.90` | Composite weight of the raw contribution share |
 | Meaningfulness weight | `dominanceWeights.meaningfulness` | `0.10` | Composite weight of the LLM meaningfulness score |
-| Classifier mode | `llmMode` | `off` | `off` / `shadow` (record only) / `active` (composite score + grace period) |
+| Classifier mode | `llmMode` | `off` | `off` (rule-based) / `active` (composite score + grace period) |
 | Two-bot test | `comparisonMode` | `false` | Pilot only: both detection bots nudge side by side (see below) |
 
 Defaults are defined in `packages/shared/src/interventions.ts` (`DEFAULT_INTERVENTION_CONFIG`). Conditions are seeded with these defaults by the session manager on first startup (see `seedConditions()` in `backend/session-manager/src/store/store.service.ts`).
@@ -210,12 +210,12 @@ Every intervention is recorded as an `InterventionLog` containing:
 
 These logs are visible in the admin dashboard's **Intervention Audit** section and included in the JSON and CSV exports (`/api/export/sessions`, `/api/export/sessions.csv`).
 
-## Semantic Shadow Mode (Meaningfulness Classifier)
+## Meaningfulness Classifier (Rule + LLM Detection Arm)
 
-Provide `ANTHROPIC_API_KEY` and set a condition's **Detection** to
-"Rule-based + LLM shadow (log only)" in the admin dashboard to classify its
-participant messages with Anthropic's Messages API.
-`LLM_MODE=shadow` is an optional global override. Per message, the classifier
+Conditions with `llmMode: "active"` (the Rule+LLM arms) classify every
+participant message with Anthropic's Messages API; `ANTHROPIC_API_KEY` must
+be set for these arms to run.
+`LLM_MODE` (`off` / `active`) is an optional global override. Per message, the classifier
 judges four structural indicators (each `true`/`false` plus a one-sentence
 reason), following the study protocol:
 
@@ -229,23 +229,21 @@ reason), following the study protocol:
   contributor's self-correction grace period, never the score.
 
 The mean of the first three indicators is stored as `meaningfulnessScore`
-(0..1). With `llmMode: "active"` it feeds the composite dominance score
-(`0.90 × contribution share + 0.10 × meaningfulness`, see Gate 3) and
-`invitesParticipation` drives the invite grace period; with `"shadow"` the
-same classifications are recorded but never influence nudging. Each classification
-also records the model ID, prompt version (`meaningfulness-v1`), the exact
-prompt, and the raw JSON output for auditability.
+(0..1). It feeds the composite dominance score (`0.90 × contribution share +
+0.10 × meaningfulness`, see Gate 3) and `invitesParticipation` drives the
+invite grace period. Each classification also records the model ID, prompt
+version (`meaningfulness-v1`), the exact prompt, and the raw JSON output for
+auditability.
 
 The prompt contains the message, the sender's pseudonym, the immediately
 preceding 3 messages, the ranking-task item list, and the group member list.
-Shadow mode never sends a nudge and therefore cannot alter a study condition.
 Classifications and participant aggregates (per-indicator counts and the mean
 meaningfulness score) are available from `/api/export/contributions` and
 `/api/export/contributions.csv`.
 
 The API receives pseudonymous color labels,
 but it does receive chat text; consent and the data-processing documentation
-must state this before shadow mode is used with real participants.
+must state this before the Rule+LLM arms are used with real participants.
 
 ## Two-Bot Comparison Mode (pilot / user testing only)
 
@@ -263,8 +261,9 @@ Mechanics:
 - Each arm runs the full rule engine with its **own** tracker reset and
   grace-period state — each bot behaves exactly as it would alone, so their
   nudge timing can be compared directly.
-- Both deliver **publicly**, ignoring the condition's audience, and both use
-  the same 5 rotating templates (each rotates independently).
+- Both follow the **condition's delivery audience**: in a public condition
+  everyone sees A and B, in a private condition only the nudged member sees
+  them. Both use the same 5 rotating templates (each rotates independently).
 - The labels are neutral (A/B) so testers stay blind to which arm is which;
   the mapping above is the only place it's documented. Every intervention log
   records `llmMode` (`off` = A, `active` = B) for the debrief.

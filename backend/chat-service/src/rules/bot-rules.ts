@@ -60,7 +60,7 @@ interface RuleState {
   inviteGraceStartedAtByUser: Record<string, number>;
 }
 
-type LlmMode = "off" | "shadow" | "active";
+type LlmMode = "off" | "active";
 
 const STATE_KEY = "contributionBotRules";
 const CLASSIFICATION_WAIT_MS = 2_000;
@@ -152,10 +152,9 @@ export class ContributionBotRules implements BotRules {
     if (targets.length === 0) return;
 
     const mode = config.interventionMode;
-    // Comparison bots always deliver publicly, whatever the condition says.
-    const audience = this.options.deliverAs
-      ? "public"
-      : audienceForMode(mode);
+    // Comparison bots follow the condition's delivery audience too — a
+    // private 2-bot test must stay private (only the target sees A and B).
+    const audience = audienceForMode(mode);
     if (audience === "none") return;
     const target = targets[0];
     const quietMembers = quietestMembers(split, target, config.contributionThreshold);
@@ -166,7 +165,11 @@ export class ContributionBotRules implements BotRules {
     const message = buildMessage(target, nudgeIndex);
 
     if (this.options.deliverAs) {
-      await runtime.postAs(this.options.deliverAs, message);
+      await runtime.postAs(
+        this.options.deliverAs,
+        message,
+        audience === "private" ? target.userId : undefined,
+      );
     } else if (audience === "public") {
       await runtime.post(message);
     } else {
@@ -203,8 +206,8 @@ export class ContributionBotRules implements BotRules {
     if (!classification) return;
     runtime.recordClassification(classification);
     // Self-correction reward: inviting others suppresses being flagged for a
-    // moment. Shadow mode must never influence interventions, so active only.
-    if (llmMode === "active" && classification.invitesParticipation.value) {
+    // moment.
+    if (classification.invitesParticipation.value) {
       const previousStart =
         state.inviteGraceStartedAtByUser[message.senderId] ??
         Number.NEGATIVE_INFINITY;
@@ -232,7 +235,7 @@ export class ContributionBotRules implements BotRules {
 
 function resolveLlmMode(config: InterventionConfig): LlmMode {
   const envMode = process.env.LLM_MODE;
-  if (envMode === "off" || envMode === "shadow" || envMode === "active") {
+  if (envMode === "off" || envMode === "active") {
     return envMode;
   }
   return config.llmMode ?? "off";
@@ -470,7 +473,8 @@ function toTarget(entry: ContributionShare): InterventionTarget {
  *   - "Assistant A" (`gdm_bot_a_…`) — rule-based detection
  *   - "Assistant B" (`gdm_bot_b_…`) — rule-based + LLM meaningfulness
  *
- * Both deliver publicly so testers can watch and compare their behavior live.
+ * Both follow the condition's delivery audience: public conditions show A and
+ * B to everyone, private conditions show both only to the nudged member.
  */
 @Injectable()
 export class StudyBotRules implements BotRules {

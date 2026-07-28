@@ -87,12 +87,17 @@ export class MatrixBotService implements OnModuleInit {
   }
 
   /**
-   * Post a message as a named secondary identity. Comparison-mode nudges are
-   * always public, so there is no private variant here.
+   * Post a message as a named secondary identity. `extraContent` is merged
+   * into the event content — e.g. the recipient key for a private nudge.
    */
-  async sendTextAs(kind: string, roomId: string, body: string): Promise<void> {
+  async sendTextAs(
+    kind: string,
+    roomId: string,
+    body: string,
+    extraContent: Record<string, unknown> = {},
+  ): Promise<void> {
     const identity = await this.ensureIdentity(kind);
-    await this.sendWith(identity.accessToken, roomId, body, {});
+    await this.sendWith(identity.accessToken, roomId, body, extraContent);
   }
 
   /**
