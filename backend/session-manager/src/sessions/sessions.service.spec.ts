@@ -37,6 +37,7 @@ describe("SessionsService (session-manager)", () => {
 
   beforeEach(() => {
     delete process.env.PROLIFIC_STUDY_ID;
+    delete process.env.PROLIFIC_API_TOKEN;
     store = new StoreService();
     matrix = fakeMatrix();
     svc = new SessionsService(store, matrix);
@@ -113,6 +114,53 @@ describe("SessionsService (session-manager)", () => {
     process.env.PROLIFIC_STUDY_ID = "dddddddddddddddddddddddd";
     await expect(svc.recordProlificArrival(prolific)).rejects.toThrow(
       /unexpected prolific study/i,
+    );
+  });
+
+  it("verifies Prolific submission ownership when an API token is configured", async () => {
+    process.env.PROLIFIC_API_TOKEN = "server-only-token";
+    const prolificFetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        id: prolific.sessionId,
+        study_id: prolific.studyId,
+        participant: prolific.participantId,
+        status: "ACTIVE",
+      }),
+    }));
+    vi.stubGlobal("fetch", prolificFetch);
+
+    await svc.recordProlificArrival(prolific);
+    await svc.resumeProlific(prolific);
+
+    expect(prolificFetch).toHaveBeenCalledTimes(1);
+    expect(prolificFetch).toHaveBeenCalledWith(
+      `https://api.prolific.com/api/v1/submissions/${prolific.sessionId}/`,
+      expect.objectContaining({
+        headers: { Authorization: "Token server-only-token" },
+      }),
+    );
+  });
+
+  it("rejects a Prolific submission whose API identity does not match", async () => {
+    process.env.PROLIFIC_API_TOKEN = "server-only-token";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: prolific.sessionId,
+          study_id: prolific.studyId,
+          participant: "dddddddddddddddddddddddd",
+          status: "ACTIVE",
+        }),
+      })),
+    );
+
+    await expect(svc.recordProlificArrival(prolific)).rejects.toThrow(
+      /identity mismatch/i,
     );
   });
 

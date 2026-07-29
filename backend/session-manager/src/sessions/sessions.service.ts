@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type {
@@ -45,6 +46,8 @@ export class SessionsService {
   private readonly waitingTimeoutMinutes = Number(
     process.env.WAITING_TIMEOUT_MINUTES ?? 30,
   );
+  /** Avoid repeating the Prolific API lookup across arrival → resume → join. */
+  private readonly verifiedProlificSubmissions = new Map<string, number>();
 
   /**
    * Joins must not interleave: find-or-create of the forming session races
@@ -71,7 +74,7 @@ export class SessionsService {
 
   private async doOpenSession(req: OpenSessionRequest): Promise<OpenSessionResponse> {
     await this.abortStaleWaiting();
-    this.validateProlificIdentity(req.prolific);
+    await this.validateProlificIdentity(req.prolific);
     if (req.prolific) await this.store.recordProlificArrival(req.prolific);
 
     // A token that already holds a seat gets that seat back (browser refresh,
@@ -183,12 +186,10 @@ export class SessionsService {
     return undefined;
   }
 
-  /**
-   * Basic validation for the unsigned URL-parameter integration.
-   * TODO(Prolific): if the workspace supports Secure external URLs, verify the
-   * Prolific JWT here (or validate SESSION_ID via their API) before launch.
-   */
-  private validateProlificIdentity(identity?: ProlificIdentity): void {
+  /** Validate URL identifiers and, when configured, their Prolific submission. */
+  private async validateProlificIdentity(
+    identity?: ProlificIdentity,
+  ): Promise<void> {
     if (!identity) return;
     const idPattern = /^[a-f0-9]{24}$/i;
     if (
@@ -202,12 +203,77 @@ export class SessionsService {
     if (expectedStudyId && identity.studyId !== expectedStudyId) {
       throw new BadRequestException("Unexpected Prolific study");
     }
+
+    const apiToken = process.env.PROLIFIC_API_TOKEN?.trim();
+    if (!apiToken) return;
+
+    const cacheKey = [
+      identity.studyId,
+      identity.sessionId,
+      identity.participantId,
+    ].join(":");
+    const cachedUntil = this.verifiedProlificSubmissions.get(cacheKey) ?? 0;
+    if (cachedUntil > Date.now()) return;
+
+    let response: Response;
+    try {
+      response = await fetch(
+        `https://api.prolific.com/api/v1/submissions/${identity.sessionId}/`,
+        {
+          headers: { Authorization: `Token ${apiToken}` },
+          signal: AbortSignal.timeout(5000),
+        },
+      );
+    } catch (error) {
+      this.log.error(`Prolific submission verification failed: ${String(error)}`);
+      throw new ServiceUnavailableException(
+        "Prolific submission verification is temporarily unavailable",
+      );
+    }
+
+    if (response.status === 404) {
+      throw new BadRequestException("Unknown Prolific submission");
+    }
+    if (!response.ok) {
+      this.log.error(
+        `Prolific submission verification returned ${response.status}`,
+      );
+      throw new ServiceUnavailableException(
+        "Prolific submission verification is temporarily unavailable",
+      );
+    }
+
+    const submission = (await response.json()) as {
+      id?: string;
+      study_id?: string;
+      participant?: string;
+      status?: string;
+    };
+    if (
+      submission.id !== identity.sessionId ||
+      submission.study_id !== identity.studyId ||
+      submission.participant !== identity.participantId
+    ) {
+      throw new BadRequestException("Prolific submission identity mismatch");
+    }
+    if (
+      submission.status &&
+      !["RESERVED", "ACTIVE", "AWAITING REVIEW", "APPROVED"].includes(
+        submission.status,
+      )
+    ) {
+      throw new BadRequestException(
+        `Prolific submission is ${submission.status.toLowerCase()}`,
+      );
+    }
+
+    this.verifiedProlificSubmissions.set(cacheKey, Date.now() + 60_000);
   }
 
   async recordProlificArrival(
     identity: ProlificIdentity,
   ): Promise<ProlificArrival> {
-    this.validateProlificIdentity(identity);
+    await this.validateProlificIdentity(identity);
     return this.store.recordProlificArrival(identity);
   }
 
@@ -215,7 +281,7 @@ export class SessionsService {
   async resumeProlific(
     identity: ProlificIdentity,
   ): Promise<ProlificResumeResponse | null> {
-    this.validateProlificIdentity(identity);
+    await this.validateProlificIdentity(identity);
     const existing = await this.findByProlificSession(identity);
     if (!existing) return null;
 

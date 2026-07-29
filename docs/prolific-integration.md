@@ -9,20 +9,29 @@ In the Prolific study's **Data collection** section:
 
 1. Use `https://gdmproject.ifi.uzh.ch/` as the external study URL.
 2. Select **I'll use URL parameters**.
-3. Confirm that Prolific appends all three standard parameters:
+3. Confirm that Prolific automatically appends all three standard parameters:
 
 ```text
-https://gdmproject.ifi.uzh.ch/?PROLIFIC_PID={{%PROLIFIC_PID%}}&STUDY_ID={{%STUDY_ID%}}&SESSION_ID={{%SESSION_ID%}}
+PROLIFIC_PID
+STUDY_ID
+SESSION_ID
 ```
 
-4. Create the normal completion path and copy its redirect URL, for example:
+Do not add the placeholders to the base URL manually; selecting URL parameters
+in Prolific adds them.
+
+4. Use the normal completion redirect:
 
 ```text
-https://app.prolific.com/submissions/complete?cc=YOUR_COMPLETION_CODE
+https://app.prolific.com/submissions/complete?cc=CNE4B56C
 ```
 
 5. Put that URL in **Admin dashboard → Settings → Compensation Link**.
-6. Set `PROLIFIC_STUDY_ID` in `infra/.env` to the study's 24-character ID.
+6. Set the study ID in `infra/.env`:
+
+```text
+PROLIFIC_STUDY_ID=6a69fc8742750ae81af3d24a
+```
 
 `PROLIFIC_STUDY_ID` is optional for local pilots. It must be set for the real
 study so a link from another study cannot claim a seat.
@@ -48,19 +57,20 @@ study so a link from another study cannot claim a seat.
 
 ## Configuration still required before launch
 
-- Replace `YOUR_COMPLETION_CODE` with the real normal-completion URL.
 - Add the final compensation amount, researcher contact, ethics contact,
   privacy/retention language, and partial-payment wording to the consent pages.
-- Decide and configure Prolific completion paths for no consent, voluntary
-  withdrawal, unmatched waiting-room participants, and technical failures.
+- No consent, voluntary withdrawal, unmatched waiting-room participants, and
+  technical failures all use the same no-completion outcome: the participant
+  leaves the GDM study and is not sent through the paid completion redirect.
+  Their Prolific submission must be returned or allowed to time out.
 - Decide the reconnect grace period and what a group does after a permanent
   dropout.
 - Enable Prolific's deception prescreener for the withheld AI-study focus.
-- TODO(Prolific security): enable Secure external URL JWT verification when
-  available for the workspace, or provide a Prolific API token so `SESSION_ID`
-  can be checked against the submission API. Current validation checks ID
-  format and the configured study ID, but URL parameters are not cryptographically
-  authenticated.
+- Create a server-only Prolific API token and set `PROLIFIC_API_TOKEN` in
+  `infra/.env`. The Session Manager then retrieves each `SESSION_ID` from
+  Prolific and requires its study and participant IDs to match before assigning
+  a seat. If Prolific enables Secure external URLs for the workspace later, JWT
+  verification can replace the full-permission researcher token.
 
 The completion redirect records completion in Prolific. Whether that
 immediately pays the participant or sends the submission to review is selected
