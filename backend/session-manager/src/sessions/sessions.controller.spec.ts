@@ -5,6 +5,11 @@ import type { StoreService } from "../store/store.service";
 
 describe("SessionsController", () => {
   const sessions = {
+    recordProlificArrival: vi.fn(async (prolific) => ({
+      ...prolific,
+      arrivedAt: "now",
+    })),
+    resumeProlific: vi.fn(async () => null),
     openSession: vi.fn(async () => ({ session: { id: "s" } })),
     listSessions: vi.fn(async () => [{ id: "s" }]),
     getSession: vi.fn(async () => ({ id: "s" })),
@@ -20,18 +25,33 @@ describe("SessionsController", () => {
     exportSurveysCsv: vi.fn(async () => "kind\n"),
     submitSurvey: vi.fn(async () => undefined),
     completeSession: vi.fn(async () => ({ id: "s", status: "completed" })),
+    completeParticipant: vi.fn(async () => ({
+      completedAt: "now",
+      compensationUrl: "https://pay.example",
+    })),
     finalizeSession: vi.fn(async () => ({ id: "s" })),
   } as unknown as SessionsService;
   const store = {
     listConditions: async () => [{ id: "c1", name: "C1", goal: 5 }],
     upsertCondition: vi.fn(async (condition) => condition),
     completedCount: async () => 2,
+    listProlificArrivals: vi.fn(async () => []),
   } as unknown as StoreService;
   const ctrl = new SessionsController(sessions, store);
 
   it("openSession delegates to the service", async () => {
     await ctrl.openSession({ trackingToken: "t", participantName: "" });
     expect(sessions.openSession).toHaveBeenCalled();
+  });
+
+  it("records Prolific arrivals", async () => {
+    const prolific = {
+      participantId: "aaaaaaaaaaaaaaaaaaaaaaaa",
+      studyId: "bbbbbbbbbbbbbbbbbbbbbbbb",
+      sessionId: "cccccccccccccccccccccccc",
+    };
+    await ctrl.recordProlificArrival({ prolific });
+    expect(sessions.recordProlificArrival).toHaveBeenCalledWith(prolific);
   });
 
   it("getSession returns the sanitized participant view", async () => {
@@ -63,6 +83,11 @@ describe("SessionsController", () => {
   it("complete delegates by id", async () => {
     await ctrl.complete("s");
     expect(sessions.completeSession).toHaveBeenCalledWith("s");
+  });
+
+  it("completes one participant", async () => {
+    await ctrl.completeParticipant("s", "p");
+    expect(sessions.completeParticipant).toHaveBeenCalledWith("s", "p");
   });
 
   it("finalize passes messages and ranking history", async () => {

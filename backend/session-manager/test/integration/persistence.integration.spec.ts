@@ -235,6 +235,66 @@ describe("persistence & exports (integration)", () => {
     expect(entry.trackingToken).toBe("tt-Solo");
   });
 
+  it("persists Prolific arrival, participant identity, and individual completion", async () => {
+    const prolific = {
+      participantId: "aaaaaaaaaaaaaaaaaaaaaaaa",
+      studyId: "bbbbbbbbbbbbbbbbbbbbbbbb",
+      sessionId: "cccccccccccccccccccccccc",
+    };
+    await request(t.http)
+      .post("/api/prolific/arrivals")
+      .send({ prolific })
+      .expect(201);
+
+    const opened = (
+      await request(t.http)
+        .post("/api/sessions")
+        .send({
+          trackingToken: `prolific:${prolific.studyId}:${prolific.sessionId}`,
+          participantName: "",
+          conditionId: "baseline",
+          prolific,
+        })
+        .expect(201)
+    ).body;
+    await request(t.http)
+      .post("/api/surveys")
+      .send({
+        sessionId: opened.session.id,
+        participantId: opened.participantId,
+        kind: "exit",
+        survey: {
+          answers: { satisfaction: 7 },
+          submittedAt: "2026-07-26T10:00:00.000Z",
+        },
+      })
+      .expect(201);
+    const completion = (
+      await request(t.http)
+        .post(
+          `/api/sessions/${opened.session.id}/participants/${opened.participantId}/complete`,
+        )
+        .expect(201)
+    ).body;
+    expect(completion.completedAt).toBeDefined();
+
+    await t.close();
+    t = await createTestApp();
+
+    const arrivals = (
+      await request(t.http).get("/api/export/prolific-arrivals").expect(200)
+    ).body;
+    expect(arrivals[0]).toMatchObject({
+      ...prolific,
+      participantRecordId: opened.participantId,
+    });
+    const detailed = (
+      await request(t.http).get("/api/export/sessions").expect(200)
+    ).body.sessions[0].participants[0];
+    expect(detailed.prolific).toEqual(prolific);
+    expect(detailed.completedAt).toBe(completion.completedAt);
+  });
+
   it("persists study settings across restarts", async () => {
     await request(t.http)
       .put("/api/settings")

@@ -8,6 +8,36 @@ function okJson(value: unknown) {
 }
 
 describe("httpSessionManager", () => {
+  it("records a Prolific arrival immediately", async () => {
+    const prolific = {
+      participantId: "aaaaaaaaaaaaaaaaaaaaaaaa",
+      studyId: "bbbbbbbbbbbbbbbbbbbbbbbb",
+      sessionId: "cccccccccccccccccccccccc",
+    };
+    vi.stubGlobal("fetch", okJson({ ...prolific, arrivedAt: "now" }));
+    await expect(
+      httpSessionManager.recordProlificArrival(prolific),
+    ).resolves.toMatchObject(prolific);
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/prolific/arrivals"),
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("requests a server-side Prolific resume", async () => {
+    const prolific = {
+      participantId: "aaaaaaaaaaaaaaaaaaaaaaaa",
+      studyId: "bbbbbbbbbbbbbbbbbbbbbbbb",
+      sessionId: "cccccccccccccccccccccccc",
+    };
+    vi.stubGlobal("fetch", okJson(null));
+    await expect(httpSessionManager.resumeProlific(prolific)).resolves.toBeNull();
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/prolific/resume"),
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
   it("openSession POSTs and returns the response", async () => {
     vi.stubGlobal("fetch", okJson({ session: { id: "s" } }));
     const res = await httpSessionManager.openSession({
@@ -61,6 +91,20 @@ describe("httpSessionManager", () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 500 })));
     await expect(httpSessionManager.completeSession("s")).rejects.toThrow(
       /completeSession failed/,
+    );
+  });
+
+  it("completes one participant and returns the compensation URL", async () => {
+    vi.stubGlobal(
+      "fetch",
+      okJson({ completedAt: "now", compensationUrl: "https://pay.example" }),
+    );
+    await expect(
+      httpSessionManager.completeParticipant("s", "p"),
+    ).resolves.toMatchObject({ compensationUrl: "https://pay.example" });
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/sessions/s/participants/p/complete"),
+      expect.objectContaining({ method: "POST" }),
     );
   });
 });

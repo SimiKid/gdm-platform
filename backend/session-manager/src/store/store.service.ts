@@ -18,6 +18,8 @@ import type {
   Message,
   Participant,
   Poll,
+  ProlificArrival,
+  ProlificIdentity,
   Ranking,
   RankingTask,
   Session,
@@ -63,6 +65,7 @@ type SessionRow = Prisma.SessionRecordGetPayload<{
 export class StoreService implements OnModuleInit {
   private readonly conditions: Condition[] = [];
   private readonly sessions = new Map<string, Session>();
+  private readonly prolificArrivals = new Map<string, ProlificArrival>();
   private readonly memoryCreds = new Map<string, MatrixCreds>();
   private readonly memorySettings: StudySettings = { compensationUrl: "" };
   private seedPromise?: Promise<void>;
@@ -132,6 +135,68 @@ export class StoreService implements OnModuleInit {
       });
     }
     return this.getStudySettings();
+  }
+
+  /** Persist the Prolific IDs before consent/task pages can be abandoned. */
+  async recordProlificArrival(
+    identity: ProlificIdentity,
+  ): Promise<ProlificArrival> {
+    const key = `${identity.studyId}:${identity.sessionId}`;
+    if (!this.dbEnabled) {
+      const existing = this.prolificArrivals.get(key);
+      if (existing) return existing;
+      const arrival = {
+        ...identity,
+        arrivedAt: new Date().toISOString(),
+      };
+      this.prolificArrivals.set(key, arrival);
+      return arrival;
+    }
+
+    await this.ensureSeeded();
+    const row = await this.db.prolificArrivalRecord.upsert({
+      where: {
+        prolificStudyId_prolificSessionId: {
+          prolificStudyId: identity.studyId,
+          prolificSessionId: identity.sessionId,
+        },
+      },
+      create: {
+        prolificPid: identity.participantId,
+        prolificStudyId: identity.studyId,
+        prolificSessionId: identity.sessionId,
+      },
+      update: { prolificPid: identity.participantId },
+    });
+    return prolificArrivalFromRow(row);
+  }
+
+  async linkProlificArrival(
+    identity: ProlificIdentity,
+    participantRecordId: string,
+  ): Promise<void> {
+    const key = `${identity.studyId}:${identity.sessionId}`;
+    if (!this.dbEnabled) {
+      const arrival = this.prolificArrivals.get(key);
+      if (arrival) arrival.participantRecordId = participantRecordId;
+      return;
+    }
+    await this.db.prolificArrivalRecord.updateMany({
+      where: {
+        prolificStudyId: identity.studyId,
+        prolificSessionId: identity.sessionId,
+      },
+      data: { participantRecordId },
+    });
+  }
+
+  async listProlificArrivals(): Promise<ProlificArrival[]> {
+    if (!this.dbEnabled) return [...this.prolificArrivals.values()];
+    await this.ensureSeeded();
+    const rows = await this.db.prolificArrivalRecord.findMany({
+      orderBy: { arrivedAt: "asc" },
+    });
+    return rows.map(prolificArrivalFromRow);
   }
 
   /** Sessions counting against a condition's goal (everything but aborted). */
@@ -427,11 +492,19 @@ export class StoreService implements OnModuleInit {
           sessionId: session.id,
           name: participant.name,
           trackingToken: participant.trackingToken,
+          prolificPid: participant.prolific?.participantId,
+          prolificStudyId: participant.prolific?.studyId,
+          prolificSessionId: participant.prolific?.sessionId,
+          completedAt: toOptionalDate(participant.completedAt),
         },
         update: {
           sessionId: session.id,
           name: participant.name,
           trackingToken: participant.trackingToken,
+          prolificPid: participant.prolific?.participantId,
+          prolificStudyId: participant.prolific?.studyId,
+          prolificSessionId: participant.prolific?.sessionId,
+          completedAt: toOptionalDate(participant.completedAt),
         },
       });
       await this.saveSurvey(tx, participant, "entry", participant.entrySurvey);
@@ -734,8 +807,33 @@ function participantFromRow(
     id: row.id,
     name: row.name,
     trackingToken: row.trackingToken,
+    prolific:
+      row.prolificPid && row.prolificStudyId && row.prolificSessionId
+        ? {
+            participantId: row.prolificPid,
+            studyId: row.prolificStudyId,
+            sessionId: row.prolificSessionId,
+          }
+        : undefined,
+    completedAt: row.completedAt?.toISOString(),
     entrySurvey: entry ? surveyFromRow(entry) : undefined,
     exitSurvey: exit ? surveyFromRow(exit) : undefined,
+  };
+}
+
+function prolificArrivalFromRow(row: {
+  prolificPid: string;
+  prolificStudyId: string;
+  prolificSessionId: string;
+  participantRecordId: string | null;
+  arrivedAt: Date;
+}): ProlificArrival {
+  return {
+    participantId: row.prolificPid,
+    studyId: row.prolificStudyId,
+    sessionId: row.prolificSessionId,
+    participantRecordId: row.participantRecordId ?? undefined,
+    arrivedAt: row.arrivedAt.toISOString(),
   };
 }
 

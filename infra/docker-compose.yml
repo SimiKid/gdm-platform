@@ -76,6 +76,7 @@ services:
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
       WAITING_TIMEOUT_MINUTES: ${WAITING_TIMEOUT_MINUTES:-30}
+      PROLIFIC_STUDY_ID: ${PROLIFIC_STUDY_ID:-}
     depends_on:
       synapse:
         condition: service_healthy

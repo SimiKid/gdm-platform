@@ -58,6 +58,10 @@ model ParticipantRecord {
   sessionId         String         @map("session_id")
   name              String
   trackingToken     String         @map("tracking_token")
+  prolificPid       String?        @map("prolific_pid")
+  prolificStudyId   String?        @map("prolific_study_id")
+  prolificSessionId String?        @map("prolific_session_id")
+  completedAt       DateTime?      @map("completed_at")
   matrixUserId      String?        @map("matrix_user_id")
   matrixAccessToken String?        @map("matrix_access_token")
   createdAt         DateTime       @default(now()) @map("created_at")
@@ -66,7 +70,22 @@ model ParticipantRecord {
 
   @@index([sessionId])
   @@index([trackingToken])
+  @@index([prolificPid])
+  @@unique([prolificStudyId, prolificSessionId])
   @@map("participants")
+}
+
+model ProlificArrivalRecord {
+  id                  String   @id @default(uuid())
+  prolificPid         String   @map("prolific_pid")
+  prolificStudyId     String   @map("prolific_study_id")
+  prolificSessionId   String   @map("prolific_session_id")
+  participantRecordId String?  @map("participant_record_id")
+  arrivedAt           DateTime @default(now()) @map("arrived_at")
+
+  @@unique([prolificStudyId, prolificSessionId])
+  @@index([prolificPid])
+  @@map("prolific_arrivals")
 }
 
 model SurveyRecord {

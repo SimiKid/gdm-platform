@@ -25,7 +25,7 @@ describe("Recruiting", () => {
     const onEnter = vi.fn();
     render(<Recruiting onEnter={onEnter} />);
     await userEvent.click(screen.getByText("Start"));
-    expect(onEnter).toHaveBeenCalledWith("kept-token", undefined);
+    expect(onEnter).toHaveBeenCalledWith("kept-token", undefined, undefined);
   });
 
   it("reads the tracking token from ?p= and enters the flow directly", () => {
@@ -39,5 +39,39 @@ describe("Recruiting", () => {
     expect(onEnter).toHaveBeenCalledWith("abc123", "private-llm");
     // token stripped from the URL
     expect(window.location.search).toBe("?conditionId=private-llm");
+  });
+
+  it("captures all Prolific IDs and strips them from the visible URL", () => {
+    const pid = "aaaaaaaaaaaaaaaaaaaaaaaa";
+    const studyId = "bbbbbbbbbbbbbbbbbbbbbbbb";
+    const sessionId = "cccccccccccccccccccccccc";
+    window.history.replaceState(
+      {},
+      "",
+      `/?PROLIFIC_PID=${pid}&STUDY_ID=${studyId}&SESSION_ID=${sessionId}`,
+    );
+    const onEnter = vi.fn();
+    render(<Recruiting onEnter={onEnter} />);
+
+    expect(onEnter).toHaveBeenCalledWith(
+      `prolific:${studyId}:${sessionId}`,
+      undefined,
+      { participantId: pid, studyId, sessionId },
+    );
+    expect(window.location.search).toBe("");
+    expect(sessionStorage.getItem("gdm-prolific-identity")).toContain(pid);
+  });
+
+  it("rejects an incomplete Prolific link instead of minting a generic token", () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/?PROLIFIC_PID=aaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    const onEnter = vi.fn();
+    render(<Recruiting onEnter={onEnter} />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent(/incomplete/i);
+    expect(onEnter).not.toHaveBeenCalled();
   });
 });

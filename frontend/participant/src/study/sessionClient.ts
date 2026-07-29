@@ -1,7 +1,11 @@
 import type {
+  CompleteParticipantResponse,
   OpenSessionRequest,
   OpenSessionResponse,
+  ProlificIdentity,
+  ProlificResumeResponse,
   PublicSession,
+  RecordProlificArrivalResponse,
   StudySettings,
   SubmitSurveyRequest,
 } from "@gdm/shared";
@@ -16,6 +20,14 @@ import type {
  * for the real local Synapse.
  */
 export interface SessionManagerClient {
+  /** Persist Prolific identity as soon as the external study opens. */
+  recordProlificArrival(
+    prolific: ProlificIdentity,
+  ): Promise<RecordProlificArrivalResponse>;
+  /** Restore a previously claimed Prolific seat after closing/reopening. */
+  resumeProlific(
+    prolific: ProlificIdentity,
+  ): Promise<ProlificResumeResponse | null>;
   /** Assign a condition & session for a validated participant (Waiting Room). */
   openSession(req: OpenSessionRequest): Promise<OpenSessionResponse>;
   /** Poll a session for its live participant count and roomId once ready. */
@@ -24,6 +36,11 @@ export interface SessionManagerClient {
   submitSurvey(req: SubmitSurveyRequest): Promise<void>;
   /** Mark the session completed when the discussion timer ends. */
   completeSession(id: string): Promise<void>;
+  /** Mark this participant complete after their exit survey was saved. */
+  completeParticipant(
+    sessionId: string,
+    participantId: string,
+  ): Promise<CompleteParticipantResponse>;
   /** Study-wide settings, e.g. the researcher-set compensation link. */
   getStudySettings(): Promise<StudySettings>;
 }
@@ -37,6 +54,26 @@ const API_BASE =
 
 /** Real implementation — enabled once the Session Manager is running. */
 export const httpSessionManager: SessionManagerClient = {
+  async recordProlificArrival(prolific) {
+    const res = await fetch(`${API_BASE}/prolific/arrivals`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prolific }),
+    });
+    if (!res.ok) {
+      throw new Error(`recordProlificArrival failed: ${res.status}`);
+    }
+    return (await res.json()) as RecordProlificArrivalResponse;
+  },
+  async resumeProlific(prolific) {
+    const res = await fetch(`${API_BASE}/prolific/resume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prolific }),
+    });
+    if (!res.ok) throw new Error(`resumeProlific failed: ${res.status}`);
+    return (await res.json()) as ProlificResumeResponse | null;
+  },
   async openSession(req) {
     const res = await fetch(`${API_BASE}/sessions`, {
       method: "POST",
@@ -64,6 +101,16 @@ export const httpSessionManager: SessionManagerClient = {
       method: "POST",
     });
     if (!res.ok) throw new Error(`completeSession failed: ${res.status}`);
+  },
+  async completeParticipant(sessionId, participantId) {
+    const res = await fetch(
+      `${API_BASE}/sessions/${sessionId}/participants/${participantId}/complete`,
+      { method: "POST" },
+    );
+    if (!res.ok) {
+      throw new Error(`completeParticipant failed: ${res.status}`);
+    }
+    return (await res.json()) as CompleteParticipantResponse;
   },
   async getStudySettings() {
     const res = await fetch(`${API_BASE}/settings`);

@@ -1,5 +1,9 @@
 import { useState } from "react";
-import type { PublicSession, Survey } from "@gdm/shared";
+import type {
+  CompleteParticipantResponse,
+  PublicSession,
+  Survey,
+} from "@gdm/shared";
 import { httpSessionManager } from "../study/sessionClient";
 import StudyShell from "./StudyShell";
 import RankingBoard from "./RankingBoard";
@@ -19,7 +23,7 @@ interface Props {
   /** The group's final ranking order, used as the pre-filled default. */
   groupRanking?: string[];
   /** Called once the exit survey is submitted and the session is completed. */
-  onDone: () => void;
+  onDone: (completion: CompleteParticipantResponse) => void;
 }
 
 /**
@@ -58,7 +62,11 @@ export default function ExitSurvey({ session, participantId, groupRanking, onDon
         kind: "exit",
         survey,
       });
-      await httpSessionManager.completeSession(session.id);
+      const completion = await httpSessionManager.completeParticipant(
+        session.id,
+        participantId,
+      );
+      onDone(completion);
     } catch {
       // These answers are the primary post-discussion measure — never drop
       // them silently. Keep the participant here and let them retry.
@@ -66,7 +74,6 @@ export default function ExitSurvey({ session, participantId, groupRanking, onDon
       setSubmitting(false);
       return;
     }
-    onDone();
   }
 
   const allRanked = ranked.length === items.length;

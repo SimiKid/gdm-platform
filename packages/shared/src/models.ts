@@ -21,12 +21,33 @@ export interface Survey {
   submittedAt: string; // ISO 8601
 }
 
+/** Prolific identifiers appended to the external study URL. */
+export interface ProlificIdentity {
+  /** Pseudonymous participant identifier (`PROLIFIC_PID`). */
+  participantId: string;
+  /** Prolific study identifier (`STUDY_ID`). */
+  studyId: string;
+  /** Unique submission identifier (`SESSION_ID`). */
+  sessionId: string;
+}
+
+/** First server-side contact from a Prolific submission. */
+export interface ProlificArrival extends ProlificIdentity {
+  arrivedAt: string;
+  /** Set once the submission claims a seat in a study session. */
+  participantRecordId?: string;
+}
+
 /** A member of a hiring committee taking part in a study session. */
 export interface Participant {
   id: string;
   name: string;
   /** Per-participant tracking URL token (the "individual URL" in the wireframe). */
   trackingToken: string;
+  /** Present when the participant entered through Prolific. */
+  prolific?: ProlificIdentity;
+  /** Individual completion, separate from the group session lifecycle. */
+  completedAt?: string;
   entrySurvey?: Survey;
   exitSurvey?: Survey;
 }

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   Logger,
@@ -7,6 +8,7 @@ import {
 import { randomUUID } from "node:crypto";
 import type {
   CheckpointSessionRequest,
+  CompleteParticipantResponse,
   Condition,
   ContributionAggregate,
   ExportBundle,
@@ -14,6 +16,9 @@ import type {
   OpenSessionRequest,
   OpenSessionResponse,
   Participant,
+  ProlificArrival,
+  ProlificIdentity,
+  ProlificResumeResponse,
   PublicSession,
   Session,
   SessionSummary,
@@ -66,11 +71,23 @@ export class SessionsService {
 
   private async doOpenSession(req: OpenSessionRequest): Promise<OpenSessionResponse> {
     await this.abortStaleWaiting();
+    this.validateProlificIdentity(req.prolific);
+    if (req.prolific) await this.store.recordProlificArrival(req.prolific);
 
     // A token that already holds a seat gets that seat back (browser refresh,
     // duplicate tab) instead of claiming a second slot and ghosting the first.
-    const existing = await this.findByTrackingToken(req.trackingToken);
-    if (existing) return this.rejoinResponse(existing.session, existing.participant);
+    const existing = req.prolific
+      ? await this.findByProlificSession(req.prolific)
+      : await this.findByTrackingToken(req.trackingToken);
+    if (existing) {
+      if (req.prolific) {
+        await this.store.linkProlificArrival(
+          req.prolific,
+          existing.participant.id,
+        );
+      }
+      return this.rejoinResponse(existing.session, existing.participant);
+    }
 
     const session =
       (await this.findForming(req.conditionId)) ??
@@ -81,10 +98,14 @@ export class SessionsService {
       id: randomUUID(),
       name: req.participantName,
       trackingToken: req.trackingToken,
+      prolific: req.prolific,
     };
     session.participants.push(participant);
     await this.store.saveSession(session);
     await this.store.setParticipantCreds(participant.id, creds);
+    if (req.prolific) {
+      await this.store.linkProlificArrival(req.prolific, participant.id);
+    }
 
     if (session.participants.length >= session.condition.groupSize) {
       await this.provision(session);
@@ -138,6 +159,79 @@ export class SessionsService {
       if (participant) return { session, participant };
     }
     return undefined;
+  }
+
+  /** Find the exact Prolific submission even if the client token changes. */
+  private async findByProlificSession(
+    identity: ProlificIdentity,
+  ): Promise<{ session: Session; participant: Participant } | undefined> {
+    for (const session of await this.store.allSessions()) {
+      if (session.status === "aborted") continue;
+      const participant = session.participants.find(
+        (p) =>
+          p.prolific?.studyId === identity.studyId &&
+          p.prolific.sessionId === identity.sessionId,
+      );
+      if (!participant) continue;
+      if (participant.prolific?.participantId !== identity.participantId) {
+        throw new ConflictException(
+          "This Prolific submission belongs to a different participant",
+        );
+      }
+      return { session, participant };
+    }
+    return undefined;
+  }
+
+  /**
+   * Basic validation for the unsigned URL-parameter integration.
+   * TODO(Prolific): if the workspace supports Secure external URLs, verify the
+   * Prolific JWT here (or validate SESSION_ID via their API) before launch.
+   */
+  private validateProlificIdentity(identity?: ProlificIdentity): void {
+    if (!identity) return;
+    const idPattern = /^[a-f0-9]{24}$/i;
+    if (
+      !idPattern.test(identity.participantId) ||
+      !idPattern.test(identity.studyId) ||
+      !idPattern.test(identity.sessionId)
+    ) {
+      throw new BadRequestException("Invalid Prolific identifiers");
+    }
+    const expectedStudyId = process.env.PROLIFIC_STUDY_ID?.trim();
+    if (expectedStudyId && identity.studyId !== expectedStudyId) {
+      throw new BadRequestException("Unexpected Prolific study");
+    }
+  }
+
+  async recordProlificArrival(
+    identity: ProlificIdentity,
+  ): Promise<ProlificArrival> {
+    this.validateProlificIdentity(identity);
+    return this.store.recordProlificArrival(identity);
+  }
+
+  /** Restore a Prolific submission after the original browser tab was closed. */
+  async resumeProlific(
+    identity: ProlificIdentity,
+  ): Promise<ProlificResumeResponse | null> {
+    this.validateProlificIdentity(identity);
+    const existing = await this.findByProlificSession(identity);
+    if (!existing) return null;
+
+    const openSession = await this.rejoinResponse(
+      existing.session,
+      existing.participant,
+    );
+    const stage =
+      existing.participant.completedAt || existing.participant.exitSurvey
+        ? "done"
+        : existing.session.status === "completed"
+          ? "exit"
+          : existing.session.roomId
+            ? "chat"
+            : "waiting";
+    return { stage, openSession };
   }
 
   /** Hand a returning participant their existing seat and credentials. */
@@ -380,6 +474,10 @@ export class SessionsService {
               participantId: participant.id,
               participantName: participant.name,
               trackingToken: participant.trackingToken,
+              prolificPid: participant.prolific?.participantId ?? "",
+              prolificStudyId: participant.prolific?.studyId ?? "",
+              prolificSessionId: participant.prolific?.sessionId ?? "",
+              participantCompletedAt: participant.completedAt ?? "",
               kind,
               submittedAt: survey?.submittedAt ?? "",
               answers: survey?.answers ?? {},
@@ -398,6 +496,10 @@ export class SessionsService {
         "participant_id",
         "participant_name",
         "tracking_token",
+        "prolific_pid",
+        "prolific_study_id",
+        "prolific_session_id",
+        "participant_completed_at",
         "kind",
         "submitted_at",
         "answers_json",
@@ -409,6 +511,10 @@ export class SessionsService {
         s.participantId,
         s.participantName,
         s.trackingToken,
+        s.prolificPid,
+        s.prolificStudyId,
+        s.prolificSessionId,
+        s.participantCompletedAt,
         s.kind,
         s.submittedAt,
         JSON.stringify(s.answers),
@@ -485,6 +591,38 @@ export class SessionsService {
       this.log.log(`session ${session.id} completed (${session.condition.name})`);
     }
     return session;
+  }
+
+  /**
+   * Record compensation eligibility per participant, not per group.
+   * Idempotent so a refresh on the debriefing screen can retrieve the URL.
+   */
+  async completeParticipant(
+    sessionId: string,
+    participantId: string,
+  ): Promise<CompleteParticipantResponse> {
+    const session = await this.getSession(sessionId);
+    const participant = session.participants.find((p) => p.id === participantId);
+    if (!participant) {
+      throw new NotFoundException(`Unknown participant ${participantId}`);
+    }
+    if (!participant.exitSurvey) {
+      throw new ConflictException(
+        "The exit survey must be submitted before completion",
+      );
+    }
+    if (!participant.completedAt) {
+      participant.completedAt = new Date().toISOString();
+      await this.store.saveSession(session);
+      this.log.log(
+        `participant ${participant.id} completed session ${session.id}`,
+      );
+    }
+    const settings = await this.store.getStudySettings();
+    return {
+      completedAt: participant.completedAt,
+      compensationUrl: settings.compensationUrl,
+    };
   }
 
   /** Persist live state without changing the session lifecycle. */

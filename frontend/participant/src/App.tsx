@@ -7,9 +7,18 @@ import Chat from "./components/Chat";
 import DebriefingPage from "./components/DebriefingPage";
 import { createClient, ClientEvent } from "matrix-js-sdk";
 import type { MatrixClient } from "matrix-js-sdk";
-import type { PublicSession, Survey as SurveyData } from "@gdm/shared";
+import type {
+  ProlificIdentity,
+  PublicSession,
+  Survey as SurveyData,
+} from "@gdm/shared";
 import { httpSessionManager } from "./study/sessionClient";
-import { loadProgress, updateStage, TOKEN_STORAGE_KEY } from "./study/progress";
+import {
+  loadProgress,
+  saveProgress,
+  updateStage,
+  TOKEN_STORAGE_KEY,
+} from "./study/progress";
 import type { StudyProgress } from "./study/progress";
 import "./App.css";
 
@@ -54,14 +63,97 @@ async function startMatrixClient(matrix: {
 export default function App() {
   const [stage, setStage] = useState<Stage>("recruiting");
   const [trackingToken, setTrackingToken] = useState<string | null>(null);
+  const [prolific, setProlific] = useState<ProlificIdentity | undefined>();
   const [conditionId, setConditionId] = useState<string | undefined>();
   const [entrySurvey, setEntrySurvey] = useState<SurveyData | null>(null);
   const [session, setSession] = useState<PublicSession | null>(null);
   const [participantId, setParticipantId] = useState("");
   const [client, setClient] = useState<MatrixClient | null>(null);
   const [groupRanking, setGroupRanking] = useState<string[]>([]);
+  const [compensationUrl, setCompensationUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [booting, setBooting] = useState(true);
+
+  async function enterStudy(
+    token: string,
+    forcedConditionId?: string,
+    prolificIdentity?: ProlificIdentity,
+  ) {
+    try {
+      if (prolificIdentity) {
+        setBooting(true);
+        await httpSessionManager.recordProlificArrival(prolificIdentity);
+        const resumed =
+          await httpSessionManager.resumeProlific(prolificIdentity);
+        if (resumed) {
+          const { openSession, stage: resumedStage } = resumed;
+          const {
+            session: resumedSession,
+            participantId: resumedParticipantId,
+            matrix,
+          } = openSession;
+          setTrackingToken(token);
+          setConditionId(forcedConditionId);
+          setProlific(prolificIdentity);
+          setSession(resumedSession);
+          setParticipantId(resumedParticipantId);
+
+          if (resumedStage === "waiting") {
+            saveProgress({
+              stage: "waiting",
+              sessionId: resumedSession.id,
+              participantId: resumedParticipantId,
+              matrix,
+            });
+            setStage("waiting");
+          } else if (resumedStage === "chat") {
+            const matrixClient = await startMatrixClient(matrix);
+            saveProgress({
+              stage: "chat",
+              sessionId: resumedSession.id,
+              participantId: resumedParticipantId,
+              matrix,
+            });
+            setClient(matrixClient);
+            setStage("chat");
+          } else if (resumedStage === "exit") {
+            setGroupRanking(resumedSession.ranking.order);
+            saveProgress({
+              stage: "exit",
+              sessionId: resumedSession.id,
+              participantId: resumedParticipantId,
+              matrix,
+            });
+            setStage("exit");
+          } else {
+            const completion = await httpSessionManager.completeParticipant(
+              resumedSession.id,
+              resumedParticipantId,
+            );
+            setCompensationUrl(completion.compensationUrl);
+            saveProgress({
+              stage: "done",
+              sessionId: resumedSession.id,
+              participantId: resumedParticipantId,
+              matrix,
+            });
+            setStage("done");
+          }
+          return;
+        }
+      }
+      setTrackingToken(token);
+      setConditionId(forcedConditionId);
+      setProlific(prolificIdentity);
+      setStage("survey");
+    } catch {
+      setError(
+        "We could not validate your Prolific study link. Please return to Prolific and try again.",
+      );
+    } finally {
+      setBooting(false);
+    }
+  }
 
   // Boot order: dev fast-path (?token=), then resume a refreshed study tab
   // from persisted progress, else start fresh at recruiting.
@@ -90,6 +182,18 @@ export default function App() {
     try {
       switch (progress.stage) {
         case "done":
+          setParticipantId(progress.participantId);
+          // Idempotently retrieve the completion URL again after a refresh.
+          // Legacy/generic sessions fall back to the public study setting.
+          try {
+            const completion = await httpSessionManager.completeParticipant(
+              progress.sessionId,
+              progress.participantId,
+            );
+            setCompensationUrl(completion.compensationUrl);
+          } catch {
+            /* keep the debriefing fallback */
+          }
           setStage("done");
           break;
         case "waiting": {
@@ -206,11 +310,9 @@ export default function App() {
     case "recruiting":
       return (
         <Recruiting
-          onEnter={(t, forcedConditionId) => {
-            setTrackingToken(t);
-            setConditionId(forcedConditionId);
-            setStage("survey");
-          }}
+          onEnter={(t, forcedConditionId, prolificIdentity) =>
+            void enterStudy(t, forcedConditionId, prolificIdentity)
+          }
         />
       );
 
@@ -229,6 +331,7 @@ export default function App() {
       return (
         <WaitingRoom
           trackingToken={trackingToken}
+          prolific={prolific}
           conditionId={conditionId}
           entrySurvey={entrySurvey}
           onReady={(readyClient, readySession, readyParticipantId) => {
@@ -248,7 +351,8 @@ export default function App() {
           session={session}
           participantId={participantId}
           groupRanking={groupRanking}
-          onDone={() => {
+          onDone={(completion) => {
+            setCompensationUrl(completion.compensationUrl);
             updateStage("done");
             setStage("done");
           }}
@@ -256,7 +360,7 @@ export default function App() {
       );
 
     case "done":
-      return <DebriefingPage />;
+      return <DebriefingPage completionUrl={compensationUrl} />;
 
     default:
       return null;

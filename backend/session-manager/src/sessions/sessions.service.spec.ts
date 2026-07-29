@@ -24,12 +24,19 @@ function open() {
   return { trackingToken: `tt-${tokenCounter}`, participantName: "" };
 }
 
+const prolific = {
+  participantId: "aaaaaaaaaaaaaaaaaaaaaaaa",
+  studyId: "bbbbbbbbbbbbbbbbbbbbbbbb",
+  sessionId: "cccccccccccccccccccccccc",
+};
+
 describe("SessionsService (session-manager)", () => {
   let store: StoreService;
   let matrix: MatrixService;
   let svc: SessionsService;
 
   beforeEach(() => {
+    delete process.env.PROLIFIC_STUDY_ID;
     store = new StoreService();
     matrix = fakeMatrix();
     svc = new SessionsService(store, matrix);
@@ -67,6 +74,46 @@ describe("SessionsService (session-manager)", () => {
       conditionId: "private-llm",
     });
     expect(res.session.condition.id).toBe("private-llm");
+  });
+
+  it("records and links a Prolific arrival without claiming duplicate seats", async () => {
+    const arrival = await svc.recordProlificArrival(prolific);
+    const again = await svc.recordProlificArrival(prolific);
+    expect(again.arrivedAt).toBe(arrival.arrivedAt);
+
+    const first = await svc.openSession({
+      trackingToken: "prolific-submission",
+      participantName: "",
+      prolific,
+    });
+    const duplicate = await svc.openSession({
+      trackingToken: "changed-client-token",
+      participantName: "",
+      prolific,
+    });
+    expect(duplicate.participantId).toBe(first.participantId);
+    expect((await store.listProlificArrivals())[0]).toMatchObject({
+      ...prolific,
+      participantRecordId: first.participantId,
+    });
+    expect((await svc.getSession(first.session.id)).participants[0].prolific).toEqual(
+      prolific,
+    );
+    await expect(svc.resumeProlific(prolific)).resolves.toMatchObject({
+      stage: "waiting",
+      openSession: { participantId: first.participantId },
+    });
+  });
+
+  it("rejects malformed or unexpected Prolific identifiers", async () => {
+    await expect(
+      svc.recordProlificArrival({ ...prolific, participantId: "not-an-id" }),
+    ).rejects.toThrow(/invalid prolific/i);
+
+    process.env.PROLIFIC_STUDY_ID = "dddddddddddddddddddddddd";
+    await expect(svc.recordProlificArrival(prolific)).rejects.toThrow(
+      /unexpected prolific study/i,
+    );
   });
 
   it("provisions the room once the group is full and notifies the chat service", async () => {
@@ -315,6 +362,38 @@ describe("SessionsService (session-manager)", () => {
     expect(first.status).toBe("completed");
     const second = await svc.completeSession(res.session.id);
     expect(second.completedAt).toBe(first.completedAt);
+  });
+
+  it("completes an individual only after their exit survey is stored", async () => {
+    const res = await svc.openSession(open());
+    await expect(
+      svc.completeParticipant(res.session.id, res.participantId),
+    ).rejects.toThrow(/exit survey/i);
+
+    await svc.submitSurvey({
+      sessionId: res.session.id,
+      participantId: res.participantId,
+      kind: "exit",
+      survey: { answers: { satisfaction: 7 }, submittedAt: "now" },
+    });
+    await store.updateStudySettings({
+      compensationUrl:
+        "https://app.prolific.com/submissions/complete?cc=TEST1234",
+    });
+
+    const first = await svc.completeParticipant(
+      res.session.id,
+      res.participantId,
+    );
+    const second = await svc.completeParticipant(
+      res.session.id,
+      res.participantId,
+    );
+    expect(second.completedAt).toBe(first.completedAt);
+    expect(first.compensationUrl).toContain("app.prolific.com");
+    expect(
+      (await svc.getSession(res.session.id)).participants[0].completedAt,
+    ).toBe(first.completedAt);
   });
 
   it("exports sessions as JSON bundle and CSV summary", async () => {

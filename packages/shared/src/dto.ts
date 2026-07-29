@@ -17,6 +17,8 @@ import type {
   Condition,
   ContributionClassification,
   Message,
+  ProlificArrival,
+  ProlificIdentity,
   Ranking,
   Session,
   SessionStatus,
@@ -31,9 +33,17 @@ export interface OpenSessionRequest {
   /** The per-participant tracking token from the individual URL. */
   trackingToken: string;
   participantName: string;
+  /** Prolific URL identity. Omitted for generic links and internal pilots. */
+  prolific?: ProlificIdentity;
   /** Pilot/testing only: force this participant into a specific condition. */
   conditionId?: string;
 }
+
+export interface RecordProlificArrivalRequest {
+  prolific: ProlificIdentity;
+}
+
+export type RecordProlificArrivalResponse = ProlificArrival;
 
 /**
  * A participant as exposed to *other* participants: identity only, never the
@@ -70,11 +80,23 @@ export interface OpenSessionResponse {
   };
 }
 
+export interface ProlificResumeResponse {
+  stage: "waiting" | "chat" | "exit" | "done";
+  openSession: OpenSessionResponse;
+}
+
 export interface SubmitSurveyRequest {
   sessionId: string;
   participantId: string;
   kind: "entry" | "exit";
   survey: Survey;
+}
+
+/** Result returned only after this participant's exit survey is persisted. */
+export interface CompleteParticipantResponse {
+  completedAt: string;
+  /** Prolific completion URL (or generic payment URL) configured by the researcher. */
+  compensationUrl: string;
 }
 
 // ── Admin Dashboard -> Session Manager ───────────────────────────
