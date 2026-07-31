@@ -137,11 +137,24 @@ for (const scenario of SCENARIOS) {
       expect(detail.chat.messages.map((message) => message.text)).toEqual(
         expect.arrayContaining([DOMINANT_MESSAGE, "ok"]),
       );
-      expect(
-        detail.chat.messages.some((message) =>
-          message.text.includes(scenario.text),
-        ),
-      ).toBe(false);
+      // Bot nudges are part of the research chat log, carrying the recipient
+      // for private delivery (and never counting toward contribution).
+      const recordedNudge = detail.chat.messages.find((message) =>
+        message.text.includes(scenario.text),
+      );
+      expect(recordedNudge).toBeDefined();
+      if (scenario.audience === "private") {
+        expect(recordedNudge!.recipientId).toBe(
+          group.members[0].matrix.userId,
+        );
+      } else {
+        expect(recordedNudge!.recipientId ?? null).toBeNull();
+      }
+      // Every evaluated window leaves a record; both nudges link to one.
+      const nudgedWindows = (detail.windowEvaluations ?? []).filter(
+        (item) => item.outcome === "nudged",
+      );
+      expect(nudgedWindows.length).toBeGreaterThanOrEqual(2);
     } finally {
       if (group) await closeGroup(group);
       await deactivateCondition(request, condition);

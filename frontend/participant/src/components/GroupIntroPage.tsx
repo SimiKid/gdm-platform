@@ -20,7 +20,7 @@ export default function GroupIntroPage({ onJoin }: Props) {
       <ul>
         <li>
           Reach your decisions by consensus: the group ranking should reflect
-          an agreement all members can support — not a simple vote or averaging
+          an agreement all members can support, not a simple vote or averaging
           of individual answers.
         </li>
         <li>

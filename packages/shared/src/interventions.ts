@@ -127,6 +127,57 @@ export interface InterventionLog {
   message: string;
 }
 
+/**
+ * Why a contribution-window boundary did or did not produce a nudge.
+ *
+ * - `nudged` — a nudge fired; `interventionId` links the InterventionLog.
+ * - `no-target` — split computed, nobody over the threshold.
+ * - `grace-suppressed` — someone was over the threshold but every candidate
+ *   was inside the invite grace period.
+ * - `baseline-suppressed` — baseline arm: a candidate existed but the
+ *   audience is "none", so nothing was delivered (counterfactual record).
+ * - `warm-up` / `wrap-up` — boundary inside a protected phase; no split.
+ * - `too-few-participants` — fewer than 2 joined participants; no split.
+ */
+export type WindowOutcome =
+  | "nudged"
+  | "no-target"
+  | "grace-suppressed"
+  | "baseline-suppressed"
+  | "warm-up"
+  | "wrap-up"
+  | "too-few-participants";
+
+/**
+ * One record per evaluated contribution-window boundary, fired or not.
+ * Interventions only capture windows that produced a nudge; these capture
+ * every boundary, so dominance dynamics are comparable across all arms —
+ * including baseline, which never delivers a nudge.
+ */
+export interface WindowEvaluation {
+  id: string;
+  sessionId: string;
+  conditionId: string;
+  /** Detection arm: "primary", or "a"/"b" in comparison mode. */
+  arm: string;
+  /** 0-based index on the session's window grid (grid starts at warm-up end). */
+  windowIndex: number;
+  windowStart: string; // ISO 8601
+  windowEnd: string; // ISO 8601
+  contributionWindowMinutes: number;
+  llmMode: "off" | "active";
+  threshold: number;
+  outcome: WindowOutcome;
+  /** Per-participant split over this window; [] when no split was computed. */
+  contributionSplit: ContributionShare[];
+  /** Members over the threshold BEFORE grace filtering (would-have-fired). */
+  candidateTargets: InterventionTarget[];
+  /** Highest dominance score in the split; null when no split was computed. */
+  maxDominanceScore: number | null;
+  /** Links the InterventionLog when outcome is "nudged". */
+  interventionId: string | null;
+}
+
 export const DEFAULT_INTERVENTION_CONFIG: InterventionConfig = {
   interventionMode: "public",
   contributionThreshold: 0.4,

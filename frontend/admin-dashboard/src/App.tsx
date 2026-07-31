@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ConditionProgress, SessionSummary } from "@gdm/shared";
+import type {
+  ConditionProgress,
+  RoundsResponse,
+  SessionSummary,
+} from "@gdm/shared";
 import Overview from "./components/Overview";
+import Results from "./components/Results";
 import Settings from "./components/Settings";
 import Testing from "./components/Testing";
 import { apiFetch, getAdminToken, setAdminToken } from "./api";
@@ -10,23 +15,29 @@ export { API_BASE, PARTICIPANT_BASE } from "./api";
 /** How often the dashboard refreshes itself (drives the "Live" indicator). */
 const POLL_MS = 5000;
 
-type View = "overview" | "settings" | "testing";
+type View = "overview" | "results" | "settings" | "testing";
 
 export default function App() {
   const [view, setView] = useState<View>("overview");
   const [rows, setRows] = useState<ConditionProgress[]>([]);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [rounds, setRounds] = useState<RoundsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   // The backend rejected our admin token (or we don't have one yet).
   const [needsToken, setNeedsToken] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [progressRes, sessionsRes] = await Promise.all([
+      const [progressRes, sessionsRes, roundsRes] = await Promise.all([
         apiFetch("/conditions/progress"),
         apiFetch("/sessions"),
+        apiFetch("/rounds"),
       ]);
-      if (progressRes.status === 401 || sessionsRes.status === 401) {
+      if (
+        progressRes.status === 401 ||
+        sessionsRes.status === 401 ||
+        roundsRes.status === 401
+      ) {
         setNeedsToken(true);
         return;
       }
@@ -36,9 +47,13 @@ export default function App() {
       if (!sessionsRes.ok) {
         throw new Error(`Could not load sessions (${sessionsRes.status})`);
       }
+      if (!roundsRes.ok) {
+        throw new Error(`Could not load rounds (${roundsRes.status})`);
+      }
       setNeedsToken(false);
       setRows((await progressRes.json()) as ConditionProgress[]);
       setSessions((await sessionsRes.json()) as SessionSummary[]);
+      setRounds((await roundsRes.json()) as RoundsResponse);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load dashboard");
@@ -60,7 +75,7 @@ export default function App() {
       <header className="topbar">
         <div>
           <h1>Study Admin</h1>
-          <p>Group decision-making study — tracking, sessions, and exports.</p>
+          <p>Group decision-making study: tracking, sessions, and exports.</p>
         </div>
         <nav className="tabs" aria-label="Views">
           <button
@@ -69,6 +84,13 @@ export default function App() {
             onClick={() => setView("overview")}
           >
             Overview
+          </button>
+          <button
+            type="button"
+            className={view === "results" ? "tab active" : "tab"}
+            onClick={() => setView("results")}
+          >
+            Results
           </button>
           <button
             type="button"
@@ -89,9 +111,17 @@ export default function App() {
 
       {error && <p className="error">{error}</p>}
 
-      {view === "overview" && <Overview rows={rows} sessions={sessions} />}
+      {view === "overview" && (
+        <Overview rows={rows} sessions={sessions} rounds={rounds} />
+      )}
+      {view === "results" && <Results rounds={rounds} />}
       {view === "settings" && (
-        <Settings rows={rows} onSaved={() => void load()} />
+        <Settings
+          rows={rows}
+          onSaved={() => void load()}
+          rounds={rounds}
+          lobbyCount={sessions.filter((s) => s.status === "waiting").length}
+        />
       )}
       {view === "testing" && (
         <Testing

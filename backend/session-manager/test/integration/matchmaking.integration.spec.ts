@@ -214,6 +214,55 @@ describe("matchmaking & lifecycle (integration)", () => {
       .expect(409);
   });
 
+  it("study rounds: start aborts lobbies, resets progress, and round-scopes matchmaking", async () => {
+    // Lazy Round 1 exists even after a TRUNCATE.
+    const initial = (await request(t.http).get("/api/rounds").expect(200))
+      .body as { currentRound: number; rounds: unknown[] };
+    expect(initial.currentRound).toBe(1);
+
+    // A half-filled round-1 lobby…
+    const first = await openSession(t, "R1", "baseline");
+    expect(first.session.roundId).toBe(1);
+
+    const started = (
+      await request(t.http)
+        .post("/api/rounds")
+        .send({ label: "wave 2" })
+        .expect(201)
+    ).body as { round: { number: number; label: string }; abortedWaitingSessions: number };
+    expect(started.round).toMatchObject({ number: 2, label: "wave 2" });
+    expect(started.abortedWaitingSessions).toBe(1);
+
+    // …is aborted, and the next joiner opens a fresh round-2 session.
+    const next = await openSession(t, "R2", "baseline");
+    expect(next.session.id).not.toBe(first.session.id);
+    expect(next.session.roundId).toBe(2);
+
+    // Progress counts the current round only: nothing completed yet.
+    const progress = (
+      await request(t.http).get("/api/conditions/progress").expect(200)
+    ).body as Array<{ condition: { id: string }; completed: number }>;
+    expect(progress.every((row) => row.completed === 0)).toBe(true);
+
+    // Round ids survive Postgres round-trips across an app restart.
+    await t.close();
+    t = await createTestApp();
+    const rounds = (await request(t.http).get("/api/rounds").expect(200))
+      .body as {
+      currentRound: number;
+      rounds: Array<{ number: number; label: string; endedAt?: string }>;
+    };
+    expect(rounds.currentRound).toBe(2);
+    expect(rounds.rounds).toHaveLength(2);
+    expect(rounds.rounds[0].endedAt).toBeDefined();
+    const reloaded = (
+      await request(t.http)
+        .get(`/api/admin/sessions/${next.session.id}`)
+        .expect(200)
+    ).body as { roundId: number };
+    expect(reloaded.roundId).toBe(2);
+  });
+
   it("persists condition edits across an app restart", async () => {
     const conditions = (await request(t.http).get("/api/conditions").expect(200))
       .body as Condition[];
