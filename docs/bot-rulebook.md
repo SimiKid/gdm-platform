@@ -208,7 +208,9 @@ Every intervention is recorded as an `InterventionLog` containing:
 - Target(s) and quiet member(s) identified
 - The exact message text sent
 
-These logs are visible in the admin dashboard's **Intervention Audit** section and included in the JSON and CSV exports (`/api/export/sessions`, `/api/export/sessions.csv`).
+In addition, the bot records a **`WindowEvaluation` for every window boundary it reaches** — fired or not. Each carries the window's grid index and time span, the outcome (`nudged`, `no-target`, `grace-suppressed`, `baseline-suppressed`, `warm-up`, `wrap-up`, `too-few-participants`), the full contribution split and over-threshold candidates where a split was computed, and a link to the `InterventionLog` when a nudge fired. Baseline sessions therefore carry the same per-window dominance data as the delivery arms (`baseline-suppressed` marks windows where a nudge *would* have fired). Failed LLM classification requests are recorded as `ClassificationFailure` entries, so classifier coverage is auditable. The bot's own nudge messages are stored in the chat log (with `recipientId` set on private nudges) but never count toward contribution scores.
+
+These records are included in the raw exports (`/api/export/sessions`, `/api/export/interventions`), power the dashboard's **Results** tab, and feed the analysis-ready research exports (`/api/export/windows`, `/api/export/research.zip`) — see `docs/data-export.md`.
 
 ## Meaningfulness Classifier (Rule + LLM Detection Arm)
 

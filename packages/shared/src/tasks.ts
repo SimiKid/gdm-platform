@@ -41,3 +41,27 @@ export const MOON_SURVIVAL: RankingTask = {
     { id: "radio", label: "Solar-powered FM receiver-transmitter" },
   ],
 };
+
+/**
+ * NASA's expert ranking for the moon-survival items (1 = most important).
+ * Used to score individual and group rankings for analysis: the standard
+ * error score is the sum over items of |assigned rank − expert rank|
+ * (0 = perfect agreement, 112 = fully reversed for 15 items).
+ */
+export const MOON_SURVIVAL_EXPERT_RANKING: Record<string, number> = {
+  oxygen: 1,
+  water: 2,
+  map: 3,
+  food: 4,
+  radio: 5,
+  rope: 6,
+  firstaid: 7,
+  parachute: 8,
+  raft: 9,
+  flares: 10,
+  pistols: 11,
+  milk: 12,
+  heater: 13,
+  compass: 14,
+  matches: 15,
+};

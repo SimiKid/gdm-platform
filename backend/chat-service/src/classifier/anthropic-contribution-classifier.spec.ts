@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Message } from "@gdm/shared";
 import { AnthropicContributionClassifier } from "./anthropic-contribution-classifier";
-import type { ClassifierContext } from "./contribution-classifier";
+import {
+  isClassification,
+  type ClassifierContext,
+} from "./contribution-classifier";
 
 afterEach(() => {
   delete process.env.ANTHROPIC_API_KEY;
@@ -135,11 +138,38 @@ describe("AnthropicContributionClassifier", () => {
     expect(result?.prompt).toContain("fourth");
   });
 
-  it("stays silent without an API key", async () => {
+  it("returns a failure record without an API key", async () => {
     const result = await new AnthropicContributionClassifier().classify(
       message("m", "u", "hello"),
       { priorMessages: [], taskItems: [], participantIds: [] },
     );
-    expect(result).toBeNull();
+    expect(isClassification(result)).toBe(false);
+    expect(result).toMatchObject({
+      messageId: "m",
+      senderId: "u",
+      promptVersion: "meaningfulness-v1",
+      error: "missing-api-key",
+    });
+  });
+
+  it("returns a failure record when the API call fails", async () => {
+    process.env.ANTHROPIC_API_KEY = "test-key";
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 500,
+      text: async () => "boom",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await new AnthropicContributionClassifier().classify(
+      message("m9", MEMBERS[0], "hello"),
+      { priorMessages: [], taskItems: [], participantIds: MEMBERS },
+    );
+
+    expect(isClassification(result)).toBe(false);
+    expect(result).toMatchObject({ messageId: "m9", senderId: MEMBERS[0] });
+    if (!isClassification(result)) {
+      expect(result.error).toContain("Anthropic status 500");
+    }
   });
 });

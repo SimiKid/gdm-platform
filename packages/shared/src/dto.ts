@@ -11,9 +11,14 @@
  * lifecycle, surveys, condition config and export.
  */
 
-import type { InterventionLog } from "./interventions.js";
+import type {
+  InterventionLog,
+  InterventionMode,
+  WindowEvaluation,
+} from "./interventions.js";
 import type {
   BehavioralEvent,
+  ClassificationFailure,
   Condition,
   ContributionClassification,
   Message,
@@ -51,6 +56,8 @@ export type PublicSession = Omit<
   | "participants"
   | "behavioralEvents"
   | "contributionClassifications"
+  | "windowEvaluations"
+  | "classificationFailures"
   | "processedEventIds"
   | "runtimeState"
 > & {
@@ -132,6 +139,43 @@ export interface ExportBundle {
   sessions: Session[];
 }
 
+/**
+ * Per-condition descriptives for the dashboard Results tab. Means are
+ * computed over completed sessions only; session counts are broken out by
+ * status. `null` means "no data yet", never zero.
+ */
+export interface ConditionReportSummary {
+  conditionId: string;
+  conditionName: string;
+  interventionMode: InterventionMode;
+  llmMode: "off" | "active";
+  sessionsCompleted: number;
+  sessionsAborted: number;
+  sessionsRunning: number;
+  participants: number;
+  entrySurveys: number;
+  exitSurveys: number;
+  meanGroupRankingError: number | null;
+  meanIndividualRankingError: number | null;
+  meanExitRankingError: number | null;
+  meanSatisfaction: number | null;
+  meanFairness: number | null;
+  meanFeltHeard: number | null;
+  /** Mean over sessions of the SD of contribution shares (0 = equal). */
+  meanShareStdDev: number | null;
+  /** Mean over sessions of the Gini coefficient of contribution scores. */
+  meanShareGini: number | null;
+  nudgesTotal: number;
+  nudgesPerSessionMean: number | null;
+  windowsEvaluated: number;
+  windowsNudged: number;
+}
+
+export interface ReportsSummaryResponse {
+  generatedAt: string;
+  conditions: ConditionReportSummary[];
+}
+
 // ── Real-time (Matrix custom events) ─────────────────────────────
 
 /**
@@ -179,6 +223,10 @@ export interface RuntimeCheckpoint {
   interventions: InterventionLog[];
   behavioralEvents: BehavioralEvent[];
   contributionClassifications: ContributionClassification[];
+  /** Optional: checkpoints written before this field existed omit it. */
+  windowEvaluations?: WindowEvaluation[];
+  /** Optional: checkpoints written before this field existed omit it. */
+  classificationFailures?: ClassificationFailure[];
   processedEventIds: string[];
   ruleState: Record<string, unknown>;
 }
@@ -202,6 +250,8 @@ export interface FinalizeSessionRequest {
   interventions?: InterventionLog[];
   behavioralEvents?: BehavioralEvent[];
   contributionClassifications?: ContributionClassification[];
+  windowEvaluations?: WindowEvaluation[];
+  classificationFailures?: ClassificationFailure[];
   processedEventIds?: string[];
   ruleState?: Record<string, unknown>;
 }

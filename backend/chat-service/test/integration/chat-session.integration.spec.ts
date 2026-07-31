@@ -195,12 +195,25 @@ describe("chat-service ↔ real Synapse (integration)", () => {
       expect.objectContaining({ userId: alice.userId }),
     ]);
     expect(logged.message).toBe(nudge.content.body);
-    // The bot's own nudge is never part of the recorded discussion.
+    // The bot's own nudge is recorded for the research log (real event id,
+    // no recipient on a public nudge) but never counts as discussion.
     expect(call.body.messages.map((m) => m.senderId)).toEqual([
       alice.userId,
       alice.userId,
       berta.userId,
+      nudge.sender,
     ]);
+    expect(call.body.messages.at(-1)).toMatchObject({
+      text: nudge.content.body,
+      recipientId: null,
+    });
+    // Every evaluated window leaves a record; the one boundary here nudged.
+    expect(call.body.windowEvaluations).toHaveLength(1);
+    expect(call.body.windowEvaluations![0]).toMatchObject({
+      outcome: "nudged",
+      interventionId: logged.id,
+      arm: "primary",
+    });
   });
 
   it("sends private nudges with the recipient key, visible in the finalize log", async () => {
@@ -299,7 +312,14 @@ describe("chat-service ↔ real Synapse (integration)", () => {
       "active",
       "off",
     ]);
-    // The comparison bots' own nudges never count as discussion messages.
-    expect(call.body.messages.map((m) => m.senderId)).toEqual([alice.userId]);
+    // The comparison bots' own nudges are recorded for the research log but
+    // never count toward contribution: Alice's message plus both bot nudges.
+    const senderIds = call.body.messages.map((m) => m.senderId);
+    expect(senderIds[0]).toBe(alice.userId);
+    expect(senderIds.filter((id) => /_bot_[ab]_/.test(id))).toHaveLength(2);
+    // Both arms evaluated the boundary independently.
+    expect(
+      call.body.windowEvaluations?.map((item) => item.arm).sort(),
+    ).toEqual(["a", "b"]);
   });
 });

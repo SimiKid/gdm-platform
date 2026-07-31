@@ -1,4 +1,8 @@
-import type { ContributionClassification, Message } from "@gdm/shared";
+import type {
+  ClassificationFailure,
+  ContributionClassification,
+  Message,
+} from "@gdm/shared";
 
 /** Everything the meaningfulness classifier needs besides the message itself. */
 export interface ClassifierContext {
@@ -11,8 +15,19 @@ export interface ClassifierContext {
 }
 
 export interface ContributionClassifier {
+  /**
+   * Classify one message. Never throws: on API failure it returns a
+   * {@link ClassificationFailure} so coverage gaps are part of the research
+   * record instead of vanishing. Discriminate with {@link isClassification}.
+   */
   classify(
     message: Message,
     context: ClassifierContext,
-  ): Promise<ContributionClassification | null>;
+  ): Promise<ContributionClassification | ClassificationFailure>;
+}
+
+export function isClassification(
+  result: ContributionClassification | ClassificationFailure,
+): result is ContributionClassification {
+  return "meaningfulnessScore" in result;
 }

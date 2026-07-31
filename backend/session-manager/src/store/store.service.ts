@@ -11,6 +11,7 @@ import type {
   Briefing,
   BehavioralEvent,
   BotConfig,
+  ClassificationFailure,
   Condition,
   ContributionClassification,
   InterventionLog,
@@ -23,6 +24,7 @@ import type {
   Session,
   StudySettings,
   Survey,
+  WindowEvaluation,
 } from "@gdm/shared";
 import type { MatrixCreds } from "../matrix/matrix.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -44,6 +46,9 @@ const SESSION_INCLUDE = {
   },
   interventions: {
     orderBy: { timestamp: "asc" },
+  },
+  windowEvaluations: {
+    orderBy: [{ windowIndex: "asc" }, { arm: "asc" }],
   },
 } satisfies Prisma.SessionRecordInclude;
 
@@ -211,6 +216,7 @@ export class StoreService implements OnModuleInit {
           polls: json(session.polls),
           behavioralEvents: json(session.behavioralEvents),
           classifications: json(session.contributionClassifications),
+          classificationFailures: json(session.classificationFailures ?? []),
           processedEventIds: json(session.processedEventIds ?? []),
           runtimeState: json(session.runtimeState ?? {}),
           durationMinutes: session.durationMinutes,
@@ -230,6 +236,7 @@ export class StoreService implements OnModuleInit {
           polls: json(session.polls),
           behavioralEvents: json(session.behavioralEvents),
           classifications: json(session.contributionClassifications),
+          classificationFailures: json(session.classificationFailures ?? []),
           processedEventIds: json(session.processedEventIds ?? []),
           runtimeState: json(session.runtimeState ?? {}),
           durationMinutes: session.durationMinutes,
@@ -243,6 +250,7 @@ export class StoreService implements OnModuleInit {
       await this.replaceMessages(tx, session);
       await this.replaceRankingHistory(tx, session);
       await this.replaceInterventions(tx, session);
+      await this.replaceWindowEvaluations(tx, session);
     });
   }
 
@@ -257,6 +265,8 @@ export class StoreService implements OnModuleInit {
       stored.interventions = session.interventions;
       stored.behavioralEvents = session.behavioralEvents;
       stored.contributionClassifications = session.contributionClassifications;
+      stored.windowEvaluations = session.windowEvaluations;
+      stored.classificationFailures = session.classificationFailures;
       stored.processedEventIds = session.processedEventIds;
       stored.runtimeState = session.runtimeState;
       return;
@@ -269,6 +279,7 @@ export class StoreService implements OnModuleInit {
           ranking: json(session.ranking),
           behavioralEvents: json(session.behavioralEvents),
           classifications: json(session.contributionClassifications),
+          classificationFailures: json(session.classificationFailures ?? []),
           processedEventIds: json(session.processedEventIds ?? []),
           runtimeState: json(session.runtimeState ?? {}),
         },
@@ -276,6 +287,7 @@ export class StoreService implements OnModuleInit {
       await this.replaceMessages(tx, session);
       await this.replaceRankingHistory(tx, session);
       await this.replaceInterventions(tx, session);
+      await this.replaceWindowEvaluations(tx, session);
     });
   }
 
@@ -311,6 +323,8 @@ export class StoreService implements OnModuleInit {
       interventions: [],
       behavioralEvents: [],
       contributionClassifications: [],
+      windowEvaluations: [],
+      classificationFailures: [],
       processedEventIds: [],
       runtimeState: {},
       polls: [],
@@ -327,6 +341,13 @@ export class StoreService implements OnModuleInit {
   ): Promise<void> {
     if (!this.dbEnabled) {
       this.memoryCreds.set(participantId, creds);
+      // Mirror the DB column so exports can match messages to participants.
+      for (const session of this.sessions.values()) {
+        const participant = session.participants.find(
+          (p) => p.id === participantId,
+        );
+        if (participant) participant.matrixUserId = creds.userId;
+      }
       return;
     }
     await this.db.participantRecord.update({
@@ -504,6 +525,31 @@ export class StoreService implements OnModuleInit {
           position,
           ranking: json(ranking),
           updatedAt: toDate(ranking.updatedAt),
+        },
+      });
+    }
+  }
+
+  private async replaceWindowEvaluations(
+    tx: Prisma.TransactionClient,
+    session: Session,
+  ): Promise<void> {
+    await tx.windowEvaluationRecord.deleteMany({
+      where: { sessionId: session.id },
+    });
+    for (const evaluation of session.windowEvaluations ?? []) {
+      await tx.windowEvaluationRecord.create({
+        data: {
+          id: evaluation.id,
+          sessionId: session.id,
+          conditionId: evaluation.conditionId,
+          arm: evaluation.arm,
+          windowIndex: evaluation.windowIndex,
+          windowStart: toDate(evaluation.windowStart),
+          windowEnd: toDate(evaluation.windowEnd),
+          outcome: evaluation.outcome,
+          llmMode: evaluation.llmMode,
+          payload: json(evaluation),
         },
       });
     }
@@ -714,6 +760,12 @@ function sessionFromRow(row: SessionRow): Session {
     contributionClassifications: fromJson<ContributionClassification[]>(
       row.classifications,
     ),
+    windowEvaluations: row.windowEvaluations.map(
+      (evaluation) => fromJson<WindowEvaluation>(evaluation.payload),
+    ),
+    classificationFailures: fromJson<ClassificationFailure[]>(
+      row.classificationFailures,
+    ),
     processedEventIds: fromJson<string[]>(row.processedEventIds),
     runtimeState: fromJson<Record<string, unknown>>(row.runtimeState),
     polls: fromJson<Poll[]>(row.polls),
@@ -734,6 +786,7 @@ function participantFromRow(
     id: row.id,
     name: row.name,
     trackingToken: row.trackingToken,
+    matrixUserId: row.matrixUserId ?? undefined,
     entrySurvey: entry ? surveyFromRow(entry) : undefined,
     exitSurvey: exit ? surveyFromRow(exit) : undefined,
   };

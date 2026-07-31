@@ -34,6 +34,7 @@ model SessionRecord {
   polls             Json
   behavioralEvents  Json                 @default("[]") @map("behavioral_events")
   classifications   Json                 @default("[]") @map("contribution_classifications")
+  classificationFailures Json            @default("[]") @map("classification_failures")
   processedEventIds Json                 @default("[]") @map("processed_event_ids")
   runtimeState      Json                 @default("{}") @map("runtime_state")
   durationMinutes   Int                  @map("duration_minutes")
@@ -46,6 +47,7 @@ model SessionRecord {
   messages          MessageRecord[]
   rankingHistory    RankingHistoryRecord[]
   interventions     InterventionRecord[]
+  windowEvaluations WindowEvaluationRecord[]
 
   @@index([conditionId])
   @@index([status])
@@ -140,6 +142,25 @@ model InterventionRecord {
   @@index([conditionId])
   @@index([timestamp])
   @@map("interventions")
+}
+
+model WindowEvaluationRecord {
+  id          String        @id
+  sessionId   String        @map("session_id")
+  conditionId String        @map("condition_id")
+  arm         String
+  windowIndex Int           @map("window_index")
+  windowStart DateTime      @map("window_start")
+  windowEnd   DateTime      @map("window_end")
+  outcome     String
+  llmMode     String        @map("llm_mode")
+  payload     Json
+  session     SessionRecord @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([conditionId])
+  @@index([outcome])
+  @@map("window_evaluations")
 }
 
 model StudySettingRecord {

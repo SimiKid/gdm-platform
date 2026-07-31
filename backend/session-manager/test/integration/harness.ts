@@ -103,7 +103,7 @@ export async function resetDatabase(): Promise<void> {
   process.env.DATABASE_URL = inject("databaseUrl");
   prisma ??= new PrismaClient();
   await prisma.$executeRawUnsafe(
-    "TRUNCATE TABLE reactions, messages, surveys, ranking_history, interventions, participants, sessions, conditions, study_settings CASCADE",
+    "TRUNCATE TABLE reactions, messages, surveys, ranking_history, interventions, window_evaluations, participants, sessions, conditions, study_settings CASCADE",
   );
   chatServiceCalls.length = 0;
 }

@@ -28,6 +28,7 @@ import { SessionsService } from "./sessions.service";
 import { StoreService } from "../store/store.service";
 import { AdminGuard } from "../auth/admin.guard";
 import { InternalGuard } from "../auth/internal.guard";
+import { parseConditionIds } from "../reports/filter";
 
 @Controller()
 export class SessionsController {
@@ -243,13 +244,4 @@ export class SessionsController {
   ): Promise<string> {
     return this.sessions.exportContributionsCsv(parseConditionIds(conditionIds));
   }
-}
-
-function parseConditionIds(conditionIds?: string): string[] {
-  return conditionIds
-    ? conditionIds
-        .split(",")
-        .map((id) => id.trim())
-        .filter(Boolean)
-    : [];
 }

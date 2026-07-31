@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
+import { isServiceUser } from "@gdm/shared";
 import type {
   CheckpointSessionRequest,
   Condition,
@@ -22,6 +23,8 @@ import type {
 } from "@gdm/shared";
 import { MatrixService } from "../matrix/matrix.service";
 import { StoreService } from "../store/store.service";
+import { toCsv } from "../reports/csv";
+import { filterResearchSessions } from "../reports/filter";
 
 @Injectable()
 export class SessionsService {
@@ -219,12 +222,7 @@ export class SessionsService {
 
   /** Sessions restricted to the given conditions (empty = everything). */
   private async filteredSessions(conditionIds: string[] = []): Promise<Session[]> {
-    const allowed = new Set(conditionIds);
-    return (await this.store.allSessions()).filter(
-      (session) =>
-        !session.condition.id.startsWith("e2e-") &&
-        (allowed.size === 0 || allowed.has(session.condition.id)),
-    );
+    return filterResearchSessions(await this.store.allSessions(), conditionIds);
   }
 
   async exportCsv(conditionIds: string[] = []): Promise<string> {
@@ -556,6 +554,8 @@ export class SessionsService {
           interventions: session.interventions,
           behavioralEvents: session.behavioralEvents,
           contributionClassifications: session.contributionClassifications,
+          windowEvaluations: session.windowEvaluations ?? [],
+          classificationFailures: session.classificationFailures ?? [],
           processedEventIds: session.processedEventIds ?? [],
           ruleState: session.runtimeState ?? {},
         },
@@ -713,6 +713,8 @@ function applyCheckpoint(
   session.behavioralEvents = checkpoint.behavioralEvents ?? [];
   session.contributionClassifications =
     checkpoint.contributionClassifications ?? [];
+  session.windowEvaluations = checkpoint.windowEvaluations ?? [];
+  session.classificationFailures = checkpoint.classificationFailures ?? [];
   session.processedEventIds = checkpoint.processedEventIds ?? [];
   session.runtimeState = checkpoint.ruleState ?? {};
   if (session.rankingHistory.length > 0) {
@@ -728,6 +730,8 @@ function contributionAggregates(session: Session): ContributionAggregate[] {
   }
   for (const event of session.behavioralEvents) ids.add(event.participantId);
   for (const item of session.contributionClassifications) ids.add(item.senderId);
+  // Bot messages are part of the chat log but bots never get a contribution row.
+  for (const id of ids) if (isServiceUser(id)) ids.delete(id);
 
   return [...ids].sort().map((participantId) => {
     const messages = session.chat.messages.filter(
@@ -790,6 +794,8 @@ function toPublicSession(session: Session): PublicSession {
   const {
     behavioralEvents: _behavioralEvents,
     contributionClassifications: _contributionClassifications,
+    windowEvaluations: _windowEvaluations,
+    classificationFailures: _classificationFailures,
     processedEventIds: _processedEventIds,
     runtimeState: _runtimeState,
     ...publicFields
@@ -818,14 +824,3 @@ function toSummary(session: Session): SessionSummary {
   };
 }
 
-function toCsv(rows: string[][]): string {
-  return rows.map((row) => row.map(csvCell).join(",")).join("\n");
-}
-
-function csvCell(value: string): string {
-  // Guard against spreadsheet formula injection: participant-authored text
-  // starting with = + - @ would execute when the CSV is opened in Excel.
-  const guarded = /^[=+\-@]/.test(value) ? `'${value}` : value;
-  if (!/[",\n]/.test(guarded)) return guarded;
-  return `"${guarded.replaceAll('"', '""')}"`;
-}

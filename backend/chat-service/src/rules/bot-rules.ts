@@ -16,11 +16,16 @@ import type {
   InterventionLog,
   InterventionTarget,
   Message,
+  WindowEvaluation,
+  WindowOutcome,
 } from "@gdm/shared";
 import type { TimelineEvent } from "../matrix/matrix-bot.service";
 import type { SessionRuntime } from "../sessions/session-runtime";
 import { CONTRIBUTION_CLASSIFIER } from "../classifier/contribution-classifier.token";
-import type { ContributionClassifier } from "../classifier/contribution-classifier";
+import {
+  isClassification,
+  type ContributionClassifier,
+} from "../classifier/contribution-classifier";
 
 /**
  * Extension point for the intervention logic — THIS IS WHERE THE RULES GO.
@@ -124,9 +129,45 @@ export class ContributionBotRules implements BotRules {
   ): Promise<void> {
     const config = normalizeConfig(runtime.condition.config);
     const llmMode = this.options.forceLlmMode ?? resolveLlmMode(config);
-    if (!isInsideInterventionWindow(runtime, windowEndMs, config)) return;
+    // Every boundary leaves exactly one evaluation record per engine, so the
+    // research record covers quiet windows and baseline sessions — not just
+    // fired nudges. Recording is purely additive; firing behavior unchanged.
+    const record = (
+      outcome: WindowOutcome,
+      extras: Partial<WindowEvaluation> = {},
+    ): void =>
+      runtime.recordWindowEvaluation({
+        id: randomUUID(),
+        sessionId: runtime.sessionId,
+        conditionId: runtime.condition.id,
+        arm: this.options.deliverAs ?? "primary",
+        windowIndex: windowIndex(runtime, config, windowEndMs),
+        windowStart: new Date(
+          windowEndMs - config.contributionWindowMinutes * 60_000,
+        ).toISOString(),
+        windowEnd: new Date(windowEndMs).toISOString(),
+        contributionWindowMinutes: config.contributionWindowMinutes,
+        llmMode,
+        threshold: config.contributionThreshold,
+        outcome,
+        contributionSplit: [],
+        candidateTargets: [],
+        maxDominanceScore: null,
+        interventionId: null,
+        ...extras,
+      });
+
+    if (!isInsideInterventionWindow(runtime, windowEndMs, config)) {
+      const elapsedMs = Math.max(0, windowEndMs - runtime.startedAtMs);
+      const inWarmup = elapsedMs < config.protectedStartMinutes * 60_000;
+      record(inWarmup ? "warm-up" : "wrap-up");
+      return;
+    }
     const participantIds = await this.getParticipantIds(runtime);
-    if (participantIds.length < 2) return;
+    if (participantIds.length < 2) {
+      record("too-few-participants");
+      return;
+    }
     const state = getRuleState(runtime, this.options.stateKey ?? STATE_KEY);
 
     // Warm-up messages never count, even if a window overlaps the warm-up
@@ -143,19 +184,42 @@ export class ContributionBotRules implements BotRules {
       llmMode,
       Math.max(state.lastInterventionAtMs ?? 0, warmupEndMs),
     );
-    const targets = split
+    // Over-threshold members BEFORE grace filtering, so grace-suppressed
+    // windows stay distinguishable from windows where nobody dominated.
+    const overThreshold = split
       .filter((entry) => entry.dominanceScore >= config.contributionThreshold)
-      .filter((entry) => !isInInviteGrace(state, entry.userId, windowEndMs))
       .sort(
         (a, b) => b.dominanceScore - a.dominanceScore || b.score - a.score,
       );
-    if (targets.length === 0) return;
+    const targets = overThreshold.filter(
+      (entry) => !isInInviteGrace(state, entry.userId, windowEndMs),
+    );
+    const evaluated: Partial<WindowEvaluation> = {
+      contributionSplit: split,
+      candidateTargets: overThreshold.map(toTarget),
+      maxDominanceScore: split.reduce(
+        (max: number | null, entry) =>
+          max === null ? entry.dominanceScore : Math.max(max, entry.dominanceScore),
+        null,
+      ),
+    };
+    if (overThreshold.length === 0) {
+      record("no-target", evaluated);
+      return;
+    }
+    if (targets.length === 0) {
+      record("grace-suppressed", evaluated);
+      return;
+    }
 
     const mode = config.interventionMode;
     // Comparison bots follow the condition's delivery audience too — a
     // private 2-bot test must stay private (only the target sees A and B).
     const audience = audienceForMode(mode);
-    if (audience === "none") return;
+    if (audience === "none") {
+      record("baseline-suppressed", evaluated);
+      return;
+    }
     const target = targets[0];
     const quietMembers = quietestMembers(split, target, config.contributionThreshold);
     // Rotate per detection arm so each comparison bot cycles its own variants.
@@ -177,9 +241,11 @@ export class ContributionBotRules implements BotRules {
     }
     // Stamp the contribution-tracker reset point.
     state.lastInterventionAtMs = windowEndMs;
-    runtime.recordIntervention(
-      buildLog(runtime, config, llmMode, audience, split, target, quietMembers, message),
+    const log = buildLog(
+      runtime, config, llmMode, audience, split, target, quietMembers, message,
     );
+    runtime.recordIntervention(log);
+    record("nudged", { ...evaluated, interventionId: log.id });
   }
 
   private async classifyMessage(
@@ -203,7 +269,12 @@ export class ContributionBotRules implements BotRules {
       taskItems: MOON_SURVIVAL.items.map((item) => item.label),
       participantIds,
     });
-    if (!classification) return;
+    if (!isClassification(classification)) {
+      // Coverage accounting: an unclassified message must not silently look
+      // like a meaningless one. No grace update either.
+      runtime.recordClassificationFailure(classification);
+      return;
+    }
     runtime.recordClassification(classification);
     // Self-correction reward: inviting others suppresses being flagged for a
     // moment.
@@ -273,6 +344,24 @@ function getRuleState(runtime: SessionRuntime, stateKey: string): RuleState {
   };
   runtime.state[stateKey] = state;
   return state;
+}
+
+/**
+ * 0-based index of the just-closed window on the session's window grid. The
+ * grid starts when the warm-up ends (`scheduleWindowTick` fires the first
+ * boundary one window after that), so the first evaluated window is index 0.
+ */
+function windowIndex(
+  runtime: SessionRuntime,
+  config: InterventionConfig,
+  windowEndMs: number,
+): number {
+  const gridStartMs =
+    runtime.startedAtMs + config.protectedStartMinutes * 60_000;
+  const windowMs = config.contributionWindowMinutes * 60_000;
+  if (windowMs <= 0) return 0;
+  // Clamped: boundaries restored from a checkpoint can sit slightly off-grid.
+  return Math.max(0, Math.round((windowEndMs - gridStartMs) / windowMs) - 1);
 }
 
 function isInsideInterventionWindow(
