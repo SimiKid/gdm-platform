@@ -536,7 +536,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
                             }`}
                           >
                             {msg.recipient
-                              ? "🔒 Private message to you — only you can see this"
+                              ? "🔒 Private message to you (only you can see this)"
                               : "📢 Message to ALL in the group"}
                           </span>
                           <span className="bot-meta">{formatClock(msg.ts)}</span>
@@ -588,7 +588,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
             </div>
             {sendError && (
               <p className="error" role="alert">
-                Message not sent — please try again.
+                Message not sent. Please try again.
               </p>
             )}
             <div className="typing-indicator" aria-live="polite">
@@ -673,7 +673,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
             <div className={`timer ${timerLow ? "low" : ""}`}>
               {remaining === 0
                 ? "Time is up"
-                : `${formatMs(remaining)} left${timerLow ? " — wrap up!" : ""}`}
+                : `${formatMs(remaining)} left${timerLow ? ", wrap up!" : ""}`}
             </div>
           )}
           <section className="briefing">
