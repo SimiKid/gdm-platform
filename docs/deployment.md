@@ -36,8 +36,12 @@ VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (fallback)
    - `SYNAPSE_SERVER_NAME=gdmproject.ifi.uzh.ch` — **immutable after the
      first Synapse start**; it is baked into every Matrix user ID and the
      signing key. Triple-check before step 5.
-   - `MATRIX_PUBLIC_URL=https://gdmproject.ifi.uzh.ch` and
-     `PARTICIPANT_PUBLIC_URL=https://gdmproject.ifi.uzh.ch`
+   - `MATRIX_PUBLIC_URL=https://gdmproject.ifi.uzh.ch`. Note
+     `PARTICIPANT_PUBLIC_URL` is **baked into the admin-dashboard image at CI
+     build time** (set in `.github/workflows/build-images.yml`) — setting it in
+     the VM's `.env` has no effect in production, because the prod compose file
+     pulls prebuilt images. Changing the public host means editing the workflow
+     and rebuilding.
    - `PUBLIC_HOST=gdmproject.ifi.uzh.ch`, `ACME_EMAIL=<your address>`
    - Fresh `SYNAPSE_DB_PASSWORD` / `RESEARCH_DB_PASSWORD` — never the dev
      defaults (they are in the git history)
@@ -56,7 +60,7 @@ VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (fallback)
 
 4. **Render the Synapse config** and check the output:
    ```bash
-   sh render-homeserver.sh   # must print server_name: gdmproject.ifi.uzh.ch
+   sh render-homeserver.sh   # must print "(server_name: gdmproject.ifi.uzh.ch)"
    ```
 
 5. **First start**:
@@ -76,6 +80,17 @@ VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (fallback)
    ```
    Then open https://gdmproject.ifi.uzh.ch and run one manual session against
    the [pilot checklist](pilot-checklist.md).
+
+7. **Before recruiting — set the compensation link and the study URL**:
+   - In the admin dashboard, Settings → **Compensation Link** must be set to
+     the Prolific completion URL. There is no environment-variable fallback in
+     the deployed images — without this setting, participants reach the
+     debriefing page with a dead link.
+   - The Prolific study URL must pass the Prolific participant id as the
+     tracking token: `https://gdmproject.ifi.uzh.ch/?p={{%PROLIFIC_PID%}}`.
+     Without `?p=`, the participant gets a random self-issued token and the
+     exported `tracking_token` cannot be matched to a Prolific submission
+     (which is what `linkage.csv` is for).
 
 ## Smoke test (e2e against production)
 
@@ -117,9 +132,23 @@ cross-match:
 E2E_… pnpm --dir e2e exec playwright test tests/golden-path.spec.ts --repeat-each=10 --workers=5
 ```
 
+(`--workers=5` deliberately overrides the checked-in `workers: 1` safety
+default — that default exists because Matrix rooms and temporary conditions
+are shared server-side resources; the per-worker conditions here make the
+override safe.)
+
 This is bounded by the machine running the browsers (3 Chromium contexts per
 session), not the server — beyond ~5–10 parallel sessions you are measuring
 your laptop. Every run leaves one more test session in the research DB.
+
+## Study rounds in production
+
+Starting a new round (Settings → Study Rounds → Start Round N) is a
+participant-visible action: it **aborts every waiting lobby immediately**
+(participants in a waiting room are dropped) and resets each arm's recruiting
+progress to 0 / goal. Treat it like a deploy: do it between sessions, never
+while recruitment is actively filling lobbies. Running discussions are not
+touched — they finish in their round.
 
 ## Updating
 
@@ -145,9 +174,13 @@ cd ~/gdm-platform/infra
 docker compose --env-file .env -f docker-compose.yml -f docker-compose.prod.yml restart synapse
 ```
 
-Prisma migrations run automatically before Session Manager startup. The
-runtime-checkpoint migration adds JSON columns only and does not rewrite or
-delete existing study rows.
+Prisma migrations run automatically before Session Manager startup
+(`prisma migrate deploy` in the container entrypoint). Migrations are
+**forward-only** and not all of them are additive: the study-rounds migration
+(`20260801000000_study_rounds`) creates a `study_rounds` table, backfills a
+Round 1 row, and adds a `NOT NULL` `round_id` column with a foreign key to
+`sessions`. Take a database backup before any deploy that carries a new
+migration.
 
 ## Enabling the Anthropic classifier (Rule+LLM arms)
 
@@ -173,7 +206,11 @@ Every workflow run also tags images with the **short** commit sha (7 chars,
 IMAGE_TAG=<short-sha> sh infra/deploy.sh
 ```
 
-If a migration was involved, restore the matching DB backup first (below).
+If a migration was involved, **restore the matching DB backup first** (below) —
+re-pinning the image tag alone is not enough. Prisma has no down migrations
+here and does not check schema drift at runtime, so an older image will boot
+against the newer schema with an outdated client (e.g. a pre-rounds image
+against a schema whose `sessions.round_id` it does not know).
 
 ## Admin dashboard access
 
@@ -202,6 +239,10 @@ $C exec -T research-db pg_dump -U gdm gdm_research > backup-research-$(date +%F)
 # matrix homeserver
 $C exec -T synapse-db pg_dump -U synapse synapse > backup-synapse-$(date +%F).sql
 ```
+
+The user/database names above are the `.env.example` defaults — if you changed
+`RESEARCH_DB_USER`/`RESEARCH_DB_NAME` or `SYNAPSE_DB_USER`/`SYNAPSE_DB_NAME`,
+use your values.
 
 Copy backups off the VM (`scp` from your machine — `/var` is small). During
 an active study, run this daily (cron) and before every deploy.
