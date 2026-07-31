@@ -63,6 +63,12 @@ const DATASETS = [
     csvFilename: "windows.csv",
     arrays: ["windows"],
   },
+  {
+    path: "rankings",
+    jsonFilename: "rankings.json",
+    csvFilename: "rankings.csv",
+    arrays: ["rankings"],
+  },
 ] as const;
 
 test("@exports every researcher export is downloadable, authenticated and excludes automated sessions", async ({
@@ -124,6 +130,39 @@ test("@exports every researcher export is downloadable, authenticated and exclud
         expect(csv).not.toContain(condition.id);
         expect(csv).not.toContain(group!.sessionId);
       }
+    });
+
+    await test.step("roundIds filtering composes with conditionIds on every export", async () => {
+      // E2E sessions land in whatever round the stack is on — read it, never
+      // assume Round 1.
+      const roundsRes = await request.get(`${API}/rounds`, {
+        headers: API_HEADERS,
+      });
+      expect(roundsRes.ok()).toBe(true);
+      const { currentRound } = (await roundsRes.json()) as {
+        currentRound: number;
+      };
+      expect(currentRound).toBeGreaterThanOrEqual(1);
+
+      const query = `conditionIds=${encodeURIComponent(condition.id)}&roundIds=${currentRound}`;
+      const filtered = await request.get(
+        `${API}/export/sessions-analysis?${query}`,
+        { headers: API_HEADERS },
+      );
+      expect(filtered.ok()).toBe(true);
+      const body = (await filtered.json()) as { sessions: unknown[] };
+      // e2e- conditions stay excluded even when their round is selected.
+      expect(body.sessions).toEqual([]);
+      expect(JSON.stringify(body)).not.toContain(group!.sessionId);
+
+      const emptyRound = await request.get(
+        `${API}/export/sessions-analysis?roundIds=9999`,
+        { headers: API_HEADERS },
+      );
+      expect(emptyRound.ok()).toBe(true);
+      expect(
+        ((await emptyRound.json()) as { sessions: unknown[] }).sessions,
+      ).toEqual([]);
     });
 
     await test.step("linkage.csv and the research bundle are guarded and e2e-isolated", async () => {

@@ -237,6 +237,12 @@ export type SessionStatus =
 export interface Session {
   id: string;
   status: SessionStatus;
+  /**
+   * The study round open when this session was created (1, 2, …). Stamped
+   * once; sessions never change rounds. Running sessions finish in their
+   * round even after the researcher starts a new one.
+   */
+  roundId: number;
   condition: Condition;
   bot: BotConfig;
   participants: Participant[];

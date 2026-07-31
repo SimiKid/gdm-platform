@@ -410,8 +410,85 @@ describe("ReportsService (in-memory store)", () => {
     const all = await reports.exportSessionsAnalysis();
     expect(all.sessions).toHaveLength(1);
 
-    const filtered = await reports.exportSessionsAnalysis(["other-condition"]);
+    const filtered = await reports.exportSessionsAnalysis({ conditionIds: ["other-condition"] });
     expect(filtered.sessions).toHaveLength(0);
+  });
+
+  it("filters by roundIds and stamps the round column everywhere", async () => {
+    await store.startNewRound("second wave");
+    const second = await seedSession(store, condition("private-llm-test"));
+    expect(second.roundId).toBe(2);
+
+    const all = await reports.exportSessionsAnalysis();
+    expect(all.sessions.map((row) => row.round).sort()).toEqual([1, 2]);
+
+    const onlyTwo = await reports.exportSessionsAnalysis({ roundIds: [2] });
+    expect(onlyTwo.sessions).toHaveLength(1);
+    expect(onlyTwo.sessions[0].round).toBe(2);
+    expect(onlyTwo.sessions[0].sessionPseudonym).toBe(
+      pseudonymize("S", second.id),
+    );
+
+    const participantsCsv = await reports.exportParticipantsCsv({
+      roundIds: [1],
+    });
+    expect(participantsCsv.split("\n")[0]).toContain(",round,");
+    expect(participantsCsv).toContain(pseudonymize("S", session.id));
+    expect(participantsCsv).not.toContain(pseudonymize("S", second.id));
+
+    const windowsCsv = await reports.exportWindowsCsv({ roundIds: [2] });
+    expect(windowsCsv.split("\n")[0]).toContain(",round,");
+    expect(windowsCsv).not.toContain(pseudonymize("S", session.id));
+
+    // A rounds-only filter still lists every condition in the summary.
+    const summary = await reports.summary({ roundIds: [2] });
+    const row = summary.conditions.find(
+      (item) => item.conditionId === "private-llm-test",
+    );
+    expect(row?.sessionsCompleted).toBe(1);
+    expect(
+      summary.conditions.some((item) => item.conditionId === "baseline"),
+    ).toBe(true);
+  });
+
+  it("exports raw ranking orders with editors, edit history, and item ranks", async () => {
+    const { rankings } = await reports.exportRankings();
+    expect(rankings.map((row) => row.type)).toEqual([
+      "entry", // p1
+      "exit", // p1
+      "entry", // p2 (no exit survey)
+      "group-edit",
+      "group-final",
+    ]);
+
+    const [entry1, exit1, entry2, edit, final] = rankings;
+    // p1 submitted the expert order: error 0, oxygen ranked 1, matches 15.
+    expect(entry1).toMatchObject({
+      participantPseudonym: pseudonymize("P", "p1"),
+      rankingCompleted: true,
+      error: 0,
+    });
+    expect(entry1.ranks.oxygen).toBe(1);
+    expect(entry1.ranks.matches).toBe(15);
+    // p1's exit ranking is fully reversed.
+    expect(exit1).toMatchObject({ error: 112 });
+    expect(exit1.ranks.oxygen).toBe(15);
+    // p2 timed out: raw order present, but not scored.
+    expect(entry2).toMatchObject({ rankingCompleted: false, error: null });
+    expect(entry2.order).toHaveLength(15);
+    // Group history: edited by p1 (resolved to their pseudonym), expert order.
+    expect(edit).toMatchObject({
+      editIndex: 0,
+      participantPseudonym: pseudonymize("P", "p1"),
+      error: 0,
+    });
+    expect(final).toMatchObject({ type: "group-final", error: 0 });
+
+    const csv = await reports.exportRankingsCsv();
+    expect(csv.split("\n")[0]).toContain(",oxygen,");
+    expect(csv).not.toContain("PROLIFIC-1");
+    expect(csv).not.toContain(U1);
+    expect(csv).not.toContain(session.id);
   });
 
   it("bundles all research CSVs plus the codebook, without linkage", async () => {
@@ -422,6 +499,7 @@ describe("ReportsService (in-memory store)", () => {
       "participants.csv",
       "sessions_analysis.csv",
       "windows.csv",
+      "rankings.csv",
       "messages.csv",
       "codebook.md",
     ]) {

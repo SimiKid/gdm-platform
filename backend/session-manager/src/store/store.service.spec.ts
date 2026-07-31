@@ -78,17 +78,17 @@ describe("StoreService", () => {
   it("counts claimed (non-aborted) and completed sessions per condition", async () => {
     const cond = (await store.listConditions())[0];
     const session = await store.createForming(cond);
-    expect(await store.claimedCount(cond.id)).toBe(1);
-    expect(await store.completedCount(cond.id)).toBe(0);
+    expect(await store.claimedCount(cond.id, 1)).toBe(1);
+    expect(await store.completedCount(cond.id, 1)).toBe(0);
 
     session.status = "completed";
     await store.saveSession(session);
-    expect(await store.completedCount(cond.id)).toBe(1);
-    expect(await store.claimedCount(cond.id)).toBe(1);
+    expect(await store.completedCount(cond.id, 1)).toBe(1);
+    expect(await store.claimedCount(cond.id, 1)).toBe(1);
 
     session.status = "aborted";
     await store.saveSession(session);
-    expect(await store.claimedCount(cond.id)).toBe(0);
+    expect(await store.claimedCount(cond.id, 1)).toBe(0);
   });
 
   it("stores participant Matrix credentials outside the session DTO", async () => {

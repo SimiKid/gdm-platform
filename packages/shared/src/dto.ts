@@ -86,12 +86,50 @@ export interface SubmitSurveyRequest {
 
 // ── Admin Dashboard -> Session Manager ───────────────────────────
 
-/** Progress per condition: how many sessions are done vs. the goal. */
+/**
+ * Progress per condition: how many sessions are done vs. the goal.
+ * `completed` counts CURRENT-ROUND sessions only, so starting a new study
+ * round resets every arm to 0/goal and auto-off triggers per round — an arm
+ * that filled its goal in round 1 recruits again in round 2.
+ */
 export interface ConditionProgress {
   condition: Condition;
   completed: number;
   /** Mirrors condition.goal; auto-off triggers once completed >= goal. */
   goal: number;
+}
+
+/** One study round. Counts exclude automated `e2e-` test conditions. */
+export interface StudyRound {
+  /** Auto-assigned 1, 2, … — also the value in exports' `round` column. */
+  number: number;
+  /** Optional researcher free text (e.g. "threshold 35%"). */
+  label: string;
+  startedAt: string; // ISO 8601
+  /** Absent for the currently open round. */
+  endedAt?: string;
+  /** Non-aborted study sessions created in this round. */
+  sessionCount: number;
+  completedCount: number;
+}
+
+export interface RoundsResponse {
+  currentRound: number;
+  rounds: StudyRound[];
+}
+
+export interface StartRoundRequest {
+  label?: string;
+}
+
+export interface StartRoundResponse {
+  round: StudyRound;
+  /** Waiting lobbies aborted so groups never mix rounds. */
+  abortedWaitingSessions: number;
+}
+
+export interface UpdateRoundRequest {
+  label: string;
 }
 
 /** Create or update a condition (goal/active/time/#people live on Condition). */
@@ -107,6 +145,7 @@ export interface UpdateStudySettingsRequest {
 export interface SessionSummary {
   id: string;
   status: SessionStatus;
+  roundId: number;
   conditionId: string;
   conditionName: string;
   participantCount: number;

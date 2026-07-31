@@ -1,40 +1,67 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ConditionReportSummary, ReportsSummaryResponse } from "@gdm/shared";
+import type {
+  ConditionReportSummary,
+  ReportsSummaryResponse,
+  RoundsResponse,
+} from "@gdm/shared";
 import { apiFetch, exportUrl, isTestCondition } from "../api";
 
 const RESEARCH_EXPORTS = [
   { key: "participants", label: "Participants (surveys + activity joined)" },
   { key: "sessions-analysis", label: "Sessions (derived analysis measures)" },
   { key: "windows", label: "Contribution windows (fired or not)" },
+  { key: "rankings", label: "Rankings (raw orders + group edit history)" },
 ] as const;
 
 /**
  * Per-condition descriptives plus the analysis-ready research downloads.
  * Numbers here are for monitoring the study, not for inference — the CSVs
- * are the citable record.
+ * are the citable record. The round filter drives BOTH the summary table
+ * and every download link, so a per-round bundle is one click.
  */
-export default function Results() {
+export default function Results({ rounds }: { rounds: RoundsResponse | null }) {
   const [summary, setSummary] = useState<ReportsSummaryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Selected round numbers; empty = all rounds. */
+  const [selectedRounds, setSelectedRounds] = useState<number[]>([]);
+
+  const query =
+    selectedRounds.length > 0 ? `roundIds=${selectedRounds.join(",")}` : "";
 
   const load = useCallback(async () => {
     try {
-      const res = await apiFetch("/reports/summary");
+      const res = await apiFetch(`/reports/summary${query ? `?${query}` : ""}`);
       if (!res.ok) throw new Error(`Could not load results (${res.status})`);
       setSummary((await res.json()) as ReportsSummaryResponse);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load results");
     }
-  }, []);
+  }, [query]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
+  function toggleRound(number: number | null) {
+    if (number === null) {
+      setSelectedRounds([]);
+      return;
+    }
+    setSelectedRounds((selected) =>
+      selected.includes(number)
+        ? selected.filter((n) => n !== number)
+        : [...selected, number].sort((a, b) => a - b),
+    );
+  }
+
   const conditions = (summary?.conditions ?? []).filter(
     (row) => !isTestCondition(row.conditionId),
   );
+  const filterLabel =
+    selectedRounds.length > 0
+      ? `Showing Round${selectedRounds.length > 1 ? "s" : ""} ${selectedRounds.join(", ")}.`
+      : "Showing all rounds.";
 
   return (
     <>
@@ -45,10 +72,35 @@ export default function Results() {
             Refresh
           </button>
         </div>
+        {rounds && rounds.rounds.length > 1 && (
+          <div className="chips" role="group" aria-label="Round filter">
+            <button
+              type="button"
+              className={selectedRounds.length === 0 ? "tab active" : "tab"}
+              onClick={() => toggleRound(null)}
+            >
+              All rounds
+            </button>
+            {rounds.rounds.map((round) => (
+              <button
+                key={round.number}
+                type="button"
+                className={
+                  selectedRounds.includes(round.number) ? "tab active" : "tab"
+                }
+                onClick={() => toggleRound(round.number)}
+              >
+                Round {round.number}
+                {round.label ? ` (${round.label})` : ""}
+              </button>
+            ))}
+          </div>
+        )}
         <p className="hint">
-          Descriptive means over completed sessions only. Ranking error is the
-          NASA score (0 = matches the expert ranking). Share SD and Gini
-          measure participation inequality (0 = perfectly equal).
+          {filterLabel} Descriptive means over completed sessions only.
+          Ranking error is the NASA score (0 = matches the expert ranking).
+          Share SD measures participation inequality (0 = perfectly equal).
+          The filter also applies to every download below.
         </p>
         {error && <p className="error">{error}</p>}
         {conditions.length === 0 && !error ? (
@@ -67,7 +119,6 @@ export default function Results() {
                   <th>Fairness</th>
                   <th>Felt heard</th>
                   <th>Share SD</th>
-                  <th>Gini</th>
                   <th>Nudges/session</th>
                   <th>Windows (nudged)</th>
                 </tr>
@@ -85,14 +136,14 @@ export default function Results() {
       <section className="section">
         <h2>Research Exports</h2>
         <p className="hint">
-          Analysis-ready files with pseudonymous IDs (P-… / S-…) — no Prolific
+          Analysis-ready files with pseudonymous IDs (P-… / S-…): no Prolific
           tokens, no Matrix IDs. The bundle includes every research CSV plus a
           codebook documenting each column.
         </p>
         <div className="download-primary">
           <a
             className="link-button"
-            href={exportUrl("/export/research.zip", "")}
+            href={exportUrl("/export/research.zip", query)}
             download="research_bundle.zip"
           >
             Research Bundle (ZIP + codebook)
@@ -108,7 +159,7 @@ export default function Results() {
                   <td>
                     <a
                       className="link-button"
-                      href={exportUrl(`/export/${key}`, "")}
+                      href={exportUrl(`/export/${key}`, query)}
                       target="_blank"
                       rel="noreferrer"
                     >
@@ -116,7 +167,7 @@ export default function Results() {
                     </a>
                     <a
                       className="link-button"
-                      href={exportUrl(`/export/${key}.csv`, "")}
+                      href={exportUrl(`/export/${key}.csv`, query)}
                       target="_blank"
                       rel="noreferrer"
                     >
@@ -133,14 +184,14 @@ export default function Results() {
       <section className="section">
         <h2>Identifying Data</h2>
         <p className="hint">
-          Maps pseudonyms to Prolific tokens and Matrix IDs — needed for
+          Maps pseudonyms to Prolific tokens and Matrix IDs, needed for
           compensation and exclusions only. Keep this file out of analysis
           folders and never share it; it is deliberately excluded from the
           research bundle.
         </p>
         <a
           className="link-button secondary"
-          href={exportUrl("/export/linkage.csv", "")}
+          href={exportUrl("/export/linkage.csv", query)}
           download="linkage.csv"
         >
           Linkage (CSV, identifying)
@@ -169,7 +220,6 @@ function ResultsRow({ row }: { row: ConditionReportSummary }) {
       <td>{num(row.meanFairness)}</td>
       <td>{num(row.meanFeltHeard)}</td>
       <td>{num(row.meanShareStdDev)}</td>
-      <td>{num(row.meanShareGini)}</td>
       <td>{num(row.nudgesPerSessionMean)}</td>
       <td>
         {row.windowsEvaluated} ({row.windowsNudged})
@@ -179,6 +229,6 @@ function ResultsRow({ row }: { row: ConditionReportSummary }) {
 }
 
 function num(value: number | null): string {
-  if (value === null) return "—";
+  if (value === null) return "n/a";
   return String(Math.round(value * 100) / 100);
 }

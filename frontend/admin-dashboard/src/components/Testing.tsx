@@ -128,10 +128,10 @@ function TwoBotCard({ rows, onSaved }: { rows: ConditionProgress[]; onSaved: () 
       <p className="hint">
         Runs Assistant A (rule-based) and Assistant B (rule + LLM) side by
         side in the same room, following the condition's public/private
-        delivery. For piloting the detection arms only —{" "}
+        delivery. For piloting the detection arms only:{" "}
         <strong>never for real study sessions</strong>.
       </p>
-      {error && <p className="bad">Could not save the toggle — try again.</p>}
+      {error && <p className="bad">Could not save the toggle. Try again.</p>}
       {enabled.length > 0 && (
         <div className="warnbar">
           ⚠ 2-bot test is on for{" "}
@@ -148,8 +148,8 @@ function TwoBotCard({ rows, onSaved }: { rows: ConditionProgress[]; onSaved: () 
                 <strong>{condition.name}</strong>
                 <small>
                   {condition.config.interventionMode === "private"
-                    ? "🔒 Private delivery — both assistants follow it"
-                    : "📢 Public delivery — both assistants follow it"}
+                    ? "🔒 Private delivery (both assistants follow it)"
+                    : "📢 Public delivery (both assistants follow it)"}
                 </small>
               </span>
               <span className="twobot-state">

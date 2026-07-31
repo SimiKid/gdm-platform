@@ -232,6 +232,21 @@ describe("research reports (integration)", () => {
     expect(row).toContain(",0,"); // ranking error 0 present
     expect(row).toContain("7");
 
+    const rankingsCsv = (
+      await request(t.http)
+        .get("/api/export/rankings.csv")
+        .expect(200)
+        .expect("Content-Type", /text\/csv/)
+    ).text;
+    expect(rankingsCsv.split("\n")[0]).toContain(",oxygen,");
+    const entryRow = rankingsCsv
+      .split("\n")
+      .find((line) => line.includes(",entry,"));
+    expect(entryRow).toContain(pseudonym);
+    expect(entryRow).toContain(",0,"); // expert order → error 0
+    expect(rankingsCsv).not.toContain(first.participantId);
+    expect(rankingsCsv).not.toContain("tt-");
+
     const linkage = (
       await request(t.http).get("/api/export/linkage.csv").expect(200)
     ).text;
@@ -253,6 +268,46 @@ describe("research reports (integration)", () => {
       meanSatisfaction: 7,
       meanIndividualRankingError: 0,
     });
+  });
+
+  it("filters research exports by roundIds and stamps the round column", async () => {
+    const first = await fillSession(t, "baseline");
+    await request(t.http)
+      .post(`/api/sessions/${first[0].session.id}/finalize`)
+      .send({ messages: [], rankingHistory: [] })
+      .expect(201);
+
+    await request(t.http).post("/api/rounds").send({}).expect(201);
+    const second = await fillSession(t, "public-llm");
+    await request(t.http)
+      .post(`/api/sessions/${second[0].session.id}/finalize`)
+      .send({ messages: [], rankingHistory: [] })
+      .expect(201);
+
+    const all = (
+      await request(t.http).get("/api/export/sessions-analysis").expect(200)
+    ).body as { sessions: Array<{ round: number }> };
+    expect(all.sessions.map((row) => row.round).sort()).toEqual([1, 2]);
+
+    const roundTwo = (
+      await request(t.http)
+        .get("/api/export/sessions-analysis?roundIds=2")
+        .expect(200)
+    ).body as { sessions: Array<{ round: number; conditionId: string }> };
+    expect(roundTwo.sessions).toHaveLength(1);
+    expect(roundTwo.sessions[0]).toMatchObject({
+      round: 2,
+      conditionId: "public-llm",
+    });
+
+    const overview = (
+      await request(t.http)
+        .get("/api/export/sessions.csv?roundIds=1")
+        .expect(200)
+    ).text;
+    expect(overview.split("\n")[0]).toContain(",round,");
+    expect(overview).toContain(first[0].session.id);
+    expect(overview).not.toContain(second[0].session.id);
   });
 
   it("filters research exports by conditionIds", async () => {
@@ -297,6 +352,7 @@ describe("research reports (integration)", () => {
       "participants.csv",
       "sessions_analysis.csv",
       "windows.csv",
+      "rankings.csv",
       "messages.csv",
       "codebook.md",
     ]) {

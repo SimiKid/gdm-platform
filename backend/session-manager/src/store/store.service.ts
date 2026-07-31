@@ -22,6 +22,7 @@ import type {
   Ranking,
   RankingTask,
   Session,
+  StudyRound,
   StudySettings,
   Survey,
   WindowEvaluation,
@@ -56,6 +57,14 @@ type SessionRow = Prisma.SessionRecordGetPayload<{
   include: typeof SESSION_INCLUDE;
 }>;
 
+/** A study round as stored (without the derived per-round counts). */
+interface RoundState {
+  id: number;
+  label: string;
+  startedAt: string; // ISO 8601
+  endedAt?: string;
+}
+
 /**
  * Persistence boundary for study state.
  *
@@ -70,6 +79,7 @@ export class StoreService implements OnModuleInit {
   private readonly sessions = new Map<string, Session>();
   private readonly memoryCreds = new Map<string, MatrixCreds>();
   private readonly memorySettings: StudySettings = { compensationUrl: "" };
+  private readonly memoryRounds: RoundState[] = [];
   private seedPromise?: Promise<void>;
 
   constructor(@Optional() private readonly prisma?: PrismaService) {
@@ -139,31 +149,148 @@ export class StoreService implements OnModuleInit {
     return this.getStudySettings();
   }
 
-  /** Sessions counting against a condition's goal (everything but aborted). */
-  async claimedCount(conditionId: string): Promise<number> {
+  /**
+   * The study round currently open (endedAt unset). Lazily creates Round 1
+   * when the table is empty (fresh DB, integration-test TRUNCATE).
+   */
+  async currentRound(): Promise<RoundState> {
+    if (!this.dbEnabled) {
+      this.seedMemory();
+      const open = this.memoryRounds.find((round) => !round.endedAt);
+      if (open) return open;
+      const next: RoundState = {
+        id: Math.max(0, ...this.memoryRounds.map((r) => r.id)) + 1,
+        label: "",
+        startedAt: new Date().toISOString(),
+      };
+      this.memoryRounds.push(next);
+      return next;
+    }
+    await this.ensureSeeded();
+    const open = await this.db.studyRoundRecord.findFirst({
+      where: { endedAt: null },
+    });
+    if (open) return roundFromRow(open);
+    const maxId = await this.db.studyRoundRecord.aggregate({
+      _max: { id: true },
+    });
+    const created = await this.db.studyRoundRecord.create({
+      data: { id: (maxId._max.id ?? 0) + 1, label: "" },
+    });
+    return roundFromRow(created);
+  }
+
+  /** All rounds, oldest first, with study-session counts (e2e- excluded). */
+  async listRounds(): Promise<StudyRound[]> {
+    const rounds = this.dbEnabled
+      ? (await this.dbRounds()).map(roundFromRow)
+      : [...this.memoryRounds];
+    if (rounds.length === 0) rounds.push(await this.currentRound());
+    const sessions = (await this.allSessions()).filter(
+      (session) => !session.condition.id.startsWith("e2e-"),
+    );
+    return rounds
+      .sort((a, b) => a.id - b.id)
+      .map((round) => ({
+        number: round.id,
+        label: round.label,
+        startedAt: round.startedAt,
+        endedAt: round.endedAt,
+        sessionCount: sessions.filter(
+          (s) => s.roundId === round.id && s.status !== "aborted",
+        ).length,
+        completedCount: sessions.filter(
+          (s) => s.roundId === round.id && s.status === "completed",
+        ).length,
+      }));
+  }
+
+  /** Close the open round and open the next one. */
+  async startNewRound(label: string): Promise<RoundState> {
+    const current = await this.currentRound();
+    const now = new Date().toISOString();
+    if (!this.dbEnabled) {
+      current.endedAt = now;
+      const next: RoundState = {
+        id: current.id + 1,
+        label: label.trim(),
+        startedAt: now,
+      };
+      this.memoryRounds.push(next);
+      return next;
+    }
+    const created = await this.db.$transaction(async (tx) => {
+      await tx.studyRoundRecord.update({
+        where: { id: current.id },
+        data: { endedAt: new Date(now) },
+      });
+      return tx.studyRoundRecord.create({
+        data: { id: current.id + 1, label: label.trim() },
+      });
+    });
+    return roundFromRow(created);
+  }
+
+  /** Rename a round; returns undefined for an unknown round number. */
+  async updateRoundLabel(
+    id: number,
+    label: string,
+  ): Promise<RoundState | undefined> {
+    if (!this.dbEnabled) {
+      const round = this.memoryRounds.find((r) => r.id === id);
+      if (!round) return undefined;
+      round.label = label.trim();
+      return round;
+    }
+    const exists = await this.db.studyRoundRecord.findUnique({ where: { id } });
+    if (!exists) return undefined;
+    const updated = await this.db.studyRoundRecord.update({
+      where: { id },
+      data: { label: label.trim() },
+    });
+    return roundFromRow(updated);
+  }
+
+  private async dbRounds() {
+    await this.ensureSeeded();
+    return this.db.studyRoundRecord.findMany({ orderBy: { id: "asc" } });
+  }
+
+  /**
+   * Sessions counting against a condition's goal in one round (everything
+   * but aborted). Round-scoped so goals reset when a new round starts.
+   */
+  async claimedCount(conditionId: string, roundId: number): Promise<number> {
     if (!this.dbEnabled) {
       return this.allMemorySessions().filter(
-        (s) => s.condition.id === conditionId && s.status !== "aborted",
+        (s) =>
+          s.condition.id === conditionId &&
+          s.roundId === roundId &&
+          s.status !== "aborted",
       ).length;
     }
     await this.ensureSeeded();
     return this.db.sessionRecord.count({
       where: {
         conditionId,
+        roundId,
         status: { not: "aborted" },
       },
     });
   }
 
-  async completedCount(conditionId: string): Promise<number> {
+  async completedCount(conditionId: string, roundId: number): Promise<number> {
     if (!this.dbEnabled) {
       return this.allMemorySessions().filter(
-        (s) => s.condition.id === conditionId && s.status === "completed",
+        (s) =>
+          s.condition.id === conditionId &&
+          s.roundId === roundId &&
+          s.status === "completed",
       ).length;
     }
     await this.ensureSeeded();
     return this.db.sessionRecord.count({
-      where: { conditionId, status: "completed" },
+      where: { conditionId, roundId, status: "completed" },
     });
   }
 
@@ -208,6 +335,7 @@ export class StoreService implements OnModuleInit {
           id: session.id,
           status: session.status,
           conditionId: session.condition.id,
+          roundId: session.roundId,
           conditionSnapshot: json(session.condition),
           bot: json(session.bot),
           briefing: json(session.briefing),
@@ -228,6 +356,7 @@ export class StoreService implements OnModuleInit {
         update: {
           status: session.status,
           conditionId: session.condition.id,
+          roundId: session.roundId,
           conditionSnapshot: json(session.condition),
           bot: json(session.bot),
           briefing: json(session.briefing),
@@ -291,13 +420,18 @@ export class StoreService implements OnModuleInit {
     });
   }
 
-  /** The oldest still-forming session with a free seat, if any. */
+  /** The oldest still-forming CURRENT-ROUND session with a free seat. */
   async findForming(): Promise<Session | undefined> {
+    const current = await this.currentRound();
     const sessions = this.dbEnabled
       ? await this.waitingSessionsFromDb()
       : this.allMemorySessions().filter((s) => s.status === "waiting");
     return sessions
-      .filter((s) => s.participants.length < s.condition.groupSize)
+      .filter(
+        (s) =>
+          s.roundId === current.id &&
+          s.participants.length < s.condition.groupSize,
+      )
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
   }
 
@@ -306,6 +440,8 @@ export class StoreService implements OnModuleInit {
     const session: Session = {
       id: randomUUID(),
       status: "waiting",
+      // Stamped once from the open round; the session never changes rounds.
+      roundId: (await this.currentRound()).id,
       condition,
       bot: { llmEnabled: condition.config.llmMode === "active", condition },
       participants: [],
@@ -397,6 +533,11 @@ export class StoreService implements OnModuleInit {
   private seedMemory(): void {
     if (this.conditions.length > 0) return;
     this.conditions.push(...seedConditions());
+    this.memoryRounds.push({
+      id: 1,
+      label: "",
+      startedAt: new Date().toISOString(),
+    });
   }
 
   private async seedDb(): Promise<void> {
@@ -743,6 +884,7 @@ function sessionFromRow(row: SessionRow): Session {
   return {
     id: row.id,
     status: row.status as Session["status"],
+    roundId: row.roundId,
     condition: fromJson<Condition>(row.conditionSnapshot),
     bot: fromJson<BotConfig>(row.bot),
     participants: row.participants.map(participantFromRow),
@@ -822,6 +964,20 @@ function sortConditions(a: Condition, b: Condition): number {
   if (ai === -1) return 1;
   if (bi === -1) return -1;
   return ai - bi;
+}
+
+function roundFromRow(row: {
+  id: number;
+  label: string;
+  startedAt: Date;
+  endedAt: Date | null;
+}): RoundState {
+  return {
+    id: row.id,
+    label: row.label,
+    startedAt: row.startedAt.toISOString(),
+    endedAt: row.endedAt?.toISOString(),
+  };
 }
 
 function toDate(value: string): Date {

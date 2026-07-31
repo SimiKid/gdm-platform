@@ -5,15 +5,15 @@ All exports are available from the **Admin Dashboard**. No scripting is required
 - **Overview tab → Export Data**: the raw exports below (two top-level downloads and four focused sub-exports).
 - **Results tab → Research Exports**: the [analysis-ready research exports](#research-exports-analysis-ready) — pseudonymized, joined tables plus a one-click ZIP bundle with a codebook. This is what the TA/analyst normally downloads.
 
-Every endpoint accepts `?conditionIds=a,b,c` to restrict the export to specific study arms (e.g. `baseline,public-llm,private-llm`). Sessions from automated `e2e-…` test conditions are always excluded.
+Every endpoint accepts `?conditionIds=a,b,c` to restrict the export to specific study arms (e.g. `baseline,public-llm,private-llm`) and `?roundIds=1,2` to restrict to specific study rounds; both compose. Sessions from automated `e2e-…` test conditions are always excluded. Note the failure modes of `roundIds`: non-numeric or non-positive values are silently ignored (so `?roundIds=abc` returns **all** rounds, not none), while a valid but non-existent round number returns an empty dataset with HTTP 200.
 
 ---
 
 ## Researcher workflow
 
-**1. During data collection — monitor.** Overview shows live sessions, per-condition completion, and the study link for recruitment. The Results tab shows per-arm descriptives (completed n, entry/exit survey return rates, mean group ranking error vs. the NASA expert solution, satisfaction, participation equality, nudges per session) — use it to catch problems early (an arm with low exit-survey returns, nudges never firing), not for inference. Settings → Recruiting toggles arms; goals auto-stop recruiting when reached.
+**1. During data collection — monitor.** Overview shows live sessions, per-condition completion, and the study link for recruitment. The Results tab shows per-arm descriptives (completed n, entry/exit survey submission counts, mean group ranking error vs. the NASA expert solution, satisfaction, participation equality, nudges per session) — use it to catch problems early (an arm with low exit-survey returns, nudges never firing), not for inference. Two reading notes: the survey figures are raw counts over **all** sessions in the filter (including waiting/aborted), while the means on the same row are over completed sessions only; and a round filter does not shrink the condition list — arms with no sessions in the selected rounds still appear as all-zero rows. Settings → Recruiting toggles arms; goals auto-stop recruiting when reached.
 
-**2. Study done — one download.** Results tab → **Research Bundle (ZIP + codebook)**. Restrict to specific arms by appending `?conditionIds=…` to the URL, or filter the `condition_id` column later. The bundle is fully pseudonymized and safe to share within the team (and as supplementary data), with `codebook.md` inside documenting every column.
+**2. Study done — one download.** Results tab → **Research Bundle (ZIP + codebook)**. Restrict to specific arms by appending `?conditionIds=…` to the URL, or filter the `condition_id` column later. The bundle is fully pseudonymized and safe to share within the team (and as supplementary data), with `codebook.md` inside documenting the files (a full column table for `participants.csv`; prose descriptions of the derived measures for the other files).
 
 **3. Analysis — each file answers one level of question.**
 
@@ -22,11 +22,16 @@ Every endpoint accepts `?conditionIds=a,b,c` to restrict the export to specific 
 | `participants.csv` | Individual | Felt heard? Ranking accuracy? How much did each person speak, how many nudges did they get? (mixed model, `session_pseudonym` as grouping factor) |
 | `sessions_analysis.csv` | Group | Did the bot equalize participation (`share_std_dev`, `share_gini`)? Better group ranking (`group_ranking_error`)? |
 | `windows.csv` | Time | Dominance dynamics per contribution window across all arms — baseline included via `baseline-suppressed` counterfactual rows |
+| `rankings.csv` | Item | Raw ranking orders (entry/exit individual, every group edit, group final) — item-level misplacement and convergence analyses |
 | `messages.csv` | Transcript | Qualitative coding, manipulation checks |
 
 **4. Compensation & exclusions — the only step that touches identity.** Download `linkage.csv` separately (Results tab, bottom). Match Prolific tokens to approve payments; to exclude a participant, note their pseudonym and drop that row from the analysis files. The linkage file never enters the analysis folder and is never shared.
 
-The raw exports below remain the escape hatch when the analyst needs something the research files omit (raw Matrix IDs, reaction data, full LLM classifier prompts/outputs).
+**Running the study in rounds.** The study can run in numbered rounds, possibly with different Session & Bot Parameters per round. Start a new round in **Settings → Study Rounds** (optionally with a label like "threshold 35%" — labels can also be edited after the round started): every arm's recruiting progress restarts at 0 / goal, **all** open waiting-room lobbies are aborted so groups never mix rounds (the response reports how many), and running sessions finish in their round — then adjust the shared parameters if the new round differs. Note the recruiting goal itself is one number per arm, not per round; only the *completed* count is tracked per round, so lowering a goal later also changes past rounds' displayed progress. Every session is stamped with its round: the Overview shows the current round and a Round column, and the Results tab's round chips (shown once more than one round exists) filter both the descriptives table and **every** Results-tab download link (so a per-round bundle or the overall dataset is one click). The research export files, `overview.csv`, and `linkage.csv` carry a `round` column; the raw individual exports (messages, interventions, surveys, contributions) do not, and the Overview-tab raw-export links always download all rounds — append `?roundIds=…` to the URL by hand if needed. Sessions collected before the rounds feature existed are retroactively stamped Round 1 by the migration, so "round = 1" does not by itself mean a deliberate round-1 protocol. Per-round parameter values are reconstructable from each session's frozen condition snapshot (and per-row `window_minutes`/`threshold` in windows.csv).
+
+The rounds API behind the Settings UI: `GET /api/rounds` (list, with per-round completed counts), `POST /api/rounds` (start a new round; returns the number of aborted waiting lobbies), `PUT /api/rounds/:number` (edit a round's label).
+
+The raw exports below remain the escape hatch when the analyst needs something the research files omit (raw Matrix IDs, reaction data, full LLM classifier prompts/outputs). One join caveat: `participant_id` in the contributions export is the **Matrix user id** (collected from message senders), not the internal participant UUID used by the surveys/linkage exports — join via `linkage.csv`'s Matrix id column, and note that participants who never sent a message or event get no contributions row at all.
 
 ---
 
@@ -38,6 +43,8 @@ The raw exports below remain the escape hatch when the analyst needs something t
 
 The most complete export. Contains every session as a nested JSON object with all sub-records embedded. Use this when you need the full picture or when writing analysis scripts.
 
+The example below is **abridged**: each session object additionally embeds `bot`, `briefing`, `rankingTask`, `ranking` (the current shared ranking), `polls`, `roomId`, `windowEvaluations` (one record per evaluated window boundary — the source of `windows.csv`), `classificationFailures` (failed classifier calls), and internal checkpoint fields (`processedEventIds`, `runtimeState`).
+
 ```json
 {
   "generatedAt": "2026-07-13T10:00:00Z",
@@ -45,33 +52,45 @@ The most complete export. Contains every session as a nested JSON object with al
     {
       "id": "session-uuid",
       "status": "completed",
+      "roundId": 1,
       "createdAt": "2026-07-13T10:00:00Z",
       "startedAt": "2026-07-13T10:05:00Z",
       "completedAt": "2026-07-13T10:35:00Z",
-      "durationMinutes": 30,
+      "durationMinutes": 10,
 
       "condition": {
-        "id": "cond-1",
+        "id": "baseline",
         "name": "Baseline",
         "active": false,
         "goal": 5,
-        "durationMinutes": 30,
-        "groupSize": 5,
+        "durationMinutes": 10,
+        "groupSize": 3,
         "config": { "interventionMode": "baseline", "llmMode": "off" }
       },
 
       "participants": [
         {
           "id": "participant-uuid",
-          "name": "blue",
+          "name": "Blue",
+          "matrixUserId": "@gdm_user_abc:synapse",
           "trackingToken": "prolific-token",
           "entrySurvey": {
             "submittedAt": "2026-07-13T10:04:00Z",
-            "answers": { "q1": 4, "q2": "agree", "ranking": ["B","C","A","D","E"] }
+            "answers": {
+              "age": 29, "gender": "female", "education": "bachelor",
+              "fieldOfStudy": "psychology", "englishProficiency": "fluent",
+              "teamworkFrequency": "weekly", "chatComfort": 5, "topicFamiliarity": 2,
+              "individualRanking": ["oxygen", "water", "map", "…"],
+              "rankingCompleted": true,
+              "rankingSecondsUsed": 312
+            }
           },
           "exitSurvey": {
             "submittedAt": "2026-07-13T10:36:00Z",
-            "answers": { "fairness": 5, "cohesion": 4, "ai_perception": 3 }
+            "answers": {
+              "satisfaction": 5, "fairness": 4, "feltHeard": 4,
+              "finalRanking": ["oxygen", "water", "flares", "…"]
+            }
           }
         }
       ],
@@ -81,38 +100,46 @@ The most complete export. Contains every session as a nested JSON object with al
           {
             "id": "msg-uuid",
             "timestamp": "2026-07-13T10:07:00Z",
-            "senderId": "participant-uuid",
+            "senderId": "@gdm_user_abc:synapse",
             "recipientId": null,
-            "text": "I think candidate B is strong because of their project management background.",
-            "reactions": [
-              { "key": "👍", "senderId": "participant-uuid-2", "timestamp": "2026-07-13T10:07:30Z" }
-            ]
+            "text": "I'd put the oxygen tanks first — nothing else matters if we can't breathe.",
+            "reactions": []
           }
         ]
       },
 
       "interventions": [
         {
+          "id": "intervention-uuid",
           "sessionId": "session-uuid",
-          "conditionId": "cond-2",
+          "roomId": "!room-id:synapse",
+          "conditionId": "public-rule",
           "timestamp": "2026-07-13T10:15:00Z",
           "mode": "public",
           "audience": "public",
           "trigger": "contribution-threshold",
           "threshold": 0.4,
           "llmMode": "off",
-          "targets": [{ "identityName": "blue" }],
-          "quietMembers": [{ "identityName": "red" }],
-          "message": "Blue raised a point that hasn't been addressed yet."
+          "contributionWindowMinutes": 4,
+          "contributionSplit": [
+            {
+              "userId": "@gdm_user_abc:synapse", "identityName": "Blue",
+              "messageCount": 9, "wordCount": 140, "score": 16,
+              "share": 0.72, "meaningfulnessScore": 0, "dominanceScore": 0.72
+            }
+          ],
+          "targets": [{ "userId": "@gdm_user_abc:synapse", "identityName": "Blue" }],
+          "quietMembers": [{ "userId": "@gdm_user_def:synapse", "identityName": "Red" }],
+          "message": "@Blue, you've brought a lot of energy to this — 72% of the airtime so far! Might be a good moment to hear from the others, too."
         }
       ],
 
       "rankingHistory": [
         {
-          "taskId": "nasa-task",
-          "order": ["B", "C", "A", "D", "E"],
+          "taskId": "moon-survival",
+          "order": ["oxygen", "water", "map", "…"],
           "updatedAt": "2026-07-13T10:20:00Z",
-          "updatedBy": "participant-uuid"
+          "updatedBy": "@gdm_user_abc:synapse"
         }
       ],
 
@@ -120,7 +147,7 @@ The most complete export. Contains every session as a nested JSON object with al
         {
           "id": "evt-uuid",
           "type": "tab-hidden",
-          "participantId": "participant-uuid",
+          "participantId": "@gdm_user_abc:synapse",
           "timestamp": "2026-07-13T10:12:00Z",
           "durationMs": 3000,
           "payload": {}
@@ -130,7 +157,7 @@ The most complete export. Contains every session as a nested JSON object with al
       "contributionClassifications": [
         {
           "messageId": "msg-uuid",
-          "senderId": "participant-uuid",
+          "senderId": "@gdm_user_abc:synapse",
           "classifiedAt": "2026-07-13T10:07:05Z",
           "respondsToPrior": { "value": true, "reason": "Agrees with Red's oxygen proposal." },
           "referencesTaskItem": { "value": true, "reason": "Names the oxygen tanks." },
@@ -138,7 +165,9 @@ The most complete export. Contains every session as a nested JSON object with al
           "invitesParticipation": { "value": false, "reason": "Does not address another member." },
           "meaningfulnessScore": 0.667,
           "model": "claude-haiku-4-5-20251001",
-          "promptVersion": "meaningfulness-v1"
+          "promptVersion": "meaningfulness-v1",
+          "prompt": "…the exact prompt sent to the API…",
+          "rawOutput": "…the raw JSON the model returned…"
         }
       ]
     }
@@ -170,6 +199,7 @@ One row per session. Intended for a quick overview of study progress and session
 | `session_id` | Unique session identifier |
 | `condition_id` | Condition identifier |
 | `condition_name` | Human-readable condition name (e.g. "Baseline") |
+| `round` | Study round the session was created in (1, 2, …) |
 | `status` | `waiting`, `running`, `completed`, or `aborted` |
 | `participant_count` | Number of participants who joined |
 | `message_count` | Total messages sent in the session (includes bot nudges, which are recorded in the chat log) |
@@ -205,12 +235,10 @@ One record per chat message across all sessions.
       "conditionName": "Baseline",
       "id": "msg-uuid",
       "timestamp": "2026-07-13T10:07:00Z",
-      "senderId": "participant-uuid",
+      "senderId": "@gdm_user_abc:synapse",
       "recipientId": null,
-      "text": "I think candidate B is strong because of their project management background.",
-      "reactions": [
-        { "key": "👍", "senderId": "participant-uuid-2", "timestamp": "2026-07-13T10:07:30Z" }
-      ]
+      "text": "I'd put the oxygen tanks first — nothing else matters if we can't breathe.",
+      "reactions": []
     }
   ]
 }
@@ -247,18 +275,28 @@ One record per bot intervention across all sessions.
   "generatedAt": "2026-07-13T10:00:00Z",
   "interventions": [
     {
+      "id": "intervention-uuid",
       "sessionId": "session-uuid",
-      "conditionId": "cond-2",
-      "conditionName": "Public Neutral",
+      "roomId": "!room-id:synapse",
+      "conditionId": "public-rule",
+      "conditionName": "Public × Rule-based",
       "timestamp": "2026-07-13T10:15:00Z",
       "mode": "public",
       "audience": "public",
       "trigger": "contribution-threshold",
       "threshold": 0.4,
       "llmMode": "off",
-      "targets": [{ "identityName": "blue" }],
-      "quietMembers": [{ "identityName": "red" }],
-      "message": "Blue raised a point that hasn't been addressed yet."
+      "contributionWindowMinutes": 4,
+      "contributionSplit": [
+        {
+          "userId": "@gdm_user_abc:synapse", "identityName": "Blue",
+          "messageCount": 9, "wordCount": 140, "score": 16,
+          "share": 0.72, "meaningfulnessScore": 0, "dominanceScore": 0.72
+        }
+      ],
+      "targets": [{ "userId": "@gdm_user_abc:synapse", "identityName": "Blue" }],
+      "quietMembers": [{ "userId": "@gdm_user_def:synapse", "identityName": "Red" }],
+      "message": "@Blue, you've brought a lot of energy to this — 72% of the airtime so far! Might be a good moment to hear from the others, too."
     }
   ]
 }
@@ -304,16 +342,19 @@ One record per participant per survey kind (`entry` or `exit`).
       "kind": "entry",
       "submittedAt": "2026-07-13T10:04:00Z",
       "answers": {
-        "q1": 4,
-        "q2": "agree",
-        "ranking": ["B", "C", "A", "D", "E"]
+        "age": 29, "gender": "female", "education": "bachelor",
+        "fieldOfStudy": "psychology", "englishProficiency": "fluent",
+        "teamworkFrequency": "weekly", "chatComfort": 5, "topicFamiliarity": 2,
+        "individualRanking": ["oxygen", "water", "map", "…"],
+        "rankingCompleted": true,
+        "rankingSecondsUsed": 312
       }
     }
   ]
 }
 ```
 
-> `answers` keys match the question ids defined in the study configuration. The `ranking` key (when present) holds the participant's individual ranking of candidates as an ordered array.
+> `answers` keys are fixed by the survey components. Entry surveys carry the demographics/scales above plus `individualRanking` (the participant's individual Moon Survival order), `rankingCompleted`, and `rankingSecondsUsed`. Exit surveys carry `satisfaction`, `fairness`, `feltHeard`, and `finalRanking` (the participant's individual re-ranking).
 
 **CSV columns**
 
@@ -386,11 +427,15 @@ The JSON export contains three arrays. The CSV contains only the aggregate contr
       "invitesParticipation": { "value": false, "reason": "Does not address another member." },
       "meaningfulnessScore": 0.667,
       "model": "claude-haiku-4-5-20251001",
-      "promptVersion": "meaningfulness-v1"
+      "promptVersion": "meaningfulness-v1",
+      "prompt": "…the exact prompt sent to the API…",
+      "rawOutput": "…the raw JSON the model returned…"
     }
   ]
 }
 ```
+
+> `participant_id`/`participantId` in this export is the **Matrix user id** (rows are collected from message senders and telemetry), not the internal participant UUID used by the surveys and linkage exports — see the join caveat above. Participants with no recorded activity have no row.
 
 **`contributions` fields**
 
@@ -441,31 +486,37 @@ The JSON export contains three arrays. The CSV contains only the aggregate contr
 
 Available from the **Results tab → Research Exports** section. These are the files intended for statistical analysis: identifiers are **pseudonymous** (`P-xxxxxxxx` for participants, `S-xxxxxxxx` for sessions — the first 8 hex chars of SHA-256 over the internal UUID, stable across re-downloads), surveys and activity are pre-joined, and derived measures (ranking scores, participation equality) are computed server-side. Bot senders appear as `BOT` (`BOT-A`/`BOT-B` in pilot comparison sessions).
 
-**One-click bundle:** `GET /api/export/research.zip` → `research_bundle.zip`, containing `participants.csv`, `sessions_analysis.csv`, `windows.csv`, a pseudonymized `messages.csv`, and `codebook.md` — a generated data dictionary documenting every column, the NASA scoring rule and expert key, the equality metrics, and the window-outcome glossary. The linkage file is deliberately **not** in the bundle.
+**One-click bundle:** `GET /api/export/research.zip` → `research_bundle.zip`, containing `participants.csv`, `sessions_analysis.csv`, `windows.csv`, `rankings.csv`, a pseudonymized `messages.csv`, and `codebook.md` — a generated data dictionary with a study-rounds section, a full column table for `participants.csv`, prose descriptions of the other files, the NASA scoring rule and expert key, the equality metrics, and the window-outcome glossary. The linkage file is deliberately **not** in the bundle.
 
 ### Participants
 
 **Endpoints:** `GET /api/export/participants` (JSON) · `GET /api/export/participants.csv`
 
-One row per participant: condition (from the session's frozen snapshot), entry-survey demographics and scales, exit-survey outcomes (`satisfaction`, `fairness`, `felt_heard`), NASA ranking error scores for the individual entry ranking (only when explicitly completed) and the exit final ranking, chat activity (`message_count`, `word_count`, `contribution_share`), LLM classifier aggregates, nudges received (total/public/private), and behavioral aggregates (`typing_duration_ms`, `tab_hidden_count`, `ranking_move_count`).
+One row per participant: session/condition context (`round`, `intervention_mode`, `llm_mode`, `session_status`, `group_size`, `started_at`), entry-survey demographics and scales plus `entry_submitted`/`exit_submitted` flags, exit-survey outcomes (`satisfaction`, `fairness`, `felt_heard`), NASA ranking error scores for the individual entry ranking (only when explicitly completed, with `individual_ranking_seconds_used`) and the exit final ranking, chat activity (`message_count`, `word_count`, `character_count`, `contribution_share`), LLM classifier aggregates (`classified_message_count` and per-indicator counts), nudges received (total/public/private), and behavioral aggregates (`typing_duration_ms`, `tab_hidden_count`, `ranking_move_count`).
 
 ### Sessions (analysis)
 
 **Endpoints:** `GET /api/export/sessions-analysis` (JSON) · `GET /api/export/sessions-analysis.csv` → `sessions_analysis.csv`
 
-One row per session: condition and status, `group_ranking_error` (NASA score of the final shared ranking — read together with `ranking_edit_count`), participation-equality metrics (`share_std_dev`, `share_gini`), message/word counts split into participant vs. bot, intervention counts by audience, window-outcome counts, classification coverage (`classification_count`, `classification_failure_count`), and exit-survey means.
+One row per session: condition, round, and status, `group_ranking_error` (NASA score of the final shared ranking — read together with `ranking_edit_count`), participation-equality metrics (`share_std_dev`, `share_gini`), message counts split into participant vs. bot (`participant_message_count`, `bot_message_count`) plus `word_count_total` (participant messages only — there is no bot word count), intervention counts by audience, window-outcome counts, classification coverage (`classification_count`, `classification_failure_count`), and exit-survey means.
+
+### Rankings (raw orders)
+
+**Endpoints:** `GET /api/export/rankings` (JSON) · `GET /api/export/rankings.csv`
+
+One row per ranking, with `round` and `condition_id` context columns: each participant's `entry` and `exit` individual order, every shared-ranking state (`group-edit`, ordered by `edit_index`, with the editing member's pseudonym — empty when the edit was recorded by `system`), and the session's `group-final` order (emitted for **every** session, including zero-edit ones). The 15 item columns hold the rank assigned to each item, ready for item-level analyses against the expert key. Entry rows that timed out carry `ranking_completed = false` and no error score (same policy as participants.csv), but the raw order is included.
 
 ### Contribution windows
 
 **Endpoints:** `GET /api/export/windows` (JSON) · `GET /api/export/windows.csv`
 
-The bot records **every** evaluated contribution-window boundary, not just fired nudges — including baseline sessions, where `baseline-suppressed` rows show when a nudge *would* have fired. The CSV is long format (one row per window × participant, ready for mixed-effects models); the JSON nests the per-participant split inside each window record. Outcomes: `nudged`, `no-target`, `grace-suppressed`, `baseline-suppressed`, `warm-up`, `wrap-up`, `too-few-participants`. Only sessions run after this instrumentation was deployed have window records.
+The bot records **every** evaluated contribution-window boundary, not just fired nudges — including baseline sessions, where `baseline-suppressed` rows show when a nudge *would* have fired. The CSV is long format (one row per window × participant, ready for mixed-effects models); the JSON nests the per-participant split inside each window record. Besides the identifiers and outcome, each CSV row carries `round`, `intervention_mode`, `arm` (`primary` normally; `a`/`b` in pilot comparison sessions), the frozen `window_minutes`/`threshold`, `max_dominance_score`, `is_candidate_target`, and `was_nudged`. Outcomes: `nudged`, `no-target`, `grace-suppressed`, `baseline-suppressed`, `warm-up`, `wrap-up`, `too-few-participants`. Only sessions run after this instrumentation was deployed have window records.
 
 ### Linkage (identifying — handle with care)
 
 **Endpoint:** `GET /api/export/linkage.csv`
 
-Maps `participant_pseudonym`/`session_pseudonym` back to the internal UUIDs, the Prolific `tracking_token`, and the Matrix user id. Needed for compensation and exclusions only. Keep it out of analysis folders and never share it with the analysis dataset; it is excluded from the research bundle by design.
+Maps `participant_pseudonym`/`session_pseudonym` back to the internal UUIDs, the Prolific `tracking_token`, and the Matrix user id, with a `round` context column. Needed for compensation and exclusions only. Keep it out of analysis folders and never share it with the analysis dataset; it is excluded from the research bundle by design.
 
 ### Results summary (dashboard)
 
