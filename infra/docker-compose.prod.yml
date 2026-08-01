@@ -5,7 +5,8 @@
 ##
 ## Only Caddy is publicly exposed (80/443, auto-TLS via Let's Encrypt).
 ## The admin dashboard is routed by Caddy at /admin/ and remains bound to
-## localhost as an SSH-tunnel fallback. Its API calls require ADMIN_API_TOKEN.
+## localhost as an SSH-tunnel fallback. Caddy restricts its UI and researcher
+## APIs to the supplied UZH networks; API calls also require ADMIN_API_TOKEN.
 ##
 ## Before first start: render the Synapse config (sh render-homeserver.sh) —
 ## server_name is immutable once Synapse has started.

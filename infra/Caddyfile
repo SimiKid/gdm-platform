@@ -6,34 +6,55 @@
 }
 
 {$PUBLIC_HOST} {
-	handle /_matrix/* {
-		# Participant accounts are registered server-side by the Session
-		# Manager over the internal Docker network — Matrix registration must
-		# never be reachable from the internet (homeserver.yaml keeps it
-		# enabled). The matcher must live INSIDE this handle block: a
-		# top-level respond sorts after handle in Caddy's directive order
-		# and would never run for /_matrix/* requests.
-		@register path_regexp ^/_matrix/client/[^/]+/register
-		respond @register 403
-
-		reverse_proxy synapse:8008
+	# The participant study remains public, but the researcher surface is only
+	# reachable from UZH-managed networks. Keep ADMIN_API_TOKEN enabled as a
+	# second authentication layer: a permitted source address identifies a
+	# network, not an individual researcher.
+	#
+	# The detailed 10.x NAC ranges supplied by IfI are all contained in 10/8.
+	# The guest-network row was internally inconsistent; these two ranges cover
+	# its complete stated start/end range (185.207.116.0-185.207.120.255).
+	@adminDenied {
+		not remote_ip 89.206.64.0/18 130.60.0.0/16 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 144.200.0.0/16 185.207.116.0/22 185.207.120.0/24 192.41.132.0/22 192.41.136.0/24
+		expression `
+			path('/admin', '/admin/*',
+				'/api/admin/*',
+				'/api/conditions', '/api/conditions/*',
+				'/api/interventions',
+				'/api/export/*')
+			|| (path('/api/sessions') && method('GET'))
+			|| (path('/api/settings') && method('PUT'))
+		`
 	}
 
-	handle /api/* {
-		reverse_proxy session-manager:3001
-	}
+	# route preserves the security check ahead of the terminal handle blocks.
+	# Without it, Caddy's normal directive sorting places respond after handle.
+	route {
+		respond @adminDenied 403
 
-	# Temporary researcher access on the existing public host. The dashboard
-	# itself contains no research data; every researcher API request remains
-	# protected by ADMIN_API_TOKEN in the Session Manager. Keep the localhost
-	# port binding below as an SSH-tunnel fallback.
-	redir /admin /admin/ 308
-	handle_path /admin/* {
-		reverse_proxy admin-dashboard:80
-	}
+		handle /_matrix/* {
+			# Participant accounts are registered server-side by the Session
+			# Manager over the internal Docker network — Matrix registration must
+			# never be reachable from the internet (homeserver.yaml keeps it
+			# enabled).
+			@register path_regexp ^/_matrix/client/[^/]+/register
+			respond @register 403
 
-	# Everything else is the participant SPA (its nginx serves the static build).
-	handle {
-		reverse_proxy participant:80
+			reverse_proxy synapse:8008
+		}
+
+		handle /api/* {
+			reverse_proxy session-manager:3001
+		}
+
+		redir /admin /admin/ 308
+		handle_path /admin/* {
+			reverse_proxy admin-dashboard:80
+		}
+
+		# Everything else is the participant SPA (its nginx serves the static build).
+		handle {
+			reverse_proxy participant:80
+		}
 	}
 }

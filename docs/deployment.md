@@ -10,7 +10,7 @@ reachable via UZH VPN; ports 80/443 are open to the public internet.
 Internet ──► Caddy :80/:443 (TLS via Let's Encrypt)
               ├── /_matrix/*  ─► Synapse            (registration answers 403)
               ├── /api/*      ─► Session Manager
-              ├── /admin/*    ─► Admin Dashboard     (API token required)
+              ├── /admin/*    ─► Admin Dashboard     (UZH network + API token)
               └── /*          ─► Participant SPA
 VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (fallback)
 ```
@@ -177,9 +177,16 @@ If a migration was involved, restore the matching DB backup first (below).
 
 ## Admin dashboard access
 
-Open https://gdmproject.ifi.uzh.ch/admin/ and enter `ADMIN_API_TOKEN`. The
-dashboard shell is public, but every researcher endpoint containing sessions,
-settings or exports rejects requests without that token.
+From an allowed UZH network or the Remote Access VPN, open
+https://gdmproject.ifi.uzh.ch/admin/ and enter `ADMIN_API_TOKEN`. Caddy rejects
+both the dashboard shell and researcher-only API routes from other source
+networks. The Session Manager still requires the token as a second layer;
+network access alone never authorizes a researcher request.
+
+The allowlist lives in `infra/Caddyfile`. It includes the UZH institutional,
+VPN, guest, Eduroam and supplied internal address ranges. The guest range is
+represented by `185.207.116.0/22` plus `185.207.120.0/24`, covering the complete
+stated interval `185.207.116.0-185.207.120.255`.
 
 The original SSH-tunnel route remains available as a fallback from a machine
 on the UZH VPN:
