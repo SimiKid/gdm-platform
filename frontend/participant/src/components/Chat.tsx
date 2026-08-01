@@ -8,7 +8,13 @@ import { ClientEvent, RoomEvent, RoomMemberEvent } from "matrix-js-sdk";
 import { GDM_RECIPIENT_KEY, MATRIX_EVENT_TYPES, protectedEndMs } from "@gdm/shared";
 import type { PublicSession } from "@gdm/shared";
 import SharedRanking from "./SharedRanking";
-import { botLabel, buildIdentities, identityFor, isBot } from "../study/identity";
+import {
+  botLabel,
+  buildIdentities,
+  identityFor,
+  isBot,
+  isServiceUser,
+} from "../study/identity";
 import { detectMention, splitMentions } from "../study/mentions";
 
 interface Message {
@@ -86,6 +92,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
   const [mentionIndex, setMentionIndex] = useState(0);
   const [typingMembers, setTypingMembers] = useState<string[]>([]);
   const [newMessageCount, setNewMessageCount] = useState(0);
+  const [, refreshRoomMembership] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   // Caret position to restore after we programmatically rewrite the input value.
   const desiredCaret = useRef<number | null>(null);
@@ -182,6 +189,20 @@ export default function Chat({ client, session, onTimeUp }: Props) {
       client.off(ClientEvent.Room, pickFirst);
     };
   }, [client, session]);
+
+  // The Session Manager joins every participant before publishing the room id,
+  // but each browser still learns that room state asynchronously through
+  // Matrix sync. Re-render when the room or a membership arrives so the study
+  // never remains on the neutral loading state until an unrelated message.
+  useEffect(() => {
+    const refresh = () => refreshRoomMembership((revision) => revision + 1);
+    client.on(ClientEvent.Room, refresh);
+    client.on(RoomMemberEvent.Membership, refresh);
+    return () => {
+      client.off(ClientEvent.Room, refresh);
+      client.off(RoomMemberEvent.Membership, refresh);
+    };
+  }, [client]);
 
   // Rebuild messages from the live timeline on any change. Study rooms are
   // tiny, so a full rebuild is simplest and always consistent. Emoji
@@ -436,10 +457,18 @@ export default function Chat({ client, session, onTimeUp }: Props) {
   const wrapUpMs = session ? protectedEndMs(session.condition.config) : 0;
   const timerLow = remaining !== null && remaining <= wrapUpMs;
 
-  const identities = buildIdentities(
-    room?.getJoinedMembers().map((m) => m.userId) ?? [],
-  );
+  const participantMemberIds =
+    room
+      ?.getJoinedMembers()
+      .map((member) => member.userId)
+      .filter((id) => !isServiceUser(id)) ?? [];
+  const identities = buildIdentities(participantMemberIds);
   const me = identityFor(identities, userId);
+  const groupReady =
+    session === null ||
+    (room !== null &&
+      participantMemberIds.includes(userId) &&
+      participantMemberIds.length >= session.condition.groupSize);
 
   // Every participant name in this room, used to highlight mentions on render.
   const mentionNames = [...identities.values()].map((id) => id.name);
@@ -506,12 +535,14 @@ export default function Chat({ client, session, onTimeUp }: Props) {
       <main className="chat-main">
         <div className="chat-header">
           <h2>{title}</h2>
-          <span className="chat-user">
-            <span className="user-dot" style={{ background: me.color }} />
-            {me.name}
-          </span>
+          {groupReady && (
+            <span className="chat-user">
+              <span className="user-dot" style={{ background: me.color }} />
+              {me.name}
+            </span>
+          )}
         </div>
-        {activeRoomId ? (
+        {activeRoomId && groupReady ? (
           <>
             <div className="messages-shell">
               <div
@@ -639,7 +670,9 @@ export default function Chat({ client, session, onTimeUp }: Props) {
             </div>
           </>
         ) : (
-          <div className="no-room">Connecting to the group room...</div>
+          <div className="no-room">
+            {activeRoomId ? "Loading group..." : "Connecting to the group room..."}
+          </div>
         )}
       </main>
 
