@@ -42,6 +42,7 @@ function createClient(
   };
   const sendEvent = vi.fn().mockResolvedValue({ event_id: "$event" });
   const sendTyping = vi.fn().mockResolvedValue({});
+  const sendTextMessage = vi.fn().mockResolvedValue({ event_id: "$message" });
   const client = {
     getUserId: () => "@participant:test",
     getRooms: () => [room],
@@ -56,7 +57,7 @@ function createClient(
     }),
     sendEvent,
     sendTyping,
-    sendTextMessage: vi.fn().mockResolvedValue({ event_id: "$message" }),
+    sendTextMessage,
     redactEvent: vi.fn().mockResolvedValue({ event_id: "$redaction" }),
   };
 
@@ -79,6 +80,7 @@ function createClient(
     client: client as unknown as MatrixClient,
     sendEvent,
     sendTyping,
+    sendTextMessage,
     pushMessage,
     setJoinedMembers,
   };
@@ -245,5 +247,24 @@ describe("Chat telemetry", () => {
 
     expect(fireEvent(input, paste)).toBe(false);
     expect(paste.defaultPrevented).toBe(true);
+  });
+
+  it("inserts newlines with Shift+Enter and sends with Enter", () => {
+    const { client, sendTextMessage } = createClient();
+    render(<Chat client={client} session={null} />);
+    const input = screen.getByPlaceholderText("Type a message");
+
+    fireEvent.change(input, { target: { value: "First line\nSecond line" } });
+    expect(
+      fireEvent.keyDown(input, { key: "Enter", shiftKey: true }),
+    ).toBe(true);
+    expect(sendTextMessage).not.toHaveBeenCalled();
+    expect(input).toHaveValue("First line\nSecond line");
+
+    expect(fireEvent.keyDown(input, { key: "Enter" })).toBe(false);
+    expect(sendTextMessage).toHaveBeenCalledWith(
+      ROOM_ID,
+      "First line\nSecond line",
+    );
   });
 });

@@ -93,7 +93,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
   const [typingMembers, setTypingMembers] = useState<string[]>([]);
   const [newMessageCount, setNewMessageCount] = useState(0);
   const [, refreshRoomMembership] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   // Caret position to restore after we programmatically rewrite the input value.
   const desiredCaret = useRef<number | null>(null);
   const messagesViewportRef = useRef<HTMLDivElement>(null);
@@ -500,7 +500,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
     updateInput(next, desiredCaret.current);
   }
 
-  function onInputKeyDown(e: ReactKeyboardEvent<HTMLInputElement>) {
+  function onInputKeyDown(e: ReactKeyboardEvent<HTMLTextAreaElement>) {
     if (mentionOpen) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -514,7 +514,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
         );
         return;
       }
-      if (e.key === "Enter" || e.key === "Tab") {
+      if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
         e.preventDefault();
         const chosen = mentionCandidates[mentionIndex] ?? mentionCandidates[0];
         selectMention(chosen.name);
@@ -526,7 +526,10 @@ export default function Chat({ client, session, onTimeUp }: Props) {
         return;
       }
     }
-    if (e.key === "Enter") void sendMessage();
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      void sendMessage();
+    }
   }
 
   return (
@@ -653,7 +656,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
                   ))}
                 </ul>
               )}
-              <input
+              <textarea
                 ref={inputRef}
                 placeholder="Type a message"
                 value={input}
@@ -662,6 +665,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
                 }
                 onKeyDown={onInputKeyDown}
                 onPaste={(e) => e.preventDefault()}
+                rows={2}
                 autoFocus
               />
               <button onClick={() => void sendMessage()} aria-label="Send">
