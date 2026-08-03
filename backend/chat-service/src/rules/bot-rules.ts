@@ -21,6 +21,8 @@ import type { TimelineEvent } from "../matrix/matrix-bot.service";
 import type { SessionRuntime } from "../sessions/session-runtime";
 import { CONTRIBUTION_CLASSIFIER } from "../classifier/contribution-classifier.token";
 import type { ContributionClassifier } from "../classifier/contribution-classifier";
+import { NUDGE_MESSAGE_GENERATOR } from "../nudge/nudge-message-generator.token";
+import type { NudgeMessageGenerator } from "../nudge/nudge-message-generator";
 
 /**
  * Extension point for the intervention logic — THIS IS WHERE THE RULES GO.
@@ -84,7 +86,7 @@ export interface RuleEngineOptions {
 }
 
 /**
- * Deterministic turn-equalization logic for the current study design.
+ * Turn-equalization logic for the current study design.
  *
  * The bot evaluates at the end of every contribution window (every
  * `contributionWindowMinutes`): a participant dominates once their dominance
@@ -104,6 +106,7 @@ export class ContributionBotRules implements BotRules {
     @Inject(CONTRIBUTION_CLASSIFIER)
     private readonly classifier?: ContributionClassifier,
     private readonly options: RuleEngineOptions = {},
+    private readonly messageGenerator?: NudgeMessageGenerator,
   ) {}
 
   async onEvent(runtime: SessionRuntime, event: TimelineEvent): Promise<void> {
@@ -158,11 +161,11 @@ export class ContributionBotRules implements BotRules {
     if (audience === "none") return;
     const target = targets[0];
     const quietMembers = quietestMembers(split, target, config.contributionThreshold);
-    // Rotate per detection arm so each comparison bot cycles its own variants.
+    // Keep a per-arm index for the operational fallback variants.
     const nudgeIndex = runtime.interventions.filter(
       (item) => item.llmMode === llmMode,
     ).length;
-    const message = buildMessage(target, nudgeIndex);
+    const message = await this.buildMessage(runtime, split, target, nudgeIndex);
 
     if (this.options.deliverAs) {
       await runtime.postAs(
@@ -180,6 +183,32 @@ export class ContributionBotRules implements BotRules {
     runtime.recordIntervention(
       buildLog(runtime, config, llmMode, audience, split, target, quietMembers, message),
     );
+  }
+
+  private async buildMessage(
+    runtime: SessionRuntime,
+    split: ContributionShare[],
+    target: ContributionShare,
+    nudgeIndex: number,
+  ): Promise<string> {
+    const fallback = buildFallbackMessage(target, nudgeIndex);
+    if (!this.messageGenerator) return fallback;
+
+    try {
+      return (
+        (await this.messageGenerator.generate({
+          targetName: target.identityName,
+          contributionPercent: Math.round(target.share * 100),
+          otherParticipantNames: split
+            .filter((entry) => entry.userId !== target.userId)
+            .map((entry) => entry.identityName),
+          previousMessages: runtime.interventions.map((item) => item.message),
+        })) ?? fallback
+      );
+    } catch (err) {
+      this.log.warn(`nudge message generator failed: ${String(err)}`);
+      return fallback;
+    }
   }
 
   private async classifyMessage(
@@ -401,9 +430,8 @@ function quietestMembers(
 }
 
 /**
- * Study-protocol nudge texts. Identical for private and public delivery to
- * avoid confounds, and they reveal ONLY the top contributor's percentage —
- * never the other members' shares.
+ * Operational fallback texts for when dynamic generation is unavailable.
+ * They reveal ONLY the top contributor's percentage — never other shares.
  */
 const NUDGE_TEMPLATES: ReadonlyArray<(name: string, pct: number) => string> = [
   (name, pct) =>
@@ -419,11 +447,13 @@ const NUDGE_TEMPLATES: ReadonlyArray<(name: string, pct: number) => string> = [
 ];
 
 /**
- * Rotates deterministically through the template variants per nudge, so
- * repeated interventions do not read like a stuck bot and every session's
- * wording stays reproducible from its intervention log.
+ * Rotates deterministically through fallback variants so an API outage does
+ * not prevent an otherwise valid intervention from being delivered.
  */
-function buildMessage(target: ContributionShare, nudgeIndex: number): string {
+function buildFallbackMessage(
+  target: ContributionShare,
+  nudgeIndex: number,
+): string {
   const template = NUDGE_TEMPLATES[nudgeIndex % NUDGE_TEMPLATES.length];
   return template(target.identityName, Math.round(target.share * 100));
 }
@@ -490,18 +520,29 @@ export class StudyBotRules implements BotRules {
     @Optional()
     @Inject(CONTRIBUTION_CLASSIFIER)
     classifier?: ContributionClassifier,
+    @Optional()
+    @Inject(NUDGE_MESSAGE_GENERATOR)
+    messageGenerator?: NudgeMessageGenerator,
   ) {
-    this.single = new ContributionBotRules(classifier);
-    this.ruleArm = new ContributionBotRules(classifier, {
-      stateKey: `${STATE_KEY}:A`,
-      forceLlmMode: "off",
-      deliverAs: "a",
-    });
-    this.llmArm = new ContributionBotRules(classifier, {
-      stateKey: `${STATE_KEY}:B`,
-      forceLlmMode: "active",
-      deliverAs: "b",
-    });
+    this.single = new ContributionBotRules(classifier, {}, messageGenerator);
+    this.ruleArm = new ContributionBotRules(
+      classifier,
+      {
+        stateKey: `${STATE_KEY}:A`,
+        forceLlmMode: "off",
+        deliverAs: "a",
+      },
+      messageGenerator,
+    );
+    this.llmArm = new ContributionBotRules(
+      classifier,
+      {
+        stateKey: `${STATE_KEY}:B`,
+        forceLlmMode: "active",
+        deliverAs: "b",
+      },
+      messageGenerator,
+    );
   }
 
   async onEvent(runtime: SessionRuntime, event: TimelineEvent): Promise<void> {
@@ -526,9 +567,10 @@ export class StudyBotRules implements BotRules {
     windowEndMs: number,
   ): Promise<void> {
     if (runtime.condition.config.comparisonMode === true) {
-      // Assistant A has no network classifier dependency and therefore sends
-      // at the fixed boundary. Assistant B gets a short, bounded chance to
-      // include classifications still in flight for this closed window.
+      // Evaluate Assistant A first at the boundary. Assistant B then gets a
+      // short, bounded chance to include classifications still in flight for
+      // this closed window. Wording generation is bounded separately and has
+      // a fixed fallback for either arm.
       await this.ruleArm.onWindowElapsed(runtime, windowEndMs);
       await this.waitForWindowClassifications(runtime, windowEndMs);
       await this.llmArm.onWindowElapsed(runtime, windowEndMs);

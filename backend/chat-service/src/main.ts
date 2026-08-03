@@ -16,9 +16,11 @@ function assertProductionConfig() {
     logger.error("GDM_ENV=production requires it; fix infra/.env and restart.");
     process.exit(1);
   }
-  if (process.env.LLM_MODE === "active" && !process.env.ANTHROPIC_API_KEY) {
+  if (!process.env.ANTHROPIC_API_KEY) {
     const logger = new Logger("Bootstrap");
-    logger.error("LLM_MODE=active requires ANTHROPIC_API_KEY");
+    logger.error(
+      "GDM_ENV=production requires ANTHROPIC_API_KEY for generated nudges",
+    );
     process.exit(1);
   }
 }
