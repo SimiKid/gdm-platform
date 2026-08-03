@@ -1189,6 +1189,43 @@ body {
   }
 }
 
+/* ── Optional external workspace (future provider) ─── */
+
+.external-workspace,
+.external-workspace-placeholder {
+  margin: 0.75rem;
+  min-height: 12rem;
+}
+
+.external-workspace {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.external-workspace iframe {
+  width: 100%;
+  flex: 1;
+  min-height: 24rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.external-workspace-placeholder {
+  padding: 1rem;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink-soft);
+}
+
+.external-workspace-placeholder h3 {
+  margin-top: 0;
+  color: var(--ink);
+}
+
 /* ── Empty state ─────────────────────────────── */
 
 .no-room {

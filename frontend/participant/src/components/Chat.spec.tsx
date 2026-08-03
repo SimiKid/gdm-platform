@@ -200,6 +200,41 @@ describe("Chat telemetry", () => {
     expect(screen.getByPlaceholderText("Type a message")).toBeInTheDocument();
   });
 
+  it("keeps the structured ranking as the default workspace", () => {
+    const { client } = createClient([], [
+      "@alpha:test",
+      "@beta:test",
+      "@participant:test",
+    ]);
+    render(<Chat client={client} session={studySession} />);
+
+    expect(screen.getByText("Rank")).toBeInTheDocument();
+    expect(screen.queryByText("External workspace")).not.toBeInTheDocument();
+  });
+
+  it("shows the external-workspace placeholder only when explicitly selected", () => {
+    const { client } = createClient([], [
+      "@alpha:test",
+      "@beta:test",
+      "@participant:test",
+    ]);
+    const externalSession = {
+      ...studySession,
+      condition: {
+        ...studySession.condition,
+        config: {
+          ...studySession.condition.config,
+          workspaceMode: "external",
+        },
+      },
+    } as PublicSession;
+    render(<Chat client={client} session={externalSession} />);
+
+    expect(screen.getByText("External workspace")).toBeInTheDocument();
+    expect(screen.getByText(/no external workspace provider is configured/i)).toBeInTheDocument();
+    expect(screen.queryByText("Rank")).not.toBeInTheDocument();
+  });
+
   it("preserves a scrolled-up position and counts new messages", () => {
     const { client, pushMessage } = createClient([
       {

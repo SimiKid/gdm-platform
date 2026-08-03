@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Condition, ConditionProgress, StudySettings } from "@gdm/shared";
+import type {
+  Condition,
+  ConditionProgress,
+  StudySettings,
+  WorkspaceMode,
+} from "@gdm/shared";
 import { apiFetch, isTestCondition } from "../api";
 
 interface Props {
@@ -40,6 +45,7 @@ export default function Settings({ rows, onSaved }: Props) {
         <RecruitingTable rows={studyRows} onSaved={onSaved} />
       </section>
       <SharedParamsCard rows={studyRows} onSaved={onSaved} />
+      <WorkspaceCard rows={studyRows} onSaved={onSaved} />
       <CompensationCard />
     </>
   );
@@ -448,6 +454,140 @@ function SharedParamsCard({ rows, onSaved }: Props) {
         {state === "error" && <span className="bad">Error — not all arms saved</span>}
         {state === "idle" && !dirty && (
           <span className="muted">Edit a value to enable saving.</span>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/* ── Shared participant workspace ──────────────────── */
+
+function workspaceModeOf(condition: Condition): WorkspaceMode {
+  return condition.config.workspaceMode === "external"
+    ? "external"
+    : "ranking";
+}
+
+function majorityWorkspaceMode(rows: ConditionProgress[]): WorkspaceMode {
+  const external = rows.filter(
+    (row) => workspaceModeOf(row.condition) === "external",
+  ).length;
+  return external > rows.length / 2 ? "external" : "ranking";
+}
+
+function WorkspaceCard({ rows, onSaved }: Props) {
+  const shared = useMemo(() => majorityWorkspaceMode(rows), [rows]);
+  const [draft, setDraft] = useState<WorkspaceMode>(shared);
+  const [dirty, setDirty] = useState(false);
+  const [state, setState] = useState<SaveState>("idle");
+
+  useEffect(() => {
+    if (!dirty) setDraft(shared);
+  }, [shared, dirty]);
+
+  const drifted = rows.filter(
+    (row) => workspaceModeOf(row.condition) !== shared,
+  );
+  const providerConfigured = rows.every(
+    (row) => !!row.condition.config.externalWorkspace?.embedUrl?.trim(),
+  );
+
+  async function saveAll() {
+    setState("saving");
+    try {
+      for (const row of rows) {
+        await putCondition({
+          ...row.condition,
+          config: { ...row.condition.config, workspaceMode: draft },
+        });
+      }
+      setDirty(false);
+      setState("saved");
+      onSaved();
+    } catch {
+      setState("error");
+    }
+  }
+
+  if (rows.length === 0) return null;
+
+  return (
+    <section className="section">
+      <h2>Shared Workspace</h2>
+      <p className="hint">
+        Select what appears beside the group chat. This is applied to all study
+        arms and only affects newly formed sessions. Structured ranking remains
+        the safe default.
+      </p>
+
+      <div className="workspace-options" role="radiogroup" aria-label="Shared workspace">
+        <label className={draft === "ranking" ? "selected" : ""}>
+          <input
+            type="radio"
+            name="workspace-mode"
+            value="ranking"
+            checked={draft === "ranking"}
+            onChange={() => {
+              setDraft("ranking");
+              setDirty(true);
+              setState("idle");
+            }}
+          />
+          <span>
+            <strong>Structured ranking</strong>
+            <small>Current shared ranking panel and research workflow.</small>
+          </span>
+        </label>
+        <label className={draft === "external" ? "selected" : ""}>
+          <input
+            type="radio"
+            name="workspace-mode"
+            value="external"
+            checked={draft === "external"}
+            onChange={() => {
+              setDraft("external");
+              setDirty(true);
+              setState("idle");
+            }}
+          />
+          <span>
+            <strong>External iframe</strong>
+            <small>Extension point for a future Etherpad or other provider.</small>
+          </span>
+        </label>
+      </div>
+
+      {!providerConfigured && (
+        <div className="workspace-warning">
+          External iframe support is prepared, but no provider is configured.
+          Selecting it will show participants a not-configured message instead
+          of an embedded workspace.
+        </div>
+      )}
+
+      {drifted.length > 0 && (
+        <div className="drift">
+          <span>
+            ⚠ {drifted.length} study arm{drifted.length === 1 ? "" : "s"} do
+            not match the shared workspace setting.
+          </span>
+        </div>
+      )}
+
+      <div className="param-foot">
+        <button
+          type="button"
+          onClick={() => void saveAll()}
+          disabled={state === "saving" || !dirty}
+        >
+          {state === "saving" ? "Saving" : "Apply to all study arms"}
+        </button>
+        {state === "saved" && (
+          <span className="ok">Saved — applies to newly formed sessions</span>
+        )}
+        {state === "error" && <span className="bad">Error — not all arms saved</span>}
+        {state === "idle" && !dirty && (
+          <span className="muted">Ranking is unchanged until another mode is saved.</span>
         )}
       </div>
     </section>

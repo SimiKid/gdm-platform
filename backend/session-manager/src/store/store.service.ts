@@ -678,6 +678,10 @@ function normalizeCondition(condition: Condition): Condition {
         condition.config.interventionMode ??
           DEFAULT_INTERVENTION_CONFIG.interventionMode,
       ),
+      // External iframe support is opt-in. Old, missing or malformed values
+      // always retain the existing structured ranking workspace.
+      workspaceMode:
+        condition.config.workspaceMode === "external" ? "external" : "ranking",
       scoreWeights: {
         ...DEFAULT_INTERVENTION_CONFIG.scoreWeights,
         ...condition.config.scoreWeights,

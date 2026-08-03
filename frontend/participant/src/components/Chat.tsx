@@ -8,6 +8,7 @@ import { ClientEvent, RoomEvent, RoomMemberEvent } from "matrix-js-sdk";
 import { GDM_RECIPIENT_KEY, MATRIX_EVENT_TYPES, protectedEndMs } from "@gdm/shared";
 import type { PublicSession } from "@gdm/shared";
 import SharedRanking from "./SharedRanking";
+import ExternalWorkspace from "./ExternalWorkspace";
 import {
   botLabel,
   buildIdentities,
@@ -83,6 +84,10 @@ export default function Chat({ client, session, onTimeUp }: Props) {
     session?.roomId ?? null,
   );
   const [groupOrder, setGroupOrder] = useState<string[]>(session?.ranking.order ?? []);
+  const workspaceMode =
+    session?.condition.config.workspaceMode === "external"
+      ? "external"
+      : "ranking";
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   // In-progress "@" mention: { start, query } while the picker is open, else null.
@@ -721,13 +726,18 @@ export default function Chat({ client, session, onTimeUp }: Props) {
               dangerouslySetInnerHTML={{ __html: session.briefing.html }}
             />
           </section>
-          {activeRoomId && (
+          {workspaceMode === "ranking" && activeRoomId && (
             <SharedRanking
               client={client}
               roomId={activeRoomId}
               task={session.rankingTask}
               initial={session.ranking}
               onChange={setGroupOrder}
+            />
+          )}
+          {workspaceMode === "external" && (
+            <ExternalWorkspace
+              config={session.condition.config.externalWorkspace}
             />
           )}
         </aside>
