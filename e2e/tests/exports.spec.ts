@@ -45,6 +45,30 @@ const DATASETS = [
     csvFilename: "contributions.csv",
     arrays: ["contributions", "behavioralEvents", "classifications"],
   },
+  {
+    path: "participants",
+    jsonFilename: "participants.json",
+    csvFilename: "participants.csv",
+    arrays: ["participants"],
+  },
+  {
+    path: "sessions-analysis",
+    jsonFilename: "sessions_analysis.json",
+    csvFilename: "sessions_analysis.csv",
+    arrays: ["sessions"],
+  },
+  {
+    path: "windows",
+    jsonFilename: "windows.json",
+    csvFilename: "windows.csv",
+    arrays: ["windows"],
+  },
+  {
+    path: "rankings",
+    jsonFilename: "rankings.json",
+    csvFilename: "rankings.csv",
+    arrays: ["rankings"],
+  },
 ] as const;
 
 test("@exports every researcher export is downloadable, authenticated and excludes automated sessions", async ({
@@ -105,6 +129,71 @@ test("@exports every researcher export is downloadable, authenticated and exclud
         expect(csv.trim().split("\n")[0].length).toBeGreaterThan(5);
         expect(csv).not.toContain(condition.id);
         expect(csv).not.toContain(group!.sessionId);
+      }
+    });
+
+    await test.step("roundIds filtering composes with conditionIds on every export", async () => {
+      // E2E sessions land in whatever round the stack is on — read it, never
+      // assume Round 1.
+      const roundsRes = await request.get(`${API}/rounds`, {
+        headers: API_HEADERS,
+      });
+      expect(roundsRes.ok()).toBe(true);
+      const { currentRound } = (await roundsRes.json()) as {
+        currentRound: number;
+      };
+      expect(currentRound).toBeGreaterThanOrEqual(1);
+
+      const query = `conditionIds=${encodeURIComponent(condition.id)}&roundIds=${currentRound}`;
+      const filtered = await request.get(
+        `${API}/export/sessions-analysis?${query}`,
+        { headers: API_HEADERS },
+      );
+      expect(filtered.ok()).toBe(true);
+      const body = (await filtered.json()) as { sessions: unknown[] };
+      // e2e- conditions stay excluded even when their round is selected.
+      expect(body.sessions).toEqual([]);
+      expect(JSON.stringify(body)).not.toContain(group!.sessionId);
+
+      const emptyRound = await request.get(
+        `${API}/export/sessions-analysis?roundIds=9999`,
+        { headers: API_HEADERS },
+      );
+      expect(emptyRound.ok()).toBe(true);
+      expect(
+        ((await emptyRound.json()) as { sessions: unknown[] }).sessions,
+      ).toEqual([]);
+    });
+
+    await test.step("linkage.csv and the research bundle are guarded and e2e-isolated", async () => {
+      const query = `conditionIds=${encodeURIComponent(condition.id)}`;
+      const linkage = await request.get(
+        `${API}/export/linkage.csv?${query}`,
+        { headers: API_HEADERS },
+      );
+      expect(linkage.ok()).toBe(true);
+      expect(linkage.headers()["content-type"]).toContain("text/csv");
+      expect(linkage.headers()["content-disposition"]).toContain(
+        'filename="linkage.csv"',
+      );
+      expect(await linkage.text()).not.toContain(group!.sessionId);
+
+      const zip = await request.get(`${API}/export/research.zip?${query}`, {
+        headers: API_HEADERS,
+      });
+      expect(zip.ok()).toBe(true);
+      expect(zip.headers()["content-type"]).toContain("application/zip");
+      expect(zip.headers()["content-disposition"]).toContain(
+        'filename="research_bundle.zip"',
+      );
+      const zipBody = await zip.body();
+      expect(zipBody.subarray(0, 2).toString()).toBe("PK");
+      expect(zipBody.toString("latin1")).toContain("codebook.md");
+
+      if (ADMIN_TOKEN) {
+        expect((await fetch(`${API}/export/linkage.csv`)).status).toBe(401);
+        expect((await fetch(`${API}/export/research.zip`)).status).toBe(401);
+        expect((await fetch(`${API}/reports/summary`)).status).toBe(401);
       }
     });
 

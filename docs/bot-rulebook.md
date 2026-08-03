@@ -47,17 +47,22 @@ Window boundary reached (every contributionWindowMinutes)
         v
   Is it inside the intervention window?
   (after protectedStart, before protectedEnd)
-        |  no -> stop
+        |  no -> stop (logged warm-up / wrap-up)
+        v
+  Are at least 2 participants in the room?
+        |  no -> stop (logged too-few-participants)
         v
   Compute contribution split over the closed window
   (messages after the last tracker reset only)
         |
         v
   Any participant's dominance score >= threshold?
-  (skipping members in an invite grace period)
-        |  no -> stop
+        |  no -> stop (logged no-target)
         v
-  Is mode "baseline"? ── yes ──> stop (no intervention)
+  Drop candidates in an invite grace period
+        |  none left -> stop (logged grace-suppressed)
+        v
+  Is mode "baseline"? ── yes ──> stop (logged baseline-suppressed)
         |  no
         v
   Build and send intervention message to the top target
@@ -68,7 +73,9 @@ Window boundary reached (every contributionWindowMinutes)
 
 ### Entry Points
 
-`ContributionBotRules.onEvent()` in `backend/chat-service/src/rules/bot-rules.ts` is called for **every timeline event** in an active session's room, except the bot's own events; it only observes (records and, with an LLM arm, classifies messages). `ContributionBotRules.onWindowElapsed()` is called by the session service's per-session window timer at each boundary (aligned to the end of the warm-up, so restarts resume the same window grid) and decides the nudges.
+`ContributionBotRules.onEvent()` in `backend/chat-service/src/rules/bot-rules.ts` is called for **every timeline event** in an active session's room, except the bot's own events; it only observes (records and, with an LLM arm, classifies messages). `ContributionBotRules.onWindowElapsed()` is called by the session service's per-session window timer at each boundary (aligned to the end of the warm-up, so restarts resume the same window grid) and decides the nudges. Before evaluating, the engine waits up to 2 seconds (`CLASSIFICATION_WAIT_MS`) for classifications still in flight for the closed window, so slow LLM responses are usually included rather than counted as 0.
+
+The participant list used for the contribution split is fetched from Matrix once (at the first classified message or first window boundary) and cached for the whole session; if the lookup fails, the engine falls back to the distinct message senders seen so far. A participant who joins after that snapshot does not appear in the split.
 
 ### Gate 1: Warm-up and Protected End
 
@@ -120,12 +127,18 @@ classified message shows `invitesParticipation == true` (active LLM arm
 only), they cannot be flagged for `inviteGraceSeconds` (default 60) — a
 reward for self-correction.
 
-If nobody crosses the threshold, no intervention fires.
+If nobody crosses the threshold, no intervention fires. Gate order matters
+for the audit log: over-threshold candidates are computed first, then grace
+filtering, then the baseline check — so a baseline window whose only
+candidates are all in grace is logged `grace-suppressed`, not
+`baseline-suppressed`.
 
 ### Gate 4: Tracker Reset
 
-Sending a nudge stamps the reset point: all messages up to and including that
-moment are wiped from future dominance calculations, so the tracker restarts
+Sending a nudge stamps the reset point at the **closed window's boundary**
+(not the send moment, which can be up to ~2 s later due to the
+classification wait): all messages up to and including that boundary are
+wiped from future dominance calculations, so the tracker restarts
 at parity ("back to 20-20-20-20-20"). The goal is equal turns from now on,
 not an equally balanced whole session — a dominant member who keeps dominating
 after a reset is flagged again at the end of the next window.
@@ -157,7 +170,7 @@ Private nudges are sent to the same Matrix room as regular messages, but with an
 Every bot message carries a prominent Zoom-style delivery badge so
 participants are never unsure who can see a nudge:
 
-- Private: **🔒 Private message to you — only you can see this**
+- Private: **🔒 Private message to you (only you can see this)**
 - Public: **📢 Message to ALL in the group**
 
 In private mode, the single selected target gets the private message; exactly
@@ -165,7 +178,7 @@ one nudge is sent per trigger in both delivery modes.
 
 ## Participant Identities
 
-Participants are not addressed by their real names or Matrix user IDs in bot messages. Instead, the system assigns **color-animal identities** (e.g., "Blue Jay", "Red Fox", "Green Turtle") based on a deterministic mapping from sorted participant user IDs. This is defined in `packages/shared/src/identity.ts`.
+Participants are not addressed by their real names or Matrix user IDs in bot messages. Instead, the system assigns **color identities** (e.g., "Red", "Blue", "Green" — a 10-color palette) based on a deterministic mapping from sorted participant user IDs. This is defined in `packages/shared/src/identity.ts`.
 
 ## Quiet Members (audit only)
 
@@ -173,7 +186,17 @@ Each intervention log records the **quietest members** — up to 2 participants 
 
 ## Configurable Parameters
 
-All parameters are editable per condition via the admin dashboard and are stored in the condition's `config` object:
+All parameters are stored in the condition's `config` object. The admin
+dashboard (Settings → Session & Bot Parameters) edits **six of them as one
+shared form applied to all study arms** — duration, group size, warm-up
+(minutes), protected end (entered in seconds), window length (entered in
+seconds), and threshold (entered in %) — and shows a drift warning when an
+arm deviates from the shared values. Everything else (`llmMode`,
+`interventionMode`, score/dominance weights, invite grace) is fixed study
+design: shown read-only in the UI and changeable only via
+`PUT /api/conditions/:id`. Protected end and window length may be
+fractional minutes (e.g. `1.5` = 90 seconds); the protected end also drives
+the participant timer's red "wrap up!" cue.
 
 | Parameter | Field | Default | Description |
 |---|---|---|---|
@@ -188,11 +211,11 @@ All parameters are editable per condition via the admin dashboard and are stored
 | Share weight | `dominanceWeights.share` | `0.90` | Composite weight of the raw contribution share |
 | Meaningfulness weight | `dominanceWeights.meaningfulness` | `0.10` | Composite weight of the LLM meaningfulness score |
 | Classifier mode | `llmMode` | `off` | `off` (rule-based) / `active` (composite score + grace period) |
-| Two-bot test | `comparisonMode` | `false` | Pilot only: both detection bots nudge side by side (see below) |
+| Two-bot test | `comparisonMode` | unset (off) | Pilot only: both detection bots nudge side by side; optional field, only `=== true` enables it (see below) |
 
-Defaults are defined in `packages/shared/src/interventions.ts` (`DEFAULT_INTERVENTION_CONFIG`). Conditions are seeded with these defaults by the session manager on first startup (see `seedConditions()` in `backend/session-manager/src/store/store.service.ts`).
+Defaults are defined in `packages/shared/src/interventions.ts` (`DEFAULT_INTERVENTION_CONFIG`). Conditions are seeded with these defaults by the session manager on first startup (see `seedConditions()` in `backend/session-manager/src/store/store.service.ts`), along with session-level defaults `goal: 5`, `durationMinutes: 10`, `groupSize: 3`.
 
-Changes to a condition in the admin dashboard affect **future sessions only**. Running sessions use the condition snapshot captured at creation time.
+Changes to a condition in the admin dashboard affect **future sessions only**. Running sessions use the condition snapshot captured at creation time. To run different parameters for a distinct phase of data collection, start a new **study round** (Settings → Study Rounds): sessions are stamped with the round they were created in, so exports can separate the phases (see `docs/data-export.md`).
 
 ## Audit and Export
 
@@ -205,14 +228,18 @@ Every intervention is recorded as an `InterventionLog` containing:
 - Target(s) and quiet member(s) identified
 - The exact message text sent
 
-These logs are visible in the admin dashboard's **Intervention Audit** section and included in the JSON and CSV exports (`/api/export/sessions`, `/api/export/sessions.csv`).
+In addition, the bot records a **`WindowEvaluation` for every window boundary it reaches** — fired or not. Each carries the window's grid index and time span, the detection arm (`arm`: `primary` for normal sessions, `a`/`b` in comparison mode), the outcome (`nudged`, `no-target`, `grace-suppressed`, `baseline-suppressed`, `warm-up`, `wrap-up`, `too-few-participants`), the full contribution split and over-threshold candidates where a split was computed, and a link to the `InterventionLog` when a nudge fired. Baseline sessions therefore carry the same per-window dominance data as the delivery arms (`baseline-suppressed` marks windows where a nudge *would* have fired). Failed LLM classification requests are recorded as `ClassificationFailure` entries, so classifier coverage is auditable. The bot's own nudge messages are stored in the chat log (with `recipientId` set on private nudges) but never count toward contribution scores.
+
+These records are included in the raw exports (`/api/export/sessions`, `/api/export/interventions`), power the dashboard's **Results** tab, and feed the analysis-ready research exports (`/api/export/windows`, `/api/export/research.zip`) — see `docs/data-export.md`.
 
 ## Meaningfulness Classifier (Rule + LLM Detection Arm)
 
 Conditions with `llmMode: "active"` (the Rule+LLM arms) classify every
 participant message with Anthropic's Messages API. The same API also generates
 fresh nudge wording in every non-baseline arm; `ANTHROPIC_API_KEY` must be set
-for dynamic wording and Rule+LLM detection.
+for dynamic wording and Rule+LLM detection. The default model is
+`claude-haiku-4-5-20251001` (override via `ANTHROPIC_MODEL`), called with
+`temperature: 0` and strict JSON-schema output.
 `LLM_MODE` (`off` / `active`) is an optional global override. Per message, the classifier
 judges four structural indicators (each `true`/`false` plus a one-sentence
 reason), following the study protocol:
@@ -245,9 +272,10 @@ must state this before the Rule+LLM arms are used with real participants.
 
 ## Two-Bot Comparison Mode (pilot / user testing only)
 
-Setting `comparisonMode: true` on a condition (admin Settings → "2-bot test")
-runs **both detection arms in the same room** so testers can compare them
-live:
+Setting `comparisonMode: true` on a condition (toggle in the admin
+**Testing** tab, offered for non-baseline arms only, with a standing "switch
+it off before recruiting" warning) runs **both detection arms in the same
+room** so testers can compare them live:
 
 | Bot | Matrix user | Detection |
 |---|---|---|
@@ -257,8 +285,10 @@ live:
 Mechanics:
 
 - Each arm runs the full rule engine with its **own** tracker reset and
-  grace-period state — each bot behaves exactly as it would alone, so their
-  nudge timing can be compared directly.
+  grace-period state — each bot behaves as it would alone. One timing
+  nuance: Assistant A evaluates immediately at the window boundary, while
+  Assistant B evaluates after the up-to-2-second classification wait, so
+  B's nudge can land slightly after A's.
 - Both follow the **condition's delivery audience**: in a public condition
   everyone sees A and B, in a private condition only the nudged member sees
   them. Each bot gets newly generated wording under the same format and tone
@@ -277,7 +307,7 @@ Mechanics:
 | File | What it does |
 |---|---|
 | `packages/shared/src/interventions.ts` | Type definitions, defaults, audience/legacy-mode helpers |
-| `packages/shared/src/identity.ts` | Color-animal identity assignment |
+| `packages/shared/src/identity.ts` | Color identity assignment |
 | `backend/chat-service/src/rules/bot-rules.ts` | The rule engine (`ContributionBotRules`) |
 | `backend/chat-service/src/nudge/anthropic-nudge-message-generator.ts` | Fresh nudge wording and output validation |
 | `backend/chat-service/src/sessions/session-runtime.ts` | Per-session state, message recording, `post()` / `postPrivate()` |

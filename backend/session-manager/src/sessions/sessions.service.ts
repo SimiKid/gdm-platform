@@ -7,6 +7,7 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
+import { isServiceUser } from "@gdm/shared";
 import type {
   CheckpointSessionRequest,
   CompleteParticipantResponse,
@@ -23,11 +24,17 @@ import type {
   PublicSession,
   Session,
   SessionSummary,
+  StartRoundResponse,
   StartSessionNotification,
   SubmitSurveyRequest,
 } from "@gdm/shared";
 import { MatrixService } from "../matrix/matrix.service";
 import { StoreService } from "../store/store.service";
+import { toCsv } from "../reports/csv";
+import {
+  filterResearchSessions,
+  type ResearchFilter,
+} from "../reports/filter";
 
 @Injectable()
 export class SessionsService {
@@ -70,6 +77,47 @@ export class SessionsService {
     const run = this.openChain.then(() => this.doOpenSession(req));
     this.openChain = run.catch(() => undefined); // a failed join must not jam the queue
     return run;
+  }
+
+  /**
+   * Close the current study round and open the next one. Rides the same
+   * serialization chain as joins, so a round switch can never interleave
+   * with a participant entering a lobby: the joiner either lands in the old
+   * round before its lobbies are aborted, or opens a fresh current-round
+   * session afterwards.
+   */
+  startRound(label?: string): Promise<StartRoundResponse> {
+    const run = this.openChain.then(() => this.doStartRound(label ?? ""));
+    this.openChain = run.catch(() => undefined);
+    return run;
+  }
+
+  private async doStartRound(label: string): Promise<StartRoundResponse> {
+    // Abort leftover lobbies so no group mixes participants across rounds.
+    // Participants still polling an aborted session rejoin automatically —
+    // into the new round. Running sessions finish in their round.
+    const waiting = (await this.store.allSessions()).filter(
+      (session) => session.status === "waiting",
+    );
+    for (const session of waiting) {
+      session.status = "aborted";
+      await this.store.saveSession(session);
+    }
+    const round = await this.store.startNewRound(label);
+    this.log.log(
+      `started round ${round.id} ("${round.label}"), aborted ${waiting.length} waiting lobbies`,
+    );
+    return {
+      round: {
+        number: round.id,
+        label: round.label,
+        startedAt: round.startedAt,
+        endedAt: round.endedAt,
+        sessionCount: 0,
+        completedCount: 0,
+      },
+      abortedWaitingSessions: waiting.length,
+    };
   }
 
   private async doOpenSession(req: OpenSessionRequest): Promise<OpenSessionResponse> {
@@ -370,30 +418,26 @@ export class SessionsService {
       .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
   }
 
-  async exportBundle(conditionIds: string[] = []): Promise<ExportBundle> {
+  async exportBundle(filter: ResearchFilter = {}): Promise<ExportBundle> {
     return {
       generatedAt: new Date().toISOString(),
-      sessions: await this.filteredSessions(conditionIds),
+      sessions: await this.filteredSessions(filter),
     };
   }
 
-  /** Sessions restricted to the given conditions (empty = everything). */
-  private async filteredSessions(conditionIds: string[] = []): Promise<Session[]> {
-    const allowed = new Set(conditionIds);
-    return (await this.store.allSessions()).filter(
-      (session) =>
-        !session.condition.id.startsWith("e2e-") &&
-        (allowed.size === 0 || allowed.has(session.condition.id)),
-    );
+  /** Sessions restricted to the given conditions/rounds (empty = everything). */
+  private async filteredSessions(filter: ResearchFilter = {}): Promise<Session[]> {
+    return filterResearchSessions(await this.store.allSessions(), filter);
   }
 
-  async exportCsv(conditionIds: string[] = []): Promise<string> {
-    const sessions = (await this.exportBundle(conditionIds)).sessions;
+  async exportCsv(filter: ResearchFilter = {}): Promise<string> {
+    const sessions = (await this.exportBundle(filter)).sessions;
     const rows = [
       [
         "session_id",
         "condition_id",
         "condition_name",
+        "round",
         "status",
         "participant_count",
         "message_count",
@@ -408,6 +452,7 @@ export class SessionsService {
         session.id,
         session.condition.id,
         session.condition.name,
+        String(session.roundId),
         session.status,
         String(session.participants.length),
         String(session.chat.messages.length),
@@ -428,10 +473,10 @@ export class SessionsService {
   }
 
   /** Chat logs across sessions, one row per message. */
-  async exportMessages(conditionIds: string[] = []) {
+  async exportMessages(filter: ResearchFilter = {}) {
     return {
       generatedAt: new Date().toISOString(),
-      messages: (await this.filteredSessions(conditionIds)).flatMap((session) =>
+      messages: (await this.filteredSessions(filter)).flatMap((session) =>
         session.chat.messages.map((message) => ({
           sessionId: session.id,
           conditionId: session.condition.id,
@@ -442,7 +487,7 @@ export class SessionsService {
     };
   }
 
-  async exportMessagesCsv(conditionIds: string[] = []): Promise<string> {
+  async exportMessagesCsv(filter: ResearchFilter = {}): Promise<string> {
     const rows = [
       [
         "session_id",
@@ -456,7 +501,7 @@ export class SessionsService {
         "reaction_count",
         "reaction_keys",
       ],
-      ...(await this.exportMessages(conditionIds)).messages.map((m) => [
+      ...(await this.exportMessages(filter)).messages.map((m) => [
         m.sessionId,
         m.conditionId,
         m.conditionName,
@@ -473,10 +518,10 @@ export class SessionsService {
   }
 
   /** Bot nudge events across sessions, one row per intervention. */
-  async exportInterventions(conditionIds: string[] = []) {
+  async exportInterventions(filter: ResearchFilter = {}) {
     return {
       generatedAt: new Date().toISOString(),
-      interventions: (await this.filteredSessions(conditionIds)).flatMap(
+      interventions: (await this.filteredSessions(filter)).flatMap(
         (session) =>
           session.interventions.map((intervention) => ({
             conditionName: session.condition.name,
@@ -486,7 +531,7 @@ export class SessionsService {
     };
   }
 
-  async exportInterventionsCsv(conditionIds: string[] = []): Promise<string> {
+  async exportInterventionsCsv(filter: ResearchFilter = {}): Promise<string> {
     const rows = [
       [
         "session_id",
@@ -502,7 +547,7 @@ export class SessionsService {
         "quiet_members",
         "message",
       ],
-      ...(await this.exportInterventions(conditionIds)).interventions.map((i) => [
+      ...(await this.exportInterventions(filter)).interventions.map((i) => [
         i.sessionId,
         i.conditionId,
         i.conditionName,
@@ -521,10 +566,10 @@ export class SessionsService {
   }
 
   /** Survey responses across sessions, one row per participant and kind. */
-  async exportSurveys(conditionIds: string[] = []) {
+  async exportSurveys(filter: ResearchFilter = {}) {
     return {
       generatedAt: new Date().toISOString(),
-      surveys: (await this.filteredSessions(conditionIds)).flatMap((session) =>
+      surveys: (await this.filteredSessions(filter)).flatMap((session) =>
         session.participants.flatMap((participant) =>
           (
             [
@@ -553,7 +598,7 @@ export class SessionsService {
     };
   }
 
-  async exportSurveysCsv(conditionIds: string[] = []): Promise<string> {
+  async exportSurveysCsv(filter: ResearchFilter = {}): Promise<string> {
     const rows = [
       [
         "session_id",
@@ -570,7 +615,7 @@ export class SessionsService {
         "submitted_at",
         "answers_json",
       ],
-      ...(await this.exportSurveys(conditionIds)).surveys.map((s) => [
+      ...(await this.exportSurveys(filter)).surveys.map((s) => [
         s.sessionId,
         s.conditionId,
         s.conditionName,
@@ -589,8 +634,8 @@ export class SessionsService {
     return toCsv(rows);
   }
 
-  async exportContributions(conditionIds: string[] = []) {
-    const sessions = await this.filteredSessions(conditionIds);
+  async exportContributions(filter: ResearchFilter = {}) {
+    const sessions = await this.filteredSessions(filter);
     return {
       generatedAt: new Date().toISOString(),
       contributions: sessions.flatMap(contributionAggregates),
@@ -611,7 +656,7 @@ export class SessionsService {
     };
   }
 
-  async exportContributionsCsv(conditionIds: string[] = []): Promise<string> {
+  async exportContributionsCsv(filter: ResearchFilter = {}): Promise<string> {
     const rows = [
       [
         "session_id",
@@ -628,7 +673,7 @@ export class SessionsService {
         "invites_participation_count",
         "meaningfulness_score_mean",
       ],
-      ...(await this.exportContributions(conditionIds)).contributions.map((c) => [
+      ...(await this.exportContributions(filter)).contributions.map((c) => [
         c.sessionId,
         c.conditionId,
         c.participantId,
@@ -760,6 +805,8 @@ export class SessionsService {
           interventions: session.interventions,
           behavioralEvents: session.behavioralEvents,
           contributionClassifications: session.contributionClassifications,
+          windowEvaluations: session.windowEvaluations ?? [],
+          classificationFailures: session.classificationFailures ?? [],
           processedEventIds: session.processedEventIds ?? [],
           ruleState: session.runtimeState ?? {},
         },
@@ -777,8 +824,13 @@ export class SessionsService {
     await this.store.saveSession(session);
   }
 
-  /** Least-completed active condition that hasn't reached its goal. */
+  /**
+   * Least-claimed active condition that hasn't reached its goal — counted
+   * within the CURRENT round, so an arm that filled its goal in an earlier
+   * round recruits again after a round switch.
+   */
   private async assignCondition(conditionId?: string): Promise<Condition> {
+    const round = await this.store.currentRound();
     if (conditionId) {
       const condition = await this.store.getCondition(conditionId);
       if (!condition) {
@@ -786,7 +838,7 @@ export class SessionsService {
       }
       if (
         !condition.active ||
-        (await this.store.claimedCount(condition.id)) >= condition.goal
+        (await this.store.claimedCount(condition.id, round.id)) >= condition.goal
       ) {
         throw new ConflictException(`Condition ${conditionId} is not available`);
       }
@@ -796,7 +848,10 @@ export class SessionsService {
     const conditions = await this.store.listConditions();
     const counts = new Map<string, number>();
     for (const condition of conditions) {
-      counts.set(condition.id, await this.store.claimedCount(condition.id));
+      counts.set(
+        condition.id,
+        await this.store.claimedCount(condition.id, round.id),
+      );
     }
     const candidate = conditions
       .filter((c) => c.active && (counts.get(c.id) ?? 0) < c.goal)
@@ -813,11 +868,15 @@ export class SessionsService {
         .filter((c) => c.active)
         .map((c) => c.id),
     );
+    // Only current-round lobbies: a leftover waiting session from a previous
+    // round must never be joined, or a group would mix rounds/settings.
+    const round = await this.store.currentRound();
     return (await this.store
       .allSessions())
       .filter(
         (session) =>
           session.status === "waiting" &&
+          session.roundId === round.id &&
           activeIds.has(session.condition.id) &&
           session.participants.length < session.condition.groupSize &&
           (!conditionId || session.condition.id === conditionId),
@@ -917,6 +976,8 @@ function applyCheckpoint(
   session.behavioralEvents = checkpoint.behavioralEvents ?? [];
   session.contributionClassifications =
     checkpoint.contributionClassifications ?? [];
+  session.windowEvaluations = checkpoint.windowEvaluations ?? [];
+  session.classificationFailures = checkpoint.classificationFailures ?? [];
   session.processedEventIds = checkpoint.processedEventIds ?? [];
   session.runtimeState = checkpoint.ruleState ?? {};
   if (session.rankingHistory.length > 0) {
@@ -932,6 +993,8 @@ function contributionAggregates(session: Session): ContributionAggregate[] {
   }
   for (const event of session.behavioralEvents) ids.add(event.participantId);
   for (const item of session.contributionClassifications) ids.add(item.senderId);
+  // Bot messages are part of the chat log but bots never get a contribution row.
+  for (const id of ids) if (isServiceUser(id)) ids.delete(id);
 
   return [...ids].sort().map((participantId) => {
     const messages = session.chat.messages.filter(
@@ -994,6 +1057,8 @@ function toPublicSession(session: Session): PublicSession {
   const {
     behavioralEvents: _behavioralEvents,
     contributionClassifications: _contributionClassifications,
+    windowEvaluations: _windowEvaluations,
+    classificationFailures: _classificationFailures,
     processedEventIds: _processedEventIds,
     runtimeState: _runtimeState,
     ...publicFields
@@ -1008,6 +1073,7 @@ function toSummary(session: Session): SessionSummary {
   return {
     id: session.id,
     status: session.status,
+    roundId: session.roundId,
     conditionId: session.condition.id,
     conditionName: session.condition.name,
     participantCount: session.participants.length,
@@ -1022,14 +1088,3 @@ function toSummary(session: Session): SessionSummary {
   };
 }
 
-function toCsv(rows: string[][]): string {
-  return rows.map((row) => row.map(csvCell).join(",")).join("\n");
-}
-
-function csvCell(value: string): string {
-  // Guard against spreadsheet formula injection: participant-authored text
-  // starting with = + - @ would execute when the CSV is opened in Excel.
-  const guarded = /^[=+\-@]/.test(value) ? `'${value}` : value;
-  if (!/[",\n]/.test(guarded)) return guarded;
-  return `"${guarded.replaceAll('"', '""')}"`;
-}

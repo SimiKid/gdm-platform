@@ -88,7 +88,7 @@ export default function ExitSurvey({ session, participantId, groupRanking, onDon
         <p>
           Now that the group discussion is over, please give your personal
           ranking of the 15 items. The group's final ranking is pre-filled as a
-          starting point — adjust it to reflect your own view. There is no right
+          starting point. Adjust it to reflect your own view. There is no right
           answer here; we are interested in your personal view after the
           discussion.
         </p>
@@ -144,7 +144,7 @@ export default function ExitSurvey({ session, participantId, groupRanking, onDon
           </button>
           {submitError && (
             <p className="error" role="alert">
-              We couldn't submit your answers — please check your connection
+              We couldn't submit your answers. Please check your connection
               and try again. Your input is still here.
             </p>
           )}

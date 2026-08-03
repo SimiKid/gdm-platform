@@ -36,6 +36,7 @@ describe("SessionsController", () => {
     upsertCondition: vi.fn(async (condition) => condition),
     completedCount: async () => 2,
     listProlificArrivals: vi.fn(async () => []),
+    currentRound: async () => ({ id: 1, label: "", startedAt: "now" }),
   } as unknown as StoreService;
   const ctrl = new SessionsController(sessions, store);
 
@@ -137,29 +138,41 @@ describe("SessionsController", () => {
       generatedAt: "now",
       sessions: [],
     });
-    expect(sessions.exportBundle).toHaveBeenCalledWith([
-      "public-rule",
-      "public-llm",
-    ]);
+    expect(sessions.exportBundle).toHaveBeenCalledWith({
+      conditionIds: ["public-rule", "public-llm"],
+      roundIds: [],
+    });
 
     await expect(ctrl.exportSessionsCsv("public-rule")).resolves.toBe("session_id\n");
-    expect(sessions.exportCsv).toHaveBeenCalledWith(["public-rule"]);
+    expect(sessions.exportCsv).toHaveBeenCalledWith({ conditionIds: ["public-rule"], roundIds: [] });
   });
 
   it("exports chat logs, nudge events, and surveys per data set", async () => {
     await ctrl.exportMessages("public-rule");
-    expect(sessions.exportMessages).toHaveBeenCalledWith(["public-rule"]);
+    expect(sessions.exportMessages).toHaveBeenCalledWith({ conditionIds: ["public-rule"], roundIds: [] });
     await expect(ctrl.exportMessagesCsv(undefined)).resolves.toBe("message_id\n");
-    expect(sessions.exportMessagesCsv).toHaveBeenCalledWith([]);
+    expect(sessions.exportMessagesCsv).toHaveBeenCalledWith({
+      conditionIds: [],
+      roundIds: [],
+    });
 
-    await ctrl.exportInterventions(undefined);
-    expect(sessions.exportInterventions).toHaveBeenCalledWith([]);
+    await ctrl.exportInterventions(undefined, "1,2");
+    expect(sessions.exportInterventions).toHaveBeenCalledWith({
+      conditionIds: [],
+      roundIds: [1, 2],
+    });
     await expect(ctrl.exportInterventionsCsv("private-llm")).resolves.toBe("mode\n");
-    expect(sessions.exportInterventionsCsv).toHaveBeenCalledWith(["private-llm"]);
+    expect(sessions.exportInterventionsCsv).toHaveBeenCalledWith({ conditionIds: ["private-llm"], roundIds: [] });
 
     await ctrl.exportSurveys(undefined);
-    expect(sessions.exportSurveys).toHaveBeenCalledWith([]);
+    expect(sessions.exportSurveys).toHaveBeenCalledWith({
+      conditionIds: [],
+      roundIds: [],
+    });
     await expect(ctrl.exportSurveysCsv(undefined)).resolves.toBe("kind\n");
-    expect(sessions.exportSurveysCsv).toHaveBeenCalledWith([]);
+    expect(sessions.exportSurveysCsv).toHaveBeenCalledWith({
+      conditionIds: [],
+      roundIds: [],
+    });
   });
 });

@@ -2,19 +2,20 @@
 
 A study platform for researching AI-supported group decision-making. Groups discuss a shared task in a real-time chat environment while a rule-based bot monitors contribution balance and intervenes when participation becomes uneven.
 
-The project investigates whether in-the-moment AI nudges can improve both decision quality and group experience, using a 2x2 between-subjects design (public/private x neutral/engaging) plus a no-intervention baseline.
+The project investigates whether in-the-moment AI nudges can improve both decision quality and group experience, using a 2x2 between-subjects design (public/private delivery x rule-based/rule+LLM detection) plus a no-intervention baseline. Data collection is organized into numbered study rounds with per-round recruiting goals.
 
 ## Repository Structure
 
 ```
 packages/shared/          Shared TypeScript types, DTOs, and defaults
-backend/session-manager/  Matchmaking, session state, conditions, surveys, exports (NestJS + Prisma)
-backend/chat-service/     Bot runtime: Matrix sync, message recording, intervention rules (NestJS)
+backend/session-manager/  Matchmaking, session state, conditions, study rounds, surveys, reports/exports (NestJS + Prisma)
+backend/chat-service/     Bot runtime: Matrix sync, message recording, intervention rules, LLM classifier (NestJS)
 frontend/participant/     Participant study flow: recruiting, survey, chat, exit survey (React)
-frontend/admin-dashboard/ Researcher dashboard for conditions and exports (React)
+frontend/admin-dashboard/ Researcher dashboard: overview, results, settings (rounds, parameters), bot testing (React)
 e2e/                      Playwright end-to-end suite against the compose stack
+loadtest/                 k6 load-test harness (profiles, scripts, monitoring)
 infra/                    Docker Compose stack (dev + prod), Synapse config, Caddyfile, deploy script
-docs/                     Architecture, bot rulebook, testing, pilot checklist
+docs/                     Architecture, bot rulebook, data export, testing, deployment, pilot checklist
 ```
 
 ## Quick Start
@@ -39,8 +40,9 @@ See [docs/getting-started.md](docs/getting-started.md) for prerequisites, ports,
 | [Testing](docs/testing.md) | Test strategy: unit / integration / e2e layers, how to run them, conventions |
 | [Pilot Checklist](docs/pilot-checklist.md) | Step-by-step verification for local pilot runs |
 | [Deployment](docs/deployment.md) | Production runbook: first-time setup, updates, rollback, backups |
+| [Load Testing](loadtest/README.md) | k6 load-test harness: profiles, run scripts, monitoring |
 
 ## Current Deferrals
 
-- Purely LLM-triggered interventions (the classifier only feeds the dominance score and invite grace; nudges stay window-triggered)
+- Purely LLM-triggered interventions — nudges stay window-triggered in all arms; in the rule+LLM arms the live classifier feeds the dominance score and invite grace, but never fires a nudge on its own
 - Matrix appservice registration for the bot

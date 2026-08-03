@@ -10,9 +10,13 @@ exercised by exactly one layer so failures point somewhere specific.
 
 | Layer | Command | Needs | Runtime | What is real |
 |---|---|---|---|---|
-| Unit | `pnpm test` | Node | seconds | Pure logic, components in jsdom |
-| Integration | `pnpm test:integration` | Docker | ~1 min | Nest apps over HTTP, Postgres, Synapse |
+| Unit | `pnpm test` | Node | seconds | Pure logic, participant components in jsdom |
+| Integration | `pnpm test:integration` | Docker | minutes (real timers + two container runs) | Nest apps over HTTP, Postgres, Synapse |
 | End-to-end | `pnpm test:e2e` | Running compose stack | ~2 min | Everything: browsers, all services, Matrix |
+
+Known gap: the **admin dashboard has no unit tests** (its package defines no
+`test` script, so `pnpm -r` skips it silently) — its behavior is covered only
+by the e2e layer.
 
 All commands work from the repo root (they fan out via `pnpm -r`) or inside a
 single package.
@@ -22,24 +26,33 @@ single package.
 Fast, no network, no containers. They own the pure logic:
 
 - **`bot-rules.spec.ts`** — the intervention engine (contribution scoring,
-  thresholds, protected windows, generated wording integration and fallbacks).
-  This is the scientific core; keep its coverage rich.
+  thresholds, protected windows, generated wording integration and fallbacks,
+  the `llmMode: "active"` composite dominance score, and the `LLM_MODE` env
+  override). This is the scientific core; keep its coverage rich.
 - **`session-runtime.spec.ts`** — the per-room state machine (messages,
-  reactions, redactions, ranking history).
-- **`sessions.service.spec.ts`** (both services) — matchmaking and event
-  handling against hand-rolled fakes.
-- **Frontend component specs** — Testing Library flows for the survey pages
-  (`Survey.spec.tsx` drives consent → ranking → follow-ups end to end).
+  reactions, redactions, ranking history); plus classifier and Matrix-bot
+  specs (`anthropic-contribution-classifier.spec.ts`,
+  `matrix-bot.service.spec.ts`).
+- **`sessions.service.spec.ts` / controller specs** (both services) —
+  matchmaking and event handling against hand-rolled fakes.
+- **Reports/analysis specs** (`backend/session-manager/src/reports/`) —
+  pseudonymization, NASA scoring, equality metrics, and the report service.
+- **Frontend component specs** — Testing Library flows for the participant
+  pages (`Survey.spec.tsx` walks consent → about you → task → group phase;
+  `AboutYouPage`, `Chat`, `SharedRanking`, `Recruiting`, `ExitSurvey`, and the
+  `src/study/` helpers have their own specs).
 
 Conventions:
 
 - Unit tests construct services by hand and fake only the Matrix/HTTP boundary.
   Assert on behavior (what was recorded, posted, returned) — not on request
   URLs or headers; wire formats belong to the integration layer.
-- Coverage gates run via `pnpm test:cov`. Files whose main body is only
-  exercised by another layer are excluded from the unit metrics with a comment
-  saying which layer owns them (e.g. `store.service.ts` → integration suite;
-  the Matrix-driven frontend components → e2e).
+- Coverage gates run via `pnpm test:cov`. Backend files whose main body is
+  only exercised by another layer are excluded from the unit metrics with a
+  comment saying which layer owns them (e.g. `store.service.ts` → integration
+  suite). The participant frontend inverts this: its coverage config is an
+  **allowlist** (`src/study/**` plus a few named components), so pages outside
+  it are simply not in the metric.
 
 ## Integration Tests (`test/integration/*.integration.spec.ts`)
 
@@ -50,15 +63,22 @@ each run starts throwaway containers and removes them afterwards.
 
 ### session-manager (`backend/session-manager/test/integration/`)
 
-- **Real:** the whole app, `StoreService` in Postgres mode, a `postgres:16`
-  container with the actual Prisma migrations applied.
+- **Real:** the whole app, `StoreService` in Postgres mode, a
+  `postgres:16-alpine` container with the actual Prisma migrations applied.
 - **Faked:** Synapse (`FakeMatrixService`) and the Chat Service (a fetch
   recorder). Any other outbound network call fails the test.
 - **Covers:** condition seeding, seat-by-seat matchmaking and provisioning,
   the concurrent-join race (simultaneous joiners must land in one group),
   404/409 paths, the finalize → Postgres → read-back round-trip **across app
   restarts** (a fresh app instance can only answer from the database), survey
-  upserts, settings, CSV export escaping and filtering.
+  upserts and token/survey leak protection, token rejoin on refresh, condition
+  edits surviving restarts, oversized (>100 KB) checkpoints, settings, CSV
+  export escaping and filtering, **study rounds** (start aborts lobbies,
+  resets progress, round-scopes matchmaking), and the reports suite
+  (`reports.integration.spec.ts`: window evaluations and classification
+  failures across restart, old-checkpoint compatibility, pseudonymized
+  `participants.csv` + `linkage.csv`, `roundIds`/`conditionIds` filtering,
+  and the research ZIP with codebook and no linkage file).
 
 ### chat-service (`backend/chat-service/test/integration/`)
 
@@ -70,9 +90,11 @@ each run starts throwaway containers and removes them afterwards.
   the finalize callback.
 - **Covers:** room takeover on `POST /internal/sessions/start`, event
   collection through real sync (messages, reactions, redactions, `de.gdm.ranking`),
-  the server-side discussion timer, and the nudge behavior per condition:
-  baseline stays silent, public nudges fire exactly once per intervention
-  window, private nudges carry the `de.gdm.recipient` key.
+  the server-side discussion timer, the nudge behavior per condition
+  (baseline stays silent, public nudges fire exactly once per intervention
+  window, private nudges carry the `de.gdm.recipient` key), and **2-bot
+  comparison mode** (Assistants A and B both join an invite-only room and
+  both nudge, as in production).
 
 ### Conventions
 
@@ -88,10 +110,16 @@ each run starts throwaway containers and removes them afterwards.
 
 ## End-to-End (`e2e/`)
 
-The default Playwright profile covers the complete three-participant journey,
-validation feedback, live typing and reactions, shared ranking and panel
-resizing, behavioral telemetry, every intervention mode, the admin download,
-and all JSON/CSV export families. API-provisioned scenarios jump directly into
+The default Playwright run covers the complete three-participant journey,
+validation feedback, live typing (and asserting that emoji reactions are
+**absent**, per the turn-taking design), shared ranking and panel resizing,
+behavioral telemetry, both delivery modes (public/private — the detection
+axis is only exercised by the opt-in live spec), the Results dashboard
+(`results-dashboard.spec.ts`: descriptives, round-filter chips rewriting
+every download link, the research-bundle ZIP, and the Study Rounds
+confirm/cancel step), the admin download, and all JSON/CSV export families
+including `roundIds`×`conditionIds` composition and the 401 guards on
+`linkage.csv`/`research.zip`. API-provisioned scenarios jump directly into
 the real Matrix chat so only the golden path waits for the one-minute timer.
 
 ```bash
@@ -99,14 +127,17 @@ cd infra && sh start.sh     # the stack must be up; global-setup fails fast if n
 pnpm test:e2e
 ```
 
-Two disruptive or externally billed profiles are opt-in:
+Two disruptive or externally billed specs are opt-in. They are collected by
+the default run too but **self-skip** unless their env gate is set
+(`E2E_LIVE_ANTHROPIC` / `E2E_ALLOW_SERVICE_RESTART`); the dedicated scripts
+just set the gate and narrow the file list:
 
 ```bash
 # Three real classifications through the deployed Anthropic integration.
 pnpm --dir e2e test:e2e:live
 
 # Local compose only: stops and starts Session Manager + Chat Service in order.
-E2E_COMPOSE_ENV_FILE=.env pnpm --dir e2e test:e2e:recovery
+pnpm --dir e2e test:e2e:recovery
 ```
 
 The restart profile refuses non-local API URLs and refuses to run while a
@@ -118,10 +149,12 @@ First-time setup: `pnpm --filter @gdm/e2e exec playwright install chromium`.
 
 Notes:
 
-- Each run creates its own disposable condition (`e2e-<timestamp>`, baseline
-  mode, 1-minute discussion) and deactivates it afterwards, so runs never
-  touch the real study arms and stale sessions from an aborted run can't soak
-  up participants. Test rows remain in the research DB; wipe with
+- Specs create their own disposable `e2e-…` conditions and deactivate them
+  afterwards (the shared helper mints `e2e-condition-<id>` with a 2-minute
+  discussion and group size 2; the golden path uses `e2e-<timestamp>` with 1
+  minute and group size 3; `results-dashboard.spec.ts` is read-only and
+  creates none), so runs never touch the real study arms and stale sessions
+  from an aborted run can't soak up participants. Test rows remain in the research DB; wipe with
   `sh stop.sh --volumes` when you want a clean slate.
 - Discussion durations must be **whole minutes**: the research DB stores
   `durationMinutes` as an integer and silently truncates fractions to 0
@@ -139,6 +172,21 @@ Notes:
 - Keep the full suite at one worker. For a deliberate load probe, target only
   `tests/golden-path.spec.ts` with `--repeat-each=N --workers=W`; each worker
   provisions its own condition, so concurrent sessions cannot cross-match.
+
+## Demo script (not a test)
+
+`e2e/scripts/run-demo-discussions.mjs` drives 9 real browsers through the
+full participant flow as 3 parallel groups of 3 (arms `baseline`,
+`public-llm`, `private-llm`) with the real 3-minute warm-up and 10-minute
+discussion (~13 min total). Use it to generate realistic demo data or to
+eyeball the bots live:
+
+```bash
+cd e2e && node scripts/run-demo-discussions.mjs
+```
+
+It is not part of any Playwright run (`pnpm --dir e2e test:e2e:list` shows
+what is).
 
 ## Which Layer Does a New Test Belong In?
 

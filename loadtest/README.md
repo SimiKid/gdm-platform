@@ -14,7 +14,10 @@ The harness exercises:
 - typing notifications and durable typing telemetry;
 - chat messages with send-ack and peer-delivery measurements;
 - cursor telemetry every ten seconds;
-- reactions and shared-ranking edits;
+- reactions and shared-ranking edits (note: real participants can no longer
+  send reactions — the UI removed them per study protocol — so the reaction
+  traffic here is extra server-side load, not a model of production traffic;
+  tune with `LOADTEST_REACTION_MIN/MAX_SECONDS`);
 - Chat Service checkpoints and both PostgreSQL databases.
 
 It does not need application dependencies. It uses a local `k6` binary when
@@ -41,7 +44,9 @@ Before a production test:
 - make a database backup;
 - verify no real participant session is running;
 - preferably test a production-sized staging clone first;
-- fix/raise the current 1,024 file-descriptor limit before the 498/798 stages.
+- raise the file-descriptor limits before the 498/798 stages — the runner's
+  preflight refuses to start when Caddy or Synapse report a limit below
+  4,096 (see below).
 
 ## Run
 
@@ -139,6 +144,7 @@ Each run directory contains:
 - `server-metrics.jsonl`
 - `system-dashboard.log`
 - optional `browser-canary-*.log`
+- `file-descriptor-preflight.txt` (on SSH-enabled runs)
 
 At the end of every monitored run, `scripts/report.mjs` also generates:
 
@@ -214,6 +220,9 @@ Stop it with `Ctrl-C`.
 - The runner never deletes research or Matrix data.
 - The condition is deactivated after the run.
 - `e2e-*` sessions are excluded from research exports by the application.
+- Load sessions are stamped with the currently open **study round** like any
+  other session. They never appear in exports (previous point), but they are
+  visible in the rounds' session counts on a live study dashboard.
 - Rooms and Matrix users remain as test residue. Use a disposable staging
   database for repeated high-load runs.
 - `LOADTEST_SESSION_MINUTES` controls when the server-side Chat Service

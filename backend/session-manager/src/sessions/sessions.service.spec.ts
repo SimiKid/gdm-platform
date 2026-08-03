@@ -447,7 +447,7 @@ describe("SessionsService (session-manager)", () => {
   it("exports sessions as JSON bundle and CSV summary", async () => {
     await svc.openSession(open());
     expect((await svc.exportBundle()).sessions).toHaveLength(1);
-    expect((await svc.exportBundle(["private-rule"])).sessions).toHaveLength(0);
+    expect((await svc.exportBundle({ conditionIds: ["private-rule"] })).sessions).toHaveLength(0);
 
     const csv = await svc.exportCsv();
     expect(csv).toContain("session_id,condition_id");
@@ -512,11 +512,11 @@ describe("SessionsService (session-manager)", () => {
     });
 
     // Condition filter applies to every data set.
-    expect((await svc.exportMessages(["private-rule"])).messages).toHaveLength(0);
+    expect((await svc.exportMessages({ conditionIds: ["private-rule"] })).messages).toHaveLength(0);
     expect(
-      (await svc.exportInterventions(["private-rule"])).interventions,
+      (await svc.exportInterventions({ conditionIds: ["private-rule"] })).interventions,
     ).toHaveLength(0);
-    expect((await svc.exportSurveys(["private-rule"])).surveys).toHaveLength(0);
+    expect((await svc.exportSurveys({ conditionIds: ["private-rule"] })).surveys).toHaveLength(0);
 
     // CSV variants: headers, escaping, serialized details.
     const messagesCsv = await svc.exportMessagesCsv();
@@ -640,5 +640,62 @@ describe("SessionsService (session-manager)", () => {
     const csv = await svc.exportMessagesCsv();
     expect(csv).not.toContain(",\"=HYPERLINK");
     expect(csv).toContain("'=HYPERLINK");
+  });
+
+  it("stamps new sessions with the current round", async () => {
+    const res = await svc.openSession(open());
+    expect(res.session.roundId).toBe(1);
+
+    await svc.startRound();
+    const next = await svc.openSession(open());
+    expect(next.session.roundId).toBe(2);
+  });
+
+  it("startRound aborts waiting lobbies; the next joiner never lands in an old-round lobby", async () => {
+    const first = await svc.openSession(open()); // 1/3 in a round-1 lobby
+
+    const result = await svc.startRound("threshold pilot");
+    expect(result.round.number).toBe(2);
+    expect(result.round.label).toBe("threshold pilot");
+    expect(result.abortedWaitingSessions).toBe(1);
+    expect((await svc.getSession(first.session.id)).status).toBe("aborted");
+
+    // Fresh joiner opens a round-2 session instead of filling the old lobby.
+    const next = await svc.openSession(open());
+    expect(next.session.id).not.toBe(first.session.id);
+    expect(next.session.roundId).toBe(2);
+  });
+
+  it("a goal reached in round 1 does not block recruiting in round 2", async () => {
+    const baseline = (await store.listConditions())[0];
+    await store.upsertCondition({ ...baseline, goal: 1, groupSize: 2 });
+
+    // Fill the round-1 group completely: 1 claimed session = the goal.
+    await svc.openSession({ ...open(), conditionId: baseline.id });
+    await svc.openSession({ ...open(), conditionId: baseline.id });
+    // No forming lobby left and the goal is reached — arm unavailable.
+    await expect(
+      svc.openSession({ ...open(), conditionId: baseline.id }),
+    ).rejects.toThrow("not available");
+
+    await svc.startRound();
+    // Round 2: per-round counting reopens the arm at 0/goal.
+    const res = await svc.openSession({ ...open(), conditionId: baseline.id });
+    expect(res.session.condition.id).toBe(baseline.id);
+    expect(res.session.roundId).toBe(2);
+    expect(await store.completedCount(baseline.id, 2)).toBe(0);
+  });
+
+  it("running sessions keep their round across a round switch", async () => {
+    await svc.openSession(open());
+    await svc.openSession(open());
+    const full = await svc.openSession(open()); // 3/3 → running
+    expect((await svc.getSession(full.session.id)).status).toBe("running");
+
+    const result = await svc.startRound();
+    expect(result.abortedWaitingSessions).toBe(0);
+    const session = await svc.getSession(full.session.id);
+    expect(session.status).toBe("running");
+    expect(session.roundId).toBe(1);
   });
 });

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type {
   ConditionProgress,
+  RoundsResponse,
   Session,
   SessionStatus,
   SessionSummary,
@@ -26,9 +27,10 @@ const INDIVIDUAL_EXPORTS = [
 interface Props {
   rows: ConditionProgress[];
   sessions: SessionSummary[];
+  rounds: RoundsResponse | null;
 }
 
-export default function Overview({ rows, sessions }: Props) {
+export default function Overview({ rows, sessions, rounds }: Props) {
   // Test residue (E2E arms) stays out of the study numbers and lists below.
   const studyRows = useMemo(
     () => rows.filter((row) => !isTestCondition(row.condition.id)),
@@ -48,10 +50,27 @@ export default function Overview({ rows, sessions }: Props) {
     [studyRows],
   );
 
+  const currentRound = rounds?.rounds.find(
+    (round) => round.number === rounds.currentRound,
+  );
+
   return (
     <>
       <section className="summary">
-        <Metric label="Completed sessions" value={`${totals.completed} / ${totals.goal}`} />
+        {rounds && (
+          <Metric
+            label={
+              currentRound?.label
+                ? `Current round (${currentRound.label})`
+                : "Current round"
+            }
+            value={`Round ${rounds.currentRound}`}
+          />
+        )}
+        <Metric
+          label="Completed sessions (round)"
+          value={`${totals.completed} / ${totals.goal}`}
+        />
         <Metric
           label="Active now"
           value={String(liveCount)}
@@ -190,7 +209,7 @@ function ExportCard() {
 function ConditionTracking({ rows }: { rows: ConditionProgress[] }) {
   return (
     <section className="section">
-      <h2>Completed per Condition</h2>
+      <h2>Completed per Condition (current round)</h2>
       <div className="tracking">
         {rows.map((row) => (
           <TrackingRow key={row.condition.id} row={row} />
@@ -287,6 +306,7 @@ function SessionRows({
         <thead>
           <tr>
             <th>Session</th>
+            <th>Round</th>
             <th>Condition</th>
             <th>Status</th>
             <th>People</th>
@@ -306,6 +326,7 @@ function SessionRows({
               <td>
                 <strong>{session.id.slice(0, 8)}</strong>
               </td>
+              <td>{session.roundId}</td>
               <td>{session.conditionName}</td>
               <td>
                 <span className={`status ${session.status}`}>
@@ -371,6 +392,6 @@ function Fact({ label, value }: { label: string; value: string }) {
 }
 
 function formatTime(value?: string): string {
-  if (!value) return "—";
+  if (!value) return "not yet";
   return new Date(value).toLocaleString();
 }

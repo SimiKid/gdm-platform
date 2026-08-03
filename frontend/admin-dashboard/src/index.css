@@ -219,6 +219,15 @@ details summary {
   margin: 10px 0;
 }
 
+/* ── Results ───────────────────────────────────────── */
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 /* ── Export ────────────────────────────────────────── */
 
 .download-primary {

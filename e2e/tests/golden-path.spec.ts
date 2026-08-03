@@ -267,6 +267,8 @@ test("@golden three participants run a full study session end to end", async ({
     const admin = await adminContext.newPage();
     await admin.goto(ADMIN);
     await expect(admin.getByRole("heading", { name: "Study Admin" })).toBeVisible();
+    // E2E sessions live in the Testing view (Overview shows study arms only).
+    await admin.getByRole("button", { name: "Testing" }).click();
     const row = admin.locator("tr", { hasText: sessionId.slice(0, 8) });
     await expect(row.locator(".status")).toHaveText("completed", { timeout: 20_000 });
   });

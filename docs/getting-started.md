@@ -6,7 +6,7 @@ How to run the GDM platform locally for development and pilot testing.
 
 - **Docker Desktop** (or Docker Engine + Compose plugin) running on your machine
 - No host-level Node.js or pnpm installation is required for running the app stack
-- For running tests or Prisma commands locally: Node.js 20+ and `corepack prepare pnpm@11.8.0 --activate`
+- For running tests or Prisma commands locally: Node.js 22+ (the Docker images use `node:22`) and `corepack prepare pnpm@11.8.0 --activate`
 
 ## Start the Stack
 
@@ -17,10 +17,11 @@ sh start.sh
 
 This builds and starts all services via Docker Compose. On first run, expect a longer build as Docker pulls base images and compiles the backends.
 
-Alternatively, run directly:
+Alternatively, run directly (`.env` is gitignored — on a fresh clone create it first):
 
 ```bash
 cd infra
+cp .env.example .env   # only needed once; start.sh does this for you
 docker compose --env-file .env up --build
 ```
 
@@ -49,7 +50,7 @@ The participant frontend's nginx reverse-proxies `/api/` to the session manager 
 
 ### 1. Open the admin dashboard
 
-Go to http://localhost:3003. Confirm that all five conditions (baseline + 4 intervention arms) are listed and at least one is **active**. The default group size is **3**.
+Go to http://localhost:3003. The dashboard has four tabs: **Overview** (progress, session list, study link), **Results** (descriptives and research exports), **Settings** (recruiting, study rounds, shared parameters, compensation link), and **Testing** (pilot links, 2-bot comparison). Confirm that all five conditions (baseline + the 2x2 delivery x detection arms) are listed in Settings → Recruiting and at least one is **active** (the toggle lives there, not on Overview). The default group size is **3**. The Overview also shows the current **study round** — pilot sessions are stamped into whatever round is open (Round 1 on a fresh stack).
 
 ### 2. Open participant links
 
@@ -61,11 +62,13 @@ http://localhost:3000/
 
 This is the single link researchers hand out. Each tab that opens it self-issues a random tracking token and gets auto-assigned to the least-completed active condition.
 
-Open it in **3 separate browser tabs** (one per participant, matching the group size). To force a specific condition, use a pilot link instead:
+Open it in **3 separate browser tabs** (one per participant, matching the group size). To force a specific condition, use a pilot link from the **Testing** tab instead:
 
 ```
-http://localhost:3000/?conditionId=public-neutral
+http://localhost:3000/?conditionId=public-rule
 ```
+
+(The seeded condition ids are `baseline`, `public-rule`, `public-llm`, `private-rule`, `private-llm`.)
 
 ### 3. Walk through the flow
 
@@ -137,7 +140,7 @@ pnpm install --frozen-lockfile
 
 pnpm test              # unit tests (seconds, no Docker)
 pnpm test:integration  # backend integration tests (needs Docker; starts throwaway Postgres/Synapse)
-pnpm test:e2e          # Production-safe Playwright profile (needs the compose stack running)
+pnpm test:e2e          # Playwright e2e suite (needs the compose stack running; disruptive/billed specs self-skip unless env-gated on)
 ```
 
 See [testing.md](testing.md) for what each layer covers and its conventions.
@@ -157,6 +160,11 @@ All environment variables live in `infra/.env`. Key settings:
 | `PARTICIPANT_PUBLIC_URL` | Recruiting link shown in the admin dashboard (baked into its image at build time) |
 | `ADMIN_API_TOKEN` | Protects researcher endpoints; empty = open (dev only) |
 | `INTERNAL_API_TOKEN` | Shared secret between Session Manager and Chat Service; empty = open (dev only) |
+| `MATRIX_SERVICE_PASSWORD` | Password of the stable `gdm_orchestrator` Matrix account; **required** in production (Session Manager exits without it) |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | Enable the LLM classifier for the Rule+LLM arms; without a key those arms silently degrade to rule-based |
+| `LLM_MODE` | Optional global override: `off` kill switch, `active` forces every arm to Rule+LLM; leave empty normally |
+| `WAITING_TIMEOUT_MINUTES` | How long a waiting lobby lives before being cleaned up |
+| `SYNAPSE_SERVER_NAME`, `PUBLIC_HOST`, `ACME_EMAIL` | Production identity/TLS settings — see [deployment.md](deployment.md) |
 
 The Synapse `homeserver.yaml` at `infra/synapse/homeserver.yaml` has its own DB credentials that must match the `.env` values (Synapse reads static YAML, not environment variables). Production uses `homeserver.prod.yaml` instead, rendered from a template by `infra/render-homeserver.sh`.
 

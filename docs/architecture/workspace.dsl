@@ -1,7 +1,7 @@
 workspace "GDM Study Platform" "AI-supported group decision-making study" {
 
     model {
-        participant = person "Participant" "Member of a 5-person hiring committee"
+        participant = person "Participant" "Member of a small group (default 3) solving the Moon Survival ranking task"
         researcher  = person "Researcher" "Configures conditions, exports data"
 
         gdm = softwareSystem "GDM Study Platform" "Runs AI-assisted group decision-making sessions" {
@@ -12,9 +12,9 @@ workspace "GDM Study Platform" "AI-supported group decision-making study" {
             }
 
             group "Backend" {
-                sessionManager = container "Session Manager" "Instantiates & tracks sessions per condition (how many done / still needed); persists sessions, surveys & messages" "NestJS"
+                sessionManager = container "Session Manager" "Instantiates & tracks sessions per condition and study round (how many done / still needed); persists sessions, surveys & messages; serves reports & exports" "NestJS"
                 chatService = container "Chat Service" "Runtime glue between the session entity, the bot and Matrix during a session" "NestJS"
-                bot = container "Bot / Rule Engine" "Rule-based contribution-share detector; sends group or private nudges. LLM is optional" "Node appservice"
+                bot = container "Bot / Rule Engine" "Rule-based contribution-share detector; sends group or private nudges. Rule+LLM arms add semantic classification" "Node module inside Chat Service"
                 matrix = container "Matrix Server" "Real-time chat; rooms = groups; durable message store; E2EE off on study rooms" "Synapse"
                 exportService = container "Export Service" "Future standalone service if exports outgrow Session Manager endpoints" "NestJS"
                 db = container "Research Database" "Sessions, surveys, messages, interventions" "PostgreSQL" {
@@ -23,9 +23,9 @@ workspace "GDM Study Platform" "AI-supported group decision-making study" {
             }
         }
 
-        # External, optional, future
-        llm = softwareSystem "LLM" "Optional, future: semantic acknowledgment check" {
-            tags "External" "Optional"
+        # External
+        llm = softwareSystem "LLM (Anthropic API)" "Semantic contribution classification in the rule+LLM arms" {
+            tags "External"
         }
 
         # --- Relationships (current decisions) ---
@@ -34,7 +34,7 @@ workspace "GDM Study Platform" "AI-supported group decision-making study" {
         researcher -> admin "Uses" "HTTPS"
 
         spa -> sessionManager "Opens session, submits surveys; receives session object" "HTTPS/JSON"
-        spa -> matrix "Real-time chat: messages, reactions, typing" "Matrix C-S API"
+        spa -> matrix "Real-time chat: messages, ranking edits, typing (no reactions per study protocol)" "Matrix C-S API"
 
         admin -> sessionManager "Configures & tracks conditions" "HTTPS/JSON"
         admin -> sessionManager "Exports JSON / CSV from research DB" "HTTPS/JSON"
@@ -43,16 +43,15 @@ workspace "GDM Study Platform" "AI-supported group decision-making study" {
         chatService -> sessionManager "Returns session entity incl. messages (at session end)"
         sessionManager -> db "Persists sessions, conditions, surveys, messages, rankings and interventions" "SQL"
 
-        chatService -> matrix "Provisions room & users, relays messages into the session entity" "Matrix C-S API / Admin API"
+        sessionManager -> matrix "Provisions rooms & users, invites participants" "Matrix C-S API / Admin API"
+        chatService -> matrix "Relays room events into the session entity" "Matrix C-S API"
         chatService -> bot "Provides session context & condition"
 
         # Bot <-> Matrix is bidirectional: reads the stream, posts nudges
-        bot -> matrix "Reads event stream" "Appservice API"
+        bot -> matrix "Reads event stream via bot user" "Matrix C-S API (/sync)"
         bot -> matrix "Posts nudges (group / private)" "Matrix C-S API"
 
-        bot -> llm "Optional semantic acknowledgment check (future)" {
-            tags "Optional"
-        }
+        bot -> llm "Classifies message contributions (rule+LLM arms)"
 
         exportService -> db "Reads for JSON / CSV export" "SQL"
 

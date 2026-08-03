@@ -673,6 +673,183 @@ describe("StudyBotRules (two-bot comparison mode)", () => {
   });
 });
 
+describe("window evaluation records", () => {
+  it("records a nudged evaluation linking the intervention", async () => {
+    const { rt, event } = await makeDominantRed("public");
+    await new ContributionBotRules().onWindowElapsed(rt, event.ts + 1_000);
+
+    expect(rt.windowEvaluations).toHaveLength(1);
+    const evaluation = rt.windowEvaluations[0];
+    expect(evaluation).toMatchObject({
+      sessionId: "s",
+      conditionId: "public",
+      arm: "primary",
+      outcome: "nudged",
+      llmMode: "off",
+      threshold: 0.4,
+      interventionId: rt.interventions[0].id,
+    });
+    expect(evaluation.contributionSplit).toHaveLength(3);
+    expect(evaluation.candidateTargets).toEqual([
+      { userId: MEMBERS[0], identityName: "Red" },
+    ]);
+    expect(evaluation.maxDominanceScore).toBeCloseTo(0.66, 1);
+  });
+
+  it("baseline arm records the counterfactual with full dominance data", async () => {
+    const { rt, bot, event } = await makeDominantRed("baseline");
+    await new ContributionBotRules().onWindowElapsed(rt, event.ts + 1_000);
+
+    expect(bot.sendText).not.toHaveBeenCalled();
+    expect(rt.interventions).toHaveLength(0);
+    expect(rt.windowEvaluations).toHaveLength(1);
+    expect(rt.windowEvaluations[0]).toMatchObject({
+      outcome: "baseline-suppressed",
+      interventionId: null,
+    });
+    expect(rt.windowEvaluations[0].contributionSplit).toHaveLength(3);
+    expect(rt.windowEvaluations[0].candidateTargets).toEqual([
+      { userId: MEMBERS[0], identityName: "Red" },
+    ]);
+  });
+
+  it("records no-target with the split when nobody crosses the threshold", async () => {
+    const { rt } = runtime("public", { contributionThreshold: 0.9 });
+    record(rt, MEMBERS[0], "balanced words here", "m-red");
+    const event = record(rt, MEMBERS[1], "balanced words too", "m-blue");
+    await new ContributionBotRules().onWindowElapsed(rt, event.ts + 1_000);
+
+    expect(rt.interventions).toHaveLength(0);
+    expect(rt.windowEvaluations[0]).toMatchObject({ outcome: "no-target" });
+    expect(rt.windowEvaluations[0].contributionSplit).toHaveLength(3);
+    expect(rt.windowEvaluations[0].candidateTargets).toEqual([]);
+    expect(rt.windowEvaluations[0].maxDominanceScore).not.toBeNull();
+  });
+
+  it("records warm-up and wrap-up boundaries without a split", async () => {
+    const start = await makeDominantRed("public", { protectedStartMinutes: 3 });
+    await new ContributionBotRules().onWindowElapsed(
+      start.rt,
+      start.rt.startedAtMs + 60_000,
+    );
+    expect(start.rt.windowEvaluations[0]).toMatchObject({
+      outcome: "warm-up",
+      maxDominanceScore: null,
+    });
+    expect(start.rt.windowEvaluations[0].contributionSplit).toEqual([]);
+
+    const end = await makeDominantRed("public", { protectedEndMinutes: 2 });
+    await new ContributionBotRules().onWindowElapsed(
+      end.rt,
+      end.rt.startedAtMs + 9 * 60_000,
+    );
+    expect(end.rt.windowEvaluations[0]).toMatchObject({ outcome: "wrap-up" });
+    expect(end.rt.windowEvaluations[0].contributionSplit).toEqual([]);
+  });
+
+  it("records too-few-participants when the room has one member", async () => {
+    const { rt, bot } = runtime("public");
+    (bot.getJoinedMemberIds as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValue([MEMBERS[0]]);
+    record(rt, MEMBERS[0], "hello alone", "m-solo");
+    await new ContributionBotRules().onWindowElapsed(rt, Date.now() + 120_000);
+
+    expect(rt.windowEvaluations[0]).toMatchObject({
+      outcome: "too-few-participants",
+    });
+    expect(rt.windowEvaluations[0].contributionSplit).toEqual([]);
+  });
+
+  it("records grace-suppressed when the only candidate is inside invite grace", async () => {
+    const classify = vi.fn(
+      async (message: Message, context: ClassifierContext) =>
+        fakeClassification(message, context, { invitesParticipation: true }),
+    );
+    const { rt } = runtime("public", { llmMode: "active" });
+    const rules = new ContributionBotRules({ classify });
+    const ts = Date.now() + 60_000;
+    record(rt, MEMBERS[1], "ok", "m-blue", ts);
+    const invite = record(
+      rt,
+      MEMBERS[0],
+      "I think oxygen matters most - but what do the rest of you think?",
+      "m-red-invite",
+      ts + 1_000,
+    );
+    await rules.onEvent(rt, invite);
+    await rules.onWindowElapsed(rt, invite.ts + 1_000);
+
+    expect(rt.interventions).toHaveLength(0);
+    expect(rt.windowEvaluations[0]).toMatchObject({
+      outcome: "grace-suppressed",
+    });
+    expect(rt.windowEvaluations[0].candidateTargets).toEqual([
+      { userId: MEMBERS[0], identityName: "Red" },
+    ]);
+  });
+
+  it("comparison mode records one evaluation per detection arm", async () => {
+    const classify = vi.fn(async (message: Message, context: ClassifierContext) =>
+      fakeClassification(message, context, { meaningfulnessScore: 1 }),
+    );
+    const { rt } = runtime("public", { comparisonMode: true });
+    const rules = new StudyBotRules({ classify });
+    record(rt, MEMBERS[1], "ok", "m-blue");
+    const event = record(
+      rt,
+      MEMBERS[0],
+      "I think oxygen matters most because without oxygen we cannot move or breathe at all on the lunar surface today.",
+      "m-red",
+    );
+    await rules.onEvent(rt, event);
+    await rules.onWindowElapsed(rt, event.ts + 1_000);
+
+    expect(rt.windowEvaluations.map((item) => item.arm)).toEqual(["a", "b"]);
+    expect(rt.windowEvaluations.map((item) => item.llmMode)).toEqual([
+      "off",
+      "active",
+    ]);
+  });
+
+  it("indexes evaluations on the session's window grid", async () => {
+    const { rt } = runtime("public");
+    const rules = new ContributionBotRules();
+    // Default 4-minute windows, no warm-up: boundaries at minute 4 and 8.
+    await rules.onWindowElapsed(rt, rt.startedAtMs + 4 * 60_000);
+    await rules.onWindowElapsed(rt, rt.startedAtMs + 8 * 60_000);
+
+    expect(rt.windowEvaluations.map((item) => item.windowIndex)).toEqual([0, 1]);
+    expect(rt.windowEvaluations[0].windowStart).toBe(
+      new Date(rt.startedAtMs).toISOString(),
+    );
+    expect(rt.windowEvaluations[0].windowEnd).toBe(
+      new Date(rt.startedAtMs + 4 * 60_000).toISOString(),
+    );
+  });
+
+  it("records a classification failure instead of a classification", async () => {
+    const classify = vi.fn(async (message: Message) => ({
+      messageId: message.id,
+      senderId: message.senderId,
+      failedAt: new Date().toISOString(),
+      model: "test-model",
+      promptVersion: "test-v1",
+      error: "boom",
+    }));
+    const { rt } = runtime("public", { llmMode: "active" });
+    const rules = new ContributionBotRules({ classify });
+    const event = record(rt, MEMBERS[0], "hello there", "m-fail");
+    await rules.onEvent(rt, event);
+
+    expect(rt.contributionClassifications).toHaveLength(0);
+    expect(rt.classificationFailures).toHaveLength(1);
+    expect(rt.classificationFailures[0]).toMatchObject({
+      messageId: "m-fail",
+      error: "boom",
+    });
+  });
+});
+
 describe("NoopBotRules", () => {
   it("onEvent does nothing and never throws", () => {
     const { rt } = runtime("public");

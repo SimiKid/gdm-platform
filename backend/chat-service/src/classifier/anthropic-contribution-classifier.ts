@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { buildIdentities, identityFor } from "@gdm/shared";
 import type {
+  ClassificationFailure,
   ClassifierIndicator,
   ContributionClassification,
   Message,
@@ -45,17 +46,25 @@ export class AnthropicContributionClassifier implements ContributionClassifier {
   async classify(
     message: Message,
     context: ClassifierContext,
-  ): Promise<ContributionClassification | null> {
+  ): Promise<ContributionClassification | ClassificationFailure> {
     const apiKey = process.env.ANTHROPIC_API_KEY;
+    const model = process.env.ANTHROPIC_MODEL ?? DEFAULT_MODEL;
+    const failure = (error: string): ClassificationFailure => ({
+      messageId: message.id,
+      senderId: message.senderId,
+      failedAt: new Date().toISOString(),
+      model,
+      promptVersion: PROMPT_VERSION,
+      error,
+    });
     if (!apiKey) {
       if (!this.warnedMissingKey) {
         this.warnedMissingKey = true;
         this.log.warn("ANTHROPIC_API_KEY is missing; semantic classification is silent");
       }
-      return null;
+      return failure("missing-api-key");
     }
 
-    const model = process.env.ANTHROPIC_MODEL ?? DEFAULT_MODEL;
     const prompt = buildPrompt(message, context);
     try {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -128,7 +137,7 @@ export class AnthropicContributionClassifier implements ContributionClassifier {
       };
     } catch (err) {
       this.log.warn(`semantic classification failed: ${String(err)}`);
-      return null;
+      return failure(String(err).slice(0, 500));
     }
   }
 }

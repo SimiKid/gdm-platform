@@ -29,6 +29,7 @@ import { SessionsService } from "./sessions.service";
 import { StoreService } from "../store/store.service";
 import { AdminGuard } from "../auth/admin.guard";
 import { InternalGuard } from "../auth/internal.guard";
+import { parseConditionIds, parseRoundIds } from "../reports/filter";
 
 @Controller()
 export class SessionsController {
@@ -135,15 +136,18 @@ export class SessionsController {
     return this.store.listConditions();
   }
 
-  /** Admin: per-condition progress (how many done vs. goal). */
+  /** Admin: per-condition progress in the CURRENT round (done vs. goal). */
   @Get("conditions/progress")
   @UseGuards(AdminGuard)
   async progress(): Promise<ConditionProgress[]> {
-    const conditions = await this.store.listConditions();
+    const [conditions, round] = await Promise.all([
+      this.store.listConditions(),
+      this.store.currentRound(),
+    ]);
     return Promise.all(
       conditions.map(async (condition) => ({
         condition,
-        completed: await this.store.completedCount(condition.id),
+        completed: await this.store.completedCount(condition.id, round.id),
         goal: condition.goal,
       })),
     );
@@ -185,8 +189,11 @@ export class SessionsController {
   @Get("export/sessions")
   @UseGuards(AdminGuard)
   @Header("Content-Disposition", 'attachment; filename="detailed_data.json"')
-  exportSessions(@Query("conditionIds") conditionIds?: string) {
-    return this.sessions.exportBundle(parseConditionIds(conditionIds));
+  exportSessions(
+    @Query("conditionIds") conditionIds?: string,
+    @Query("roundIds") roundIds?: string,
+  ) {
+    return this.sessions.exportBundle(researchFilter(conditionIds, roundIds));
   }
 
   /** CSV summary export for currently persisted research sessions. */
@@ -194,32 +201,44 @@ export class SessionsController {
   @UseGuards(AdminGuard)
   @Header("Content-Type", "text/csv; charset=utf-8")
   @Header("Content-Disposition", 'attachment; filename="overview.csv"')
-  exportSessionsCsv(@Query("conditionIds") conditionIds?: string): Promise<string> {
-    return this.sessions.exportCsv(parseConditionIds(conditionIds));
+  exportSessionsCsv(
+    @Query("conditionIds") conditionIds?: string,
+    @Query("roundIds") roundIds?: string,
+  ): Promise<string> {
+    return this.sessions.exportCsv(researchFilter(conditionIds, roundIds));
   }
 
   /** Chat logs export (one row per message). */
   @Get("export/messages")
   @UseGuards(AdminGuard)
   @Header("Content-Disposition", 'attachment; filename="messages.json"')
-  exportMessages(@Query("conditionIds") conditionIds?: string) {
-    return this.sessions.exportMessages(parseConditionIds(conditionIds));
+  exportMessages(
+    @Query("conditionIds") conditionIds?: string,
+    @Query("roundIds") roundIds?: string,
+  ) {
+    return this.sessions.exportMessages(researchFilter(conditionIds, roundIds));
   }
 
   @Get("export/messages.csv")
   @UseGuards(AdminGuard)
   @Header("Content-Type", "text/csv; charset=utf-8")
   @Header("Content-Disposition", 'attachment; filename="messages.csv"')
-  exportMessagesCsv(@Query("conditionIds") conditionIds?: string): Promise<string> {
-    return this.sessions.exportMessagesCsv(parseConditionIds(conditionIds));
+  exportMessagesCsv(
+    @Query("conditionIds") conditionIds?: string,
+    @Query("roundIds") roundIds?: string,
+  ): Promise<string> {
+    return this.sessions.exportMessagesCsv(researchFilter(conditionIds, roundIds));
   }
 
   /** Bot nudge events export (one row per intervention). */
   @Get("export/interventions")
   @UseGuards(AdminGuard)
   @Header("Content-Disposition", 'attachment; filename="interventions.json"')
-  exportInterventions(@Query("conditionIds") conditionIds?: string) {
-    return this.sessions.exportInterventions(parseConditionIds(conditionIds));
+  exportInterventions(
+    @Query("conditionIds") conditionIds?: string,
+    @Query("roundIds") roundIds?: string,
+  ) {
+    return this.sessions.exportInterventions(researchFilter(conditionIds, roundIds));
   }
 
   @Get("export/interventions.csv")
@@ -228,24 +247,31 @@ export class SessionsController {
   @Header("Content-Disposition", 'attachment; filename="interventions.csv"')
   exportInterventionsCsv(
     @Query("conditionIds") conditionIds?: string,
+    @Query("roundIds") roundIds?: string,
   ): Promise<string> {
-    return this.sessions.exportInterventionsCsv(parseConditionIds(conditionIds));
+    return this.sessions.exportInterventionsCsv(researchFilter(conditionIds, roundIds));
   }
 
   /** Survey responses export (one row per participant and kind). */
   @Get("export/surveys")
   @UseGuards(AdminGuard)
   @Header("Content-Disposition", 'attachment; filename="surveys.json"')
-  exportSurveys(@Query("conditionIds") conditionIds?: string) {
-    return this.sessions.exportSurveys(parseConditionIds(conditionIds));
+  exportSurveys(
+    @Query("conditionIds") conditionIds?: string,
+    @Query("roundIds") roundIds?: string,
+  ) {
+    return this.sessions.exportSurveys(researchFilter(conditionIds, roundIds));
   }
 
   @Get("export/surveys.csv")
   @UseGuards(AdminGuard)
   @Header("Content-Type", "text/csv; charset=utf-8")
   @Header("Content-Disposition", 'attachment; filename="surveys.csv"')
-  exportSurveysCsv(@Query("conditionIds") conditionIds?: string): Promise<string> {
-    return this.sessions.exportSurveysCsv(parseConditionIds(conditionIds));
+  exportSurveysCsv(
+    @Query("conditionIds") conditionIds?: string,
+    @Query("roundIds") roundIds?: string,
+  ): Promise<string> {
+    return this.sessions.exportSurveysCsv(researchFilter(conditionIds, roundIds));
   }
 
   /** Prolific arrivals, including people who left before claiming a seat. */
@@ -259,8 +285,11 @@ export class SessionsController {
   @Get("export/contributions")
   @UseGuards(AdminGuard)
   @Header("Content-Disposition", 'attachment; filename="contributions.json"')
-  exportContributions(@Query("conditionIds") conditionIds?: string) {
-    return this.sessions.exportContributions(parseConditionIds(conditionIds));
+  exportContributions(
+    @Query("conditionIds") conditionIds?: string,
+    @Query("roundIds") roundIds?: string,
+  ) {
+    return this.sessions.exportContributions(researchFilter(conditionIds, roundIds));
   }
 
   @Get("export/contributions.csv")
@@ -269,16 +298,15 @@ export class SessionsController {
   @Header("Content-Disposition", 'attachment; filename="contributions.csv"')
   exportContributionsCsv(
     @Query("conditionIds") conditionIds?: string,
+    @Query("roundIds") roundIds?: string,
   ): Promise<string> {
-    return this.sessions.exportContributionsCsv(parseConditionIds(conditionIds));
+    return this.sessions.exportContributionsCsv(researchFilter(conditionIds, roundIds));
   }
 }
 
-function parseConditionIds(conditionIds?: string): string[] {
-  return conditionIds
-    ? conditionIds
-        .split(",")
-        .map((id) => id.trim())
-        .filter(Boolean)
-    : [];
+function researchFilter(conditionIds?: string, roundIds?: string) {
+  return {
+    conditionIds: parseConditionIds(conditionIds),
+    roundIds: parseRoundIds(roundIds),
+  };
 }

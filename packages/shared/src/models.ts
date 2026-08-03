@@ -1,4 +1,8 @@
-import type { InterventionConfig, InterventionLog } from "./interventions.js";
+import type {
+  InterventionConfig,
+  InterventionLog,
+  WindowEvaluation,
+} from "./interventions.js";
 
 /**
  * Domain models for the GDM Study Platform.
@@ -48,6 +52,13 @@ export interface Participant {
   prolific?: ProlificIdentity;
   /** Individual completion, separate from the group session lifecycle. */
   completedAt?: string;
+  /**
+   * Matrix user id once credentials are provisioned. Messages, interventions
+   * and contribution splits key on this, so exports need it to attribute
+   * activity to a participant. Never exposed to other participants
+   * (PublicParticipant strips it).
+   */
+  matrixUserId?: string;
   entrySurvey?: Survey;
   exitSurvey?: Survey;
 }
@@ -169,6 +180,21 @@ export interface ContributionClassification {
   rawOutput: string;
 }
 
+/**
+ * Record of a classification request that produced no usable result
+ * (missing API key, API error, malformed output). Persisted so exports can
+ * report classification coverage instead of silently under-counting.
+ */
+export interface ClassificationFailure {
+  messageId: string;
+  senderId: string;
+  failedAt: string; // ISO 8601
+  model: string;
+  promptVersion: string;
+  /** "missing-api-key" or the truncated error text. */
+  error: string;
+}
+
 /** A poll, initialized by the bot (wireframe: "Polls initialized by bot"). */
 export interface Poll {
   id: string;
@@ -232,6 +258,12 @@ export type SessionStatus =
 export interface Session {
   id: string;
   status: SessionStatus;
+  /**
+   * The study round open when this session was created (1, 2, …). Stamped
+   * once; sessions never change rounds. Running sessions finish in their
+   * round even after the researcher starts a new one.
+   */
+  roundId: number;
   condition: Condition;
   bot: BotConfig;
   participants: Participant[];
@@ -248,6 +280,10 @@ export interface Session {
   behavioralEvents: BehavioralEvent[];
   /** Per-message semantic judgments when the LLM classifier is enabled. */
   contributionClassifications: ContributionClassification[];
+  /** One record per evaluated contribution-window boundary, fired or not. */
+  windowEvaluations?: WindowEvaluation[];
+  /** Classification requests that failed (coverage accounting). */
+  classificationFailures?: ClassificationFailure[];
   /** Internal restart checkpoint metadata; not used by participant clients. */
   processedEventIds?: string[];
   runtimeState?: Record<string, unknown>;

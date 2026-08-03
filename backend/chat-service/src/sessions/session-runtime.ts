@@ -1,6 +1,7 @@
 import { GDM_RECIPIENT_KEY, isServiceUser } from "@gdm/shared";
 import type {
   BehavioralEvent,
+  ClassificationFailure,
   Condition,
   ContributionClassification,
   InterventionLog,
@@ -8,6 +9,7 @@ import type {
   Ranking,
   Reaction,
   RuntimeCheckpoint,
+  WindowEvaluation,
 } from "@gdm/shared";
 import type { MatrixBotService } from "../matrix/matrix-bot.service";
 
@@ -27,6 +29,10 @@ export class SessionRuntime {
   readonly interventions: InterventionLog[] = [];
   readonly behavioralEvents: BehavioralEvent[] = [];
   readonly contributionClassifications: ContributionClassification[] = [];
+  /** One record per evaluated contribution-window boundary, fired or not. */
+  readonly windowEvaluations: WindowEvaluation[] = [];
+  /** Classification requests that produced no usable result. */
+  readonly classificationFailures: ClassificationFailure[] = [];
   /** Rules may stash arbitrary per-session bookkeeping here. */
   readonly state: Record<string, unknown> = {};
 
@@ -96,6 +102,18 @@ export class SessionRuntime {
     else this.contributionClassifications.push(classification);
   }
 
+  recordWindowEvaluation(evaluation: WindowEvaluation): void {
+    this.windowEvaluations.push(evaluation);
+  }
+
+  recordClassificationFailure(failure: ClassificationFailure): void {
+    const index = this.classificationFailures.findIndex(
+      (item) => item.messageId === failure.messageId,
+    );
+    if (index >= 0) this.classificationFailures[index] = failure;
+    else this.classificationFailures.push(failure);
+  }
+
   hasProcessed(eventId: string): boolean {
     return this.processedEventIds.has(eventId);
   }
@@ -111,6 +129,8 @@ export class SessionRuntime {
       interventions: this.interventions,
       behavioralEvents: this.behavioralEvents,
       contributionClassifications: this.contributionClassifications,
+      windowEvaluations: this.windowEvaluations,
+      classificationFailures: this.classificationFailures,
       processedEventIds: [...this.processedEventIds],
       ruleState: this.state,
     };
@@ -174,6 +194,9 @@ export class SessionRuntime {
     this.interventions.push(...checkpoint.interventions);
     this.behavioralEvents.push(...checkpoint.behavioralEvents);
     this.contributionClassifications.push(...checkpoint.contributionClassifications);
+    // Checkpoints written before these fields existed omit them.
+    this.windowEvaluations.push(...(checkpoint.windowEvaluations ?? []));
+    this.classificationFailures.push(...(checkpoint.classificationFailures ?? []));
     for (const eventId of checkpoint.processedEventIds) {
       this.processedEventIds.add(eventId);
     }

@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import {
   DEFAULT_INTERVENTION_CONFIG,
+  GDM_RECIPIENT_KEY,
   MATRIX_EVENT_TYPES,
   isServiceUser,
 } from "@gdm/shared";
@@ -169,7 +170,30 @@ export class SessionsService implements OnModuleInit {
     if (!runtime || runtime.isEnded || this.finalizingRooms.has(event.roomId)) {
       return;
     }
-    if (event.sender === this.bot.botUserId || isServiceUser(event.sender)) return;
+    if (event.sender === this.bot.botUserId || isServiceUser(event.sender)) {
+      // Bot messages belong in the research record (docs/data-export.md
+      // promises recipientId for private nudges), but rules and the
+      // classifier must never run on them, and they never count toward
+      // contribution scores. Recording off the bot's own sync echo keeps the
+      // real Matrix event id/timestamp and covers comparison bots A/B too.
+      if (
+        event.type === "m.room.message" &&
+        !runtime.hasProcessed(event.eventId)
+      ) {
+        runtime.markProcessed(event.eventId);
+        const recipient = event.content[GDM_RECIPIENT_KEY];
+        runtime.recordMessage({
+          id: event.eventId,
+          timestamp: new Date(event.ts).toISOString(),
+          senderId: event.sender,
+          recipientId: typeof recipient === "string" ? recipient : null,
+          text: typeof event.content.body === "string" ? event.content.body : "",
+          reactions: [],
+        });
+        this.scheduleCheckpoint(runtime);
+      }
+      return;
+    }
     if (runtime.hasProcessed(event.eventId)) return;
     runtime.markProcessed(event.eventId);
 

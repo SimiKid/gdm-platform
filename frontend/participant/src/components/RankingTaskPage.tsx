@@ -223,7 +223,7 @@ export default function RankingTaskPage({ onComplete }: Props) {
             <li>Work on your own and rely only on your own reasoning.</li>
             <li>
               Please do not search the internet or use other aids. We are
-              interested in your personal judgment — outside information would
+              interested in your personal judgment; outside information would
               make your data unusable for this research.
             </li>
             <li>

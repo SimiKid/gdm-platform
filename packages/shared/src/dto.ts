@@ -11,9 +11,14 @@
  * lifecycle, surveys, condition config and export.
  */
 
-import type { InterventionLog } from "./interventions.js";
+import type {
+  InterventionLog,
+  InterventionMode,
+  WindowEvaluation,
+} from "./interventions.js";
 import type {
   BehavioralEvent,
+  ClassificationFailure,
   Condition,
   ContributionClassification,
   Message,
@@ -61,6 +66,8 @@ export type PublicSession = Omit<
   | "participants"
   | "behavioralEvents"
   | "contributionClassifications"
+  | "windowEvaluations"
+  | "classificationFailures"
   | "processedEventIds"
   | "runtimeState"
 > & {
@@ -101,12 +108,50 @@ export interface CompleteParticipantResponse {
 
 // ── Admin Dashboard -> Session Manager ───────────────────────────
 
-/** Progress per condition: how many sessions are done vs. the goal. */
+/**
+ * Progress per condition: how many sessions are done vs. the goal.
+ * `completed` counts CURRENT-ROUND sessions only, so starting a new study
+ * round resets every arm to 0/goal and auto-off triggers per round — an arm
+ * that filled its goal in round 1 recruits again in round 2.
+ */
 export interface ConditionProgress {
   condition: Condition;
   completed: number;
   /** Mirrors condition.goal; auto-off triggers once completed >= goal. */
   goal: number;
+}
+
+/** One study round. Counts exclude automated `e2e-` test conditions. */
+export interface StudyRound {
+  /** Auto-assigned 1, 2, … — also the value in exports' `round` column. */
+  number: number;
+  /** Optional researcher free text (e.g. "threshold 35%"). */
+  label: string;
+  startedAt: string; // ISO 8601
+  /** Absent for the currently open round. */
+  endedAt?: string;
+  /** Non-aborted study sessions created in this round. */
+  sessionCount: number;
+  completedCount: number;
+}
+
+export interface RoundsResponse {
+  currentRound: number;
+  rounds: StudyRound[];
+}
+
+export interface StartRoundRequest {
+  label?: string;
+}
+
+export interface StartRoundResponse {
+  round: StudyRound;
+  /** Waiting lobbies aborted so groups never mix rounds. */
+  abortedWaitingSessions: number;
+}
+
+export interface UpdateRoundRequest {
+  label: string;
 }
 
 /** Create or update a condition (goal/active/time/#people live on Condition). */
@@ -122,6 +167,7 @@ export interface UpdateStudySettingsRequest {
 export interface SessionSummary {
   id: string;
   status: SessionStatus;
+  roundId: number;
   conditionId: string;
   conditionName: string;
   participantCount: number;
@@ -152,6 +198,43 @@ export interface InterventionSummary {
 export interface ExportBundle {
   generatedAt: string;
   sessions: Session[];
+}
+
+/**
+ * Per-condition descriptives for the dashboard Results tab. Means are
+ * computed over completed sessions only; session counts are broken out by
+ * status. `null` means "no data yet", never zero.
+ */
+export interface ConditionReportSummary {
+  conditionId: string;
+  conditionName: string;
+  interventionMode: InterventionMode;
+  llmMode: "off" | "active";
+  sessionsCompleted: number;
+  sessionsAborted: number;
+  sessionsRunning: number;
+  participants: number;
+  entrySurveys: number;
+  exitSurveys: number;
+  meanGroupRankingError: number | null;
+  meanIndividualRankingError: number | null;
+  meanExitRankingError: number | null;
+  meanSatisfaction: number | null;
+  meanFairness: number | null;
+  meanFeltHeard: number | null;
+  /** Mean over sessions of the SD of contribution shares (0 = equal). */
+  meanShareStdDev: number | null;
+  /** Mean over sessions of the Gini coefficient of contribution scores. */
+  meanShareGini: number | null;
+  nudgesTotal: number;
+  nudgesPerSessionMean: number | null;
+  windowsEvaluated: number;
+  windowsNudged: number;
+}
+
+export interface ReportsSummaryResponse {
+  generatedAt: string;
+  conditions: ConditionReportSummary[];
 }
 
 // ── Real-time (Matrix custom events) ─────────────────────────────
@@ -201,6 +284,10 @@ export interface RuntimeCheckpoint {
   interventions: InterventionLog[];
   behavioralEvents: BehavioralEvent[];
   contributionClassifications: ContributionClassification[];
+  /** Optional: checkpoints written before this field existed omit it. */
+  windowEvaluations?: WindowEvaluation[];
+  /** Optional: checkpoints written before this field existed omit it. */
+  classificationFailures?: ClassificationFailure[];
   processedEventIds: string[];
   ruleState: Record<string, unknown>;
 }
@@ -224,6 +311,8 @@ export interface FinalizeSessionRequest {
   interventions?: InterventionLog[];
   behavioralEvents?: BehavioralEvent[];
   contributionClassifications?: ContributionClassification[];
+  windowEvaluations?: WindowEvaluation[];
+  classificationFailures?: ClassificationFailure[];
   processedEventIds?: string[];
   ruleState?: Record<string, unknown>;
 }
