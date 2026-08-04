@@ -304,14 +304,21 @@ export class SessionsService {
     ) {
       throw new BadRequestException("Prolific submission identity mismatch");
     }
+    // Prolific's current API documents underscore-separated enum values, while
+    // older responses used display-style spaces. Normalize both forms so a
+    // legitimate participant can still resume after submitting their study.
+    const submissionStatus = submission.status
+      ?.trim()
+      .toUpperCase()
+      .replace(/[\s-]+/g, "_");
     if (
-      submission.status &&
-      !["RESERVED", "ACTIVE", "AWAITING REVIEW", "APPROVED"].includes(
-        submission.status,
+      submissionStatus &&
+      !["RESERVED", "ACTIVE", "AWAITING_REVIEW", "APPROVED"].includes(
+        submissionStatus,
       )
     ) {
       throw new BadRequestException(
-        `Prolific submission is ${submission.status.toLowerCase()}`,
+        `Prolific submission is ${submissionStatus.toLowerCase()}`,
       );
     }
 
@@ -1087,4 +1094,3 @@ function toSummary(session: Session): SessionSummary {
     roomId: session.roomId,
   };
 }
-

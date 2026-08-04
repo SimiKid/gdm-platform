@@ -143,6 +143,28 @@ describe("SessionsService (session-manager)", () => {
     );
   });
 
+  it.each(["AWAITING_REVIEW", "AWAITING REVIEW"])(
+    "accepts Prolific submission status %s",
+    async (status) => {
+      process.env.PROLIFIC_API_TOKEN = "server-only-token";
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: prolific.sessionId,
+            study_id: prolific.studyId,
+            participant: prolific.participantId,
+            status,
+          }),
+        })),
+      );
+
+      await expect(svc.recordProlificArrival(prolific)).resolves.toBeDefined();
+    },
+  );
+
   it("rejects a Prolific submission whose API identity does not match", async () => {
     process.env.PROLIFIC_API_TOKEN = "server-only-token";
     vi.stubGlobal(
