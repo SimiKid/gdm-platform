@@ -117,6 +117,16 @@ describe("SessionsService (session-manager)", () => {
     );
   });
 
+  it("accepts alphanumeric Prolific preview identifiers", async () => {
+    await expect(
+      svc.recordProlificArrival({
+        participantId: "gggggggggggggggggggggggg",
+        studyId: "ssssssssssssssssssssssss",
+        sessionId: "zzzzzzzzzzzzzzzzzzzzzzzz",
+      }),
+    ).resolves.toBeDefined();
+  });
+
   it("verifies Prolific submission ownership when an API token is configured", async () => {
     process.env.PROLIFIC_API_TOKEN = "server-only-token";
     const prolificFetch = vi.fn(async () => ({

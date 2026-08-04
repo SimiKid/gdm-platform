@@ -239,7 +239,9 @@ export class SessionsService {
     identity?: ProlificIdentity,
   ): Promise<void> {
     if (!identity) return;
-    const idPattern = /^[a-f0-9]{24}$/i;
+    // Prolific identifiers are 24 alphanumeric characters. They are not
+    // guaranteed to be hexadecimal, particularly in participant previews.
+    const idPattern = /^[a-z0-9]{24}$/i;
     if (
       !idPattern.test(identity.participantId) ||
       !idPattern.test(identity.studyId) ||
