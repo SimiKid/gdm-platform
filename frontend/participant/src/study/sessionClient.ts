@@ -72,7 +72,11 @@ export const httpSessionManager: SessionManagerClient = {
       body: JSON.stringify({ prolific }),
     });
     if (!res.ok) throw new Error(`resumeProlific failed: ${res.status}`);
-    return (await res.json()) as ProlificResumeResponse | null;
+    // Nest sends an empty response body when the service returns null. That is
+    // the normal first-visit case, not malformed JSON or a validation failure.
+    const body = await res.text();
+    if (!body.trim()) return null;
+    return JSON.parse(body) as ProlificResumeResponse | null;
   },
   async openSession(req) {
     const res = await fetch(`${API_BASE}/sessions`, {

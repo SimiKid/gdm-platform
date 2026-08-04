@@ -4,7 +4,11 @@ import { httpSessionManager } from "./sessionClient";
 afterEach(() => vi.unstubAllGlobals());
 
 function okJson(value: unknown) {
-  return vi.fn(async () => ({ ok: true, json: async () => value }));
+  return vi.fn(async () => ({
+    ok: true,
+    json: async () => value,
+    text: async () => JSON.stringify(value),
+  }));
 }
 
 describe("httpSessionManager", () => {
@@ -36,6 +40,20 @@ describe("httpSessionManager", () => {
       expect.stringContaining("/prolific/resume"),
       expect.objectContaining({ method: "POST" }),
     );
+  });
+
+  it("treats an empty successful resume response as no existing session", async () => {
+    const prolific = {
+      participantId: "aaaaaaaaaaaaaaaaaaaaaaaa",
+      studyId: "bbbbbbbbbbbbbbbbbbbbbbbb",
+      sessionId: "cccccccccccccccccccccccc",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, status: 201, text: async () => "" })),
+    );
+
+    await expect(httpSessionManager.resumeProlific(prolific)).resolves.toBeNull();
   });
 
   it("openSession POSTs and returns the response", async () => {
