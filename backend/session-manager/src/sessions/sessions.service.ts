@@ -239,13 +239,20 @@ export class SessionsService {
     identity?: ProlificIdentity,
   ): Promise<void> {
     if (!identity) return;
+    const apiToken = process.env.PROLIFIC_API_TOKEN?.trim();
     // Prolific identifiers are 24 alphanumeric characters. They are not
     // guaranteed to be hexadecimal, particularly in participant previews.
     const idPattern = /^[a-z0-9]{24}$/i;
+    // Prolific's researcher preview uses a shorter synthetic submission ID.
+    // Accept it only while API-backed submission validation is disabled.
+    const previewSessionIdPattern = /^[a-z0-9]{12}$/i;
+    const validSessionId =
+      idPattern.test(identity.sessionId) ||
+      (!apiToken && previewSessionIdPattern.test(identity.sessionId));
     if (
       !idPattern.test(identity.participantId) ||
       !idPattern.test(identity.studyId) ||
-      !idPattern.test(identity.sessionId)
+      !validSessionId
     ) {
       throw new BadRequestException("Invalid Prolific identifiers");
     }
@@ -254,7 +261,6 @@ export class SessionsService {
       throw new BadRequestException("Unexpected Prolific study");
     }
 
-    const apiToken = process.env.PROLIFIC_API_TOKEN?.trim();
     if (!apiToken) return;
 
     const cacheKey = [

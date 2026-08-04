@@ -127,6 +127,17 @@ describe("SessionsService (session-manager)", () => {
     ).resolves.toBeDefined();
   });
 
+  it("accepts a short preview session ID only without API validation", async () => {
+    const preview = { ...prolific, sessionId: "pppppppppppp" };
+
+    await expect(svc.recordProlificArrival(preview)).resolves.toBeDefined();
+
+    process.env.PROLIFIC_API_TOKEN = "server-only-token";
+    await expect(svc.recordProlificArrival(preview)).rejects.toThrow(
+      /invalid prolific/i,
+    );
+  });
+
   it("verifies Prolific submission ownership when an API token is configured", async () => {
     process.env.PROLIFIC_API_TOKEN = "server-only-token";
     const prolificFetch = vi.fn(async () => ({
