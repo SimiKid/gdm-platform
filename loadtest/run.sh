@@ -197,7 +197,7 @@ EOF
       printf 'Warning: server file-descriptor limit is %s; do not proceed to a large profile unchanged.\n' \
         "$minimum_fd_limit"
     elif [[ "$profile" == "diagnostic" ]]; then
-      printf 'Warning: server file-descriptor limit is %s; recording the current 4-core/249-user baseline unchanged.\n' \
+      printf 'Warning: server file-descriptor limit is %s; recording the current VM configuration at up to 249 users.\n' \
         "$minimum_fd_limit"
     elif [[ "${LOADTEST_IGNORE_LOW_FD_LIMIT:-}" != "I_ACCEPT_THE_DESCRIPTOR_CEILING" ]]; then
       cat >&2 <<EOF

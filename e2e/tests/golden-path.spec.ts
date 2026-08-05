@@ -192,7 +192,7 @@ test("@golden three participants run a full study session end to end", async ({
           page.getByRole("heading", { name: "Thank you for participating!" }),
         ).toBeVisible();
         await page.getByRole("checkbox", { name: "I have read the debriefing." }).check();
-        await expect(page.getByRole("link", { name: "Claim compensation" })).toBeVisible();
+        await expect(page.getByRole("link", { name: "Return to Prolific" })).toBeVisible();
       }),
     );
   });
