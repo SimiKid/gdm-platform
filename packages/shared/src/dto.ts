@@ -337,6 +337,7 @@ export type CheckpointSessionRequest = FinalizeSessionRequest;
 export interface ContributionAggregate {
   sessionId: string;
   conditionId: string;
+  roundId: number;
   participantId: string;
   messageCount: number;
   characterCount: number;

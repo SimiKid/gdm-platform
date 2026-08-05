@@ -5,7 +5,7 @@ import WaitingRoom from "./components/WaitingRoom";
 import ExitSurvey from "./components/ExitSurvey";
 import Chat from "./components/Chat";
 import DebriefingPage from "./components/DebriefingPage";
-import { createClient, ClientEvent } from "matrix-js-sdk";
+import { createClient, ClientEvent, EventTimeline } from "matrix-js-sdk";
 import type { MatrixClient } from "matrix-js-sdk";
 import type {
   ProlificIdentity,
@@ -37,11 +37,13 @@ type Stage =
   | "exit"
   | "done";
 
-/** Start a Matrix client from stored credentials and wait for the first sync. */
+/** Start a Matrix client from stored credentials and wait for the first sync.
+ *  After sync, backfill the room timeline so reloads never lose messages. */
 async function startMatrixClient(matrix: {
   homeserverUrl: string;
   userId: string;
   accessToken: string;
+  roomId?: string;
 }): Promise<MatrixClient> {
   const client = createClient({
     baseUrl: matrix.homeserverUrl,
@@ -57,6 +59,22 @@ async function startMatrixClient(matrix: {
       else reject(new Error(`Sync failed: ${state}`));
     });
   });
+
+  // Study rooms are small — backfill the full timeline so a page reload never
+  // drops earlier messages that fell outside the initialSyncLimit window.
+  if (matrix.roomId) {
+    const room = client.getRoom(matrix.roomId);
+    if (room) {
+      const timeline = room.getLiveTimeline();
+      while (timeline.getPaginationToken(EventTimeline.BACKWARDS)) {
+        await client.paginateEventTimeline(timeline, {
+          backwards: true,
+          limit: 100,
+        });
+      }
+    }
+  }
+
   return client;
 }
 
