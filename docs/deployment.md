@@ -10,7 +10,7 @@ reachable via UZH VPN; ports 80/443 are open to the public internet.
 Internet ──► Caddy :80/:443 (TLS via Let's Encrypt)
               ├── /_matrix/*  ─► Synapse            (registration answers 403)
               ├── /api/*      ─► Session Manager
-              ├── /admin/*    ─► Admin Dashboard     (API token required)
+              ├── /admin/*    ─► Admin Dashboard     (UZH network + API token)
               └── /*          ─► Participant SPA
 VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (fallback)
 ```
@@ -48,9 +48,10 @@ VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (fallback)
    - `ADMIN_API_TOKEN` / `INTERNAL_API_TOKEN`: `openssl rand -hex 32` each
    - `MATRIX_SERVICE_PASSWORD`: another generated secret. It authenticates the
      stable Matrix room owner used to re-invite a bot after service restarts.
-   - For the Rule+LLM detection arms, add `ANTHROPIC_API_KEY` and keep the
-     pinned `ANTHROPIC_MODEL`. Leave `LLM_MODE` empty so each condition's
-     own detection arm applies. The key is read only by `chat-service`.
+   - Add `ANTHROPIC_API_KEY` for fresh nudge wording and Rule+LLM detection,
+     and keep the pinned `ANTHROPIC_MODEL`. Leave `LLM_MODE` empty so each
+     condition's own detection arm applies. The key is read only by
+     `chat-service`.
 
 3. **Log in to GHCR** (needed while the packages are private; a GitHub
    personal access token with `read:packages` suffices):
@@ -182,14 +183,17 @@ Round 1 row, and adds a `NOT NULL` `round_id` column with a foreign key to
 `sessions`. Take a database backup before any deploy that carries a new
 migration.
 
-## Enabling the Anthropic classifier (Rule+LLM arms)
+## Enabling Anthropic nudge wording and classification
 
 1. Create an API key in the Anthropic Console and fund/enable the workspace.
 2. Put `ANTHROPIC_API_KEY=...` in the VM's `infra/.env`; never commit it.
 3. Keep `ANTHROPIC_MODEL=claude-haiku-4-5-20251001` for reproducible results.
-4. Redeploy the chat service. The Rule+LLM conditions (`llmMode: "active"`)
-   then classify messages automatically. `LLM_MODE=off` is an emergency
-   global kill switch; `LLM_MODE=active` forces every arm to Rule+LLM.
+4. Redeploy the chat service. Every non-baseline intervention then gets fresh
+   nudge wording, and Rule+LLM conditions (`llmMode: "active"`) classify
+   messages automatically. `LLM_MODE=off` disables semantic detection but not
+   generated wording; `LLM_MODE=active` forces every arm to Rule+LLM.
+   Production startup fails fast if the key is missing. Runtime API failures
+   use validated fixed fallback wording so they do not suppress a nudge.
 5. Run a fake pilot and download **Contributions & behavioral telemetry**.
    Confirm the meaningfulness classifications before recruitment.
 
@@ -214,9 +218,16 @@ against a schema whose `sessions.round_id` it does not know).
 
 ## Admin dashboard access
 
-Open https://gdmproject.ifi.uzh.ch/admin/ and enter `ADMIN_API_TOKEN`. The
-dashboard shell is public, but every researcher endpoint containing sessions,
-settings or exports rejects requests without that token.
+From an allowed UZH network or the Remote Access VPN, open
+https://gdmproject.ifi.uzh.ch/admin/ and enter `ADMIN_API_TOKEN`. Caddy rejects
+both the dashboard shell and researcher-only API routes from other source
+networks. The Session Manager still requires the token as a second layer;
+network access alone never authorizes a researcher request.
+
+The allowlist lives in `infra/Caddyfile`. It includes the UZH institutional,
+VPN, guest, Eduroam and supplied internal address ranges. The guest range is
+represented by `185.207.116.0/22` plus `185.207.120.0/24`, covering the complete
+stated interval `185.207.116.0-185.207.120.255`.
 
 The original SSH-tunnel route remains available as a fallback from a machine
 on the UZH VPN:

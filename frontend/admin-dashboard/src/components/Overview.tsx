@@ -11,6 +11,7 @@ import { PARTICIPANT_BASE, apiFetch, exportUrl, isTestCondition } from "../api";
 /** Researcher-facing wording for backend session states (wireframe: lobby/active). */
 const STATUS_LABEL: Record<SessionStatus, string> = {
   waiting: "lobby",
+  provisioning: "starting",
   running: "active",
   completed: "completed",
   aborted: "aborted",
@@ -40,7 +41,9 @@ export default function Overview({ rows, sessions, rounds }: Props) {
     () => sessions.filter((s) => !isTestCondition(s.conditionId)),
     [sessions],
   );
-  const liveCount = studySessions.filter((s) => s.status === "running").length;
+  const liveCount = studySessions.filter(
+    (s) => s.status === "running" || s.status === "provisioning",
+  ).length;
   const lobbyCount = studySessions.filter((s) => s.status === "waiting").length;
   const totals = useMemo(
     () => ({

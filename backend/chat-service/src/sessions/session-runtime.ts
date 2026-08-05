@@ -7,6 +7,7 @@ import type {
   InterventionLog,
   Message,
   Ranking,
+  RecordedReaction,
   Reaction,
   RuntimeCheckpoint,
   WindowEvaluation,
@@ -44,8 +45,12 @@ export class SessionRuntime {
     string,
     { message: Message; reaction: Reaction }
   >();
+  private readonly recordedReactions = new Map<string, RecordedReaction>();
+  private readonly redactedReactionEventIds = new Set<string>();
   private readonly processedEventIds = new Set<string>();
   private participantUserIds?: Promise<string[]>;
+  /** Monotonic snapshot revision; restored after a Chat Service restart. */
+  private checkpointRevision = 0;
 
   constructor(
     readonly sessionId: string,
@@ -61,6 +66,7 @@ export class SessionRuntime {
   }
 
   recordMessage(message: Message): void {
+    if (this.byId.has(message.id)) return;
     this.messages.push(message);
     this.byId.set(message.id, message);
   }
@@ -71,15 +77,51 @@ export class SessionRuntime {
     targetMessageId: string,
     reaction: Reaction,
   ): void {
+    const recorded = this.recordedReactions.get(reactionEventId) ?? {
+      ...reaction,
+      eventId: reactionEventId,
+      messageId: targetMessageId,
+      redacted: this.redactedReactionEventIds.has(reactionEventId),
+    };
+    this.recordedReactions.set(reactionEventId, recorded);
+    if (recorded.redacted) return;
     const message = this.byId.get(targetMessageId);
     if (!message) return;
-    message.reactions.push(reaction);
-    this.reactionEvents.set(reactionEventId, { message, reaction });
+    let stored = message.reactions.find(
+      (candidate) =>
+        candidate.eventId === reactionEventId ||
+        (!candidate.eventId &&
+          candidate.key === reaction.key &&
+          candidate.senderId === reaction.senderId),
+    );
+    if (!stored) {
+      stored = { ...reaction, eventId: reactionEventId };
+      message.reactions.push(stored);
+    } else if (!stored.eventId) {
+      stored.eventId = reactionEventId;
+    }
+    this.reactionEvents.set(reactionEventId, { message, reaction: stored });
   }
 
   /** Undo a reaction that was redacted (toggled off). */
-  removeRedacted(redactedEventId: string): void {
-    const entry = this.reactionEvents.get(redactedEventId);
+  removeRedacted(
+    redactedEventId: string,
+    redactionEventId?: string,
+    redactedAt?: string,
+  ): void {
+    const entry =
+      this.reactionEvents.get(redactedEventId) ??
+      this.findReactionEvent(redactedEventId);
+    const recorded = this.recordedReactions.get(redactedEventId);
+    // Matrix also uses m.room.redaction for messages. Only create a reaction
+    // tombstone when the target is known to be an annotation event.
+    if (!entry && !recorded) return;
+    this.redactedReactionEventIds.add(redactedEventId);
+    if (recorded) {
+      recorded.redacted = true;
+      if (redactionEventId) recorded.redactionEventId = redactionEventId;
+      if (redactedAt) recorded.redactedAt = redactedAt;
+    }
     if (!entry) return;
     const idx = entry.message.reactions.indexOf(entry.reaction);
     if (idx >= 0) entry.message.reactions.splice(idx, 1);
@@ -87,10 +129,17 @@ export class SessionRuntime {
   }
 
   recordRanking(ranking: Ranking): void {
+    if (
+      ranking.eventId &&
+      this.rankingHistory.some((item) => item.eventId === ranking.eventId)
+    ) {
+      return;
+    }
     this.rankingHistory.push(ranking);
   }
 
   recordBehavior(event: BehavioralEvent): void {
+    if (this.behavioralEvents.some((item) => item.id === event.id)) return;
     this.behavioralEvents.push(event);
   }
 
@@ -123,7 +172,9 @@ export class SessionRuntime {
   }
 
   checkpoint(): RuntimeCheckpoint {
+    this.checkpointRevision += 1;
     return {
+      revision: this.checkpointRevision,
       messages: this.messages,
       rankingHistory: this.rankingHistory,
       interventions: this.interventions,
@@ -132,6 +183,8 @@ export class SessionRuntime {
       windowEvaluations: this.windowEvaluations,
       classificationFailures: this.classificationFailures,
       processedEventIds: [...this.processedEventIds],
+      redactedReactionEventIds: [...this.redactedReactionEventIds],
+      reactionEvents: [...this.recordedReactions.values()],
       ruleState: this.state,
     };
   }
@@ -188,8 +241,39 @@ export class SessionRuntime {
   }
 
   private restore(checkpoint: RuntimeCheckpoint): void {
+    this.checkpointRevision = Math.max(0, checkpoint.revision ?? 0);
+    for (const reaction of checkpoint.reactionEvents ?? []) {
+      const restored = { ...reaction };
+      this.recordedReactions.set(restored.eventId, restored);
+      if (restored.redacted) {
+        this.redactedReactionEventIds.add(restored.eventId);
+      }
+    }
+    for (const eventId of checkpoint.redactedReactionEventIds ?? []) {
+      this.redactedReactionEventIds.add(eventId);
+    }
     this.messages.push(...checkpoint.messages);
-    for (const message of this.messages) this.byId.set(message.id, message);
+    for (const message of this.messages) {
+      message.reactions = message.reactions.filter(
+        (reaction) =>
+          !reaction.eventId ||
+          !this.redactedReactionEventIds.has(reaction.eventId),
+      );
+      this.byId.set(message.id, message);
+      for (const reaction of message.reactions) {
+        if (reaction.eventId) {
+          if (!this.recordedReactions.has(reaction.eventId)) {
+            this.recordedReactions.set(reaction.eventId, {
+              ...reaction,
+              eventId: reaction.eventId,
+              messageId: message.id,
+              redacted: false,
+            });
+          }
+          this.reactionEvents.set(reaction.eventId, { message, reaction });
+        }
+      }
+    }
     this.rankingHistory.push(...checkpoint.rankingHistory);
     this.interventions.push(...checkpoint.interventions);
     this.behavioralEvents.push(...checkpoint.behavioralEvents);
@@ -201,5 +285,15 @@ export class SessionRuntime {
       this.processedEventIds.add(eventId);
     }
     Object.assign(this.state, checkpoint.ruleState);
+  }
+
+  private findReactionEvent(
+    eventId: string,
+  ): { message: Message; reaction: Reaction } | undefined {
+    for (const message of this.messages) {
+      const reaction = message.reactions.find((item) => item.eventId === eventId);
+      if (reaction) return { message, reaction };
+    }
+    return undefined;
   }
 }

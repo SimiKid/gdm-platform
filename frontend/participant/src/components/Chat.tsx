@@ -8,7 +8,14 @@ import { ClientEvent, RoomEvent, RoomMemberEvent } from "matrix-js-sdk";
 import { GDM_RECIPIENT_KEY, MATRIX_EVENT_TYPES, protectedEndMs } from "@gdm/shared";
 import type { PublicSession } from "@gdm/shared";
 import SharedRanking from "./SharedRanking";
-import { botLabel, buildIdentities, identityFor, isBot } from "../study/identity";
+import ExternalWorkspace from "./ExternalWorkspace";
+import {
+  botLabel,
+  buildIdentities,
+  identityFor,
+  isBot,
+  isServiceUser,
+} from "../study/identity";
 import { detectMention, splitMentions } from "../study/mentions";
 
 interface Message {
@@ -77,6 +84,10 @@ export default function Chat({ client, session, onTimeUp }: Props) {
     session?.roomId ?? null,
   );
   const [groupOrder, setGroupOrder] = useState<string[]>(session?.ranking.order ?? []);
+  const workspaceMode =
+    session?.condition.config.workspaceMode === "external"
+      ? "external"
+      : "ranking";
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   // In-progress "@" mention: { start, query } while the picker is open, else null.
@@ -86,7 +97,8 @@ export default function Chat({ client, session, onTimeUp }: Props) {
   const [mentionIndex, setMentionIndex] = useState(0);
   const [typingMembers, setTypingMembers] = useState<string[]>([]);
   const [newMessageCount, setNewMessageCount] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [, refreshRoomMembership] = useState(0);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   // Caret position to restore after we programmatically rewrite the input value.
   const desiredCaret = useRef<number | null>(null);
   const messagesViewportRef = useRef<HTMLDivElement>(null);
@@ -182,6 +194,20 @@ export default function Chat({ client, session, onTimeUp }: Props) {
       client.off(ClientEvent.Room, pickFirst);
     };
   }, [client, session]);
+
+  // The Session Manager joins every participant before publishing the room id,
+  // but each browser still learns that room state asynchronously through
+  // Matrix sync. Re-render when the room or a membership arrives so the study
+  // never remains on the neutral loading state until an unrelated message.
+  useEffect(() => {
+    const refresh = () => refreshRoomMembership((revision) => revision + 1);
+    client.on(ClientEvent.Room, refresh);
+    client.on(RoomMemberEvent.Membership, refresh);
+    return () => {
+      client.off(ClientEvent.Room, refresh);
+      client.off(RoomMemberEvent.Membership, refresh);
+    };
+  }, [client]);
 
   // Rebuild messages from the live timeline on any change. Study rooms are
   // tiny, so a full rebuild is simplest and always consistent. Emoji
@@ -436,10 +462,18 @@ export default function Chat({ client, session, onTimeUp }: Props) {
   const wrapUpMs = session ? protectedEndMs(session.condition.config) : 0;
   const timerLow = remaining !== null && remaining <= wrapUpMs;
 
-  const identities = buildIdentities(
-    room?.getJoinedMembers().map((m) => m.userId) ?? [],
-  );
+  const participantMemberIds =
+    room
+      ?.getJoinedMembers()
+      .map((member) => member.userId)
+      .filter((id) => !isServiceUser(id)) ?? [];
+  const identities = buildIdentities(participantMemberIds);
   const me = identityFor(identities, userId);
+  const groupReady =
+    session === null ||
+    (room !== null &&
+      participantMemberIds.includes(userId) &&
+      participantMemberIds.length >= session.condition.groupSize);
 
   // Every participant name in this room, used to highlight mentions on render.
   const mentionNames = [...identities.values()].map((id) => id.name);
@@ -471,7 +505,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
     updateInput(next, desiredCaret.current);
   }
 
-  function onInputKeyDown(e: ReactKeyboardEvent<HTMLInputElement>) {
+  function onInputKeyDown(e: ReactKeyboardEvent<HTMLTextAreaElement>) {
     if (mentionOpen) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -485,7 +519,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
         );
         return;
       }
-      if (e.key === "Enter" || e.key === "Tab") {
+      if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
         e.preventDefault();
         const chosen = mentionCandidates[mentionIndex] ?? mentionCandidates[0];
         selectMention(chosen.name);
@@ -497,7 +531,10 @@ export default function Chat({ client, session, onTimeUp }: Props) {
         return;
       }
     }
-    if (e.key === "Enter") void sendMessage();
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      void sendMessage();
+    }
   }
 
   return (
@@ -506,12 +543,14 @@ export default function Chat({ client, session, onTimeUp }: Props) {
       <main className="chat-main">
         <div className="chat-header">
           <h2>{title}</h2>
-          <span className="chat-user">
-            <span className="user-dot" style={{ background: me.color }} />
-            {me.name}
-          </span>
+          {groupReady && (
+            <span className="chat-user">
+              <span className="user-dot" style={{ background: me.color }} />
+              {me.name}
+            </span>
+          )}
         </div>
-        {activeRoomId ? (
+        {activeRoomId && groupReady ? (
           <>
             <div className="messages-shell">
               <div
@@ -622,7 +661,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
                   ))}
                 </ul>
               )}
-              <input
+              <textarea
                 ref={inputRef}
                 placeholder="Type a message"
                 value={input}
@@ -631,6 +670,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
                 }
                 onKeyDown={onInputKeyDown}
                 onPaste={(e) => e.preventDefault()}
+                rows={2}
                 autoFocus
               />
               <button onClick={() => void sendMessage()} aria-label="Send">
@@ -639,7 +679,9 @@ export default function Chat({ client, session, onTimeUp }: Props) {
             </div>
           </>
         ) : (
-          <div className="no-room">Connecting to the group room...</div>
+          <div className="no-room">
+            {activeRoomId ? "Loading group..." : "Connecting to the group room..."}
+          </div>
         )}
       </main>
 
@@ -684,13 +726,18 @@ export default function Chat({ client, session, onTimeUp }: Props) {
               dangerouslySetInnerHTML={{ __html: session.briefing.html }}
             />
           </section>
-          {activeRoomId && (
+          {workspaceMode === "ranking" && activeRoomId && (
             <SharedRanking
               client={client}
               roomId={activeRoomId}
               task={session.rankingTask}
               initial={session.ranking}
               onChange={setGroupOrder}
+            />
+          )}
+          {workspaceMode === "external" && (
+            <ExternalWorkspace
+              config={session.condition.config.externalWorkspace}
             />
           )}
         </aside>

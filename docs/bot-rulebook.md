@@ -13,7 +13,8 @@ Delivery is carried by `interventionMode` (`public` / `private` / `baseline`);
 detection by `llmMode` (`off` = rule-based, `active` = rule + LLM composite
 dominance score). Detection/trigger logic is identical across delivery
 conditions — only public vs. private delivery differs, preserving internal
-validity, and the nudge text is identical everywhere.
+validity. Every nudge uses the same wording policy: fresh, friendly,
+encouraging text that names only the target and their exact percentage.
 
 ## Experimental Conditions
 
@@ -25,10 +26,10 @@ validity, and the nudge text is identical everywhere.
 | `private-rule` | private | off | Private nudges, rule-based detection |
 | `private-llm` | private | active | Private nudges, rule + LLM meaningfulness detection |
 
-Per the study protocol, the nudge **text is identical across all non-baseline
-conditions** — only the delivery (public vs. private) differs, so the message
-itself cannot confound the comparison. (An earlier neutral/engaging tone axis
-was retired; conditions persisted with old mode strings like
+The nudge **format and tone constraints are identical across all non-baseline
+conditions**; only the delivery (public vs. private) differs. The exact wording
+is generated afresh for each intervention. (An earlier neutral/engaging tone
+axis was retired; conditions persisted with old mode strings like
 `public-engaging` are folded onto the delivery axis automatically.)
 
 Each condition is assigned to a session at creation time and cannot change mid-session. Five conditions are seeded on first startup.
@@ -142,29 +143,25 @@ at parity ("back to 20-20-20-20-20"). The goal is equal turns from now on,
 not an equally balanced whole session — a dominant member who keeps dominating
 after a reset is flagged again at the end of the next window.
 
-## Message Templates
+## Nudge Wording
 
-Five friendly variants (study protocol), rotated deterministically per nudge
-(1st nudge → variant 1, 2nd → variant 2, …). Each names **only the target and
-their own percentage** — the other members' shares are never revealed to
-participants (they remain in the audit log for analysis):
+Anthropic generates fresh wording for each intervention. The prompt requires a
+short, friendly, encouraging nudge that positively acknowledges participation
+and gently asks the target to draw in other voices. Every result must name
+**only the target and their own exact percentage**; the other members' names
+and shares are never revealed to participants (they remain in the audit log
+for analysis).
 
-```
-1. @Red, you've brought a lot of energy to this — 72% of the airtime so far!
-   Might be a good moment to hear from the others, too.
-2. @Red, you're leading the discussion right now at 72% of the messages.
-   Curious what the rest of the group thinks — want to pull them in?
-3. Nice momentum, @Red — you're at 72% of the conversation so far. The group
-   might benefit from a few more voices in the mix.
-4. @Red, you've been really active — 72% of the airtime! Worth checking in
-   with the quieter folks before you move on?
-5. @Red, you've carried a good chunk of this discussion (72%). Maybe toss the
-   next question over to someone else in the group?
-```
+Server-side validation rejects wording that omits or repeats the target,
+changes the percentage, names another participant, includes another
+percentage, exceeds 45 words, or exactly repeats a recent nudge. The generator
+retries once. If the API is unavailable or both results fail validation, the
+bot rotates through five friendly fixed fallback texts so a valid intervention
+is never lost.
 
 The percentage is the target's **raw contribution share** (airtime), not the
-composite dominance score. Public and private conditions send the identical
-text; only visibility differs.
+composite dominance score. The generated text actually sent is retained in the
+intervention audit log.
 
 ## Private Message Delivery
 
@@ -238,8 +235,9 @@ These records are included in the raw exports (`/api/export/sessions`, `/api/exp
 ## Meaningfulness Classifier (Rule + LLM Detection Arm)
 
 Conditions with `llmMode: "active"` (the Rule+LLM arms) classify every
-participant message with Anthropic's Messages API; `ANTHROPIC_API_KEY` must
-be set for these arms to run. The default model is
+participant message with Anthropic's Messages API. The same API also generates
+fresh nudge wording in every non-baseline arm; `ANTHROPIC_API_KEY` must be set
+for dynamic wording and Rule+LLM detection. The default model is
 `claude-haiku-4-5-20251001` (override via `ANTHROPIC_MODEL`), called with
 `temperature: 0` and strict JSON-schema output.
 `LLM_MODE` (`off` / `active`) is an optional global override. Per message, the classifier
@@ -293,7 +291,8 @@ Mechanics:
   B's nudge can land slightly after A's.
 - Both follow the **condition's delivery audience**: in a public condition
   everyone sees A and B, in a private condition only the nudged member sees
-  them. Both use the same 5 rotating templates (each rotates independently).
+  them. Each bot gets newly generated wording under the same format and tone
+  constraints.
 - The labels are neutral (A/B) so testers stay blind to which arm is which;
   the mapping above is the only place it's documented. Every intervention log
   records `llmMode` (`off` = A, `active` = B) for the debrief.
@@ -310,9 +309,6 @@ Mechanics:
 | `packages/shared/src/interventions.ts` | Type definitions, defaults, audience/legacy-mode helpers |
 | `packages/shared/src/identity.ts` | Color identity assignment |
 | `backend/chat-service/src/rules/bot-rules.ts` | The rule engine (`ContributionBotRules`) |
+| `backend/chat-service/src/nudge/anthropic-nudge-message-generator.ts` | Fresh nudge wording and output validation |
 | `backend/chat-service/src/sessions/session-runtime.ts` | Per-session state, message recording, `post()` / `postPrivate()` |
 | `backend/chat-service/src/matrix/matrix-bot.service.ts` | Matrix sync loop, message sending |
-
-## Current Limitations
-
-- Participant-visible bot messages remain fixed templates rather than LLM-generated text.

@@ -7,6 +7,7 @@ import {
   fillSession,
   openSession,
   resetDatabase,
+  waitForRunningSession,
   type TestApp,
 } from "./harness";
 
@@ -59,9 +60,13 @@ describe("matchmaking & lifecycle (integration)", () => {
 
     const third = await openSession(t, "Cleo", "baseline");
     expect(third.session.id).toBe(first.session.id);
-    expect(third.session.status).toBe("running");
-    expect(third.session.startedAt).toBeDefined();
-    expect(third.matrix.roomId).toBe("!room-1:test");
+    // Enrollment itself stays fast; the normal Waiting Room poll observes the
+    // room only after Matrix members and the recorder are ready.
+    expect(third.session.status).toBe("waiting");
+    expect(third.matrix.roomId).toBe("");
+    const running = await waitForRunningSession(t, first.session.id);
+    expect(running.startedAt).toBeDefined();
+    expect(running.roomId).toBe("!room-1:test");
 
     // Provisioning: one room, every participant invited + joined with their
     // own token, plus an invite for the chat-service bot (invite-only room).
@@ -124,8 +129,9 @@ describe("matchmaking & lifecycle (integration)", () => {
 
     const sessionIds = new Set(responses.map((r) => r.session.id));
     expect(sessionIds.size).toBe(1);
+    await waitForRunningSession(t, responses[0].session.id);
     expect(t.matrix.createdRooms).toHaveLength(1);
-    expect(responses.some((r) => r.session.status === "running")).toBe(true);
+    expect(responses.every((r) => r.matrix.roomId === "")).toBe(true);
   });
 
   it("hands the same seat back when a token rejoins (browser refresh)", async () => {

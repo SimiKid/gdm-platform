@@ -12,6 +12,7 @@ import type {
   BehavioralEvent,
   BotConfig,
   ClassificationFailure,
+  CheckpointSessionRequest,
   Condition,
   ContributionClassification,
   InterventionLog,
@@ -19,8 +20,12 @@ import type {
   Message,
   Participant,
   Poll,
+  ProlificArrival,
+  ProlificIdentity,
   Ranking,
   RankingTask,
+  Reaction,
+  RecordedReaction,
   Session,
   StudyRound,
   StudySettings,
@@ -77,6 +82,7 @@ interface RoundState {
 export class StoreService implements OnModuleInit {
   private readonly conditions: Condition[] = [];
   private readonly sessions = new Map<string, Session>();
+  private readonly prolificArrivals = new Map<string, ProlificArrival>();
   private readonly memoryCreds = new Map<string, MatrixCreds>();
   private readonly memorySettings: StudySettings = { compensationUrl: "" };
   private readonly memoryRounds: RoundState[] = [];
@@ -147,6 +153,68 @@ export class StoreService implements OnModuleInit {
       });
     }
     return this.getStudySettings();
+  }
+
+  /** Persist the Prolific IDs before consent/task pages can be abandoned. */
+  async recordProlificArrival(
+    identity: ProlificIdentity,
+  ): Promise<ProlificArrival> {
+    const key = `${identity.studyId}:${identity.sessionId}`;
+    if (!this.dbEnabled) {
+      const existing = this.prolificArrivals.get(key);
+      if (existing) return existing;
+      const arrival = {
+        ...identity,
+        arrivedAt: new Date().toISOString(),
+      };
+      this.prolificArrivals.set(key, arrival);
+      return arrival;
+    }
+
+    await this.ensureSeeded();
+    const row = await this.db.prolificArrivalRecord.upsert({
+      where: {
+        prolificStudyId_prolificSessionId: {
+          prolificStudyId: identity.studyId,
+          prolificSessionId: identity.sessionId,
+        },
+      },
+      create: {
+        prolificPid: identity.participantId,
+        prolificStudyId: identity.studyId,
+        prolificSessionId: identity.sessionId,
+      },
+      update: { prolificPid: identity.participantId },
+    });
+    return prolificArrivalFromRow(row);
+  }
+
+  async linkProlificArrival(
+    identity: ProlificIdentity,
+    participantRecordId: string,
+  ): Promise<void> {
+    const key = `${identity.studyId}:${identity.sessionId}`;
+    if (!this.dbEnabled) {
+      const arrival = this.prolificArrivals.get(key);
+      if (arrival) arrival.participantRecordId = participantRecordId;
+      return;
+    }
+    await this.db.prolificArrivalRecord.updateMany({
+      where: {
+        prolificStudyId: identity.studyId,
+        prolificSessionId: identity.sessionId,
+      },
+      data: { participantRecordId },
+    });
+  }
+
+  async listProlificArrivals(): Promise<ProlificArrival[]> {
+    if (!this.dbEnabled) return [...this.prolificArrivals.values()];
+    await this.ensureSeeded();
+    const rows = await this.db.prolificArrivalRecord.findMany({
+      orderBy: { arrivedAt: "asc" },
+    });
+    return rows.map(prolificArrivalFromRow);
   }
 
   /**
@@ -304,6 +372,78 @@ export class StoreService implements OnModuleInit {
     return rows.map(sessionFromRow);
   }
 
+  /**
+   * Resolve an existing seat without hydrating every historical session.
+   * Tracking tokens are indexed; the session is loaded only after a match.
+   */
+  async findByTrackingToken(
+    token: string,
+  ): Promise<{ session: Session; participant: Participant } | undefined> {
+    if (!token) return undefined;
+    if (!this.dbEnabled) {
+      for (const session of this.allMemorySessions()) {
+        if (session.status === "aborted") continue;
+        const participant = session.participants.find(
+          (candidate) => candidate.trackingToken === token,
+        );
+        if (participant) return { session, participant };
+      }
+      return undefined;
+    }
+
+    await this.ensureSeeded();
+    const row = await this.db.participantRecord.findFirst({
+      where: {
+        trackingToken: token,
+        session: { status: { not: "aborted" } },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, sessionId: true },
+    });
+    if (!row) return undefined;
+    const session = await this.getSession(row.sessionId);
+    const participant = session?.participants.find(
+      (candidate) => candidate.id === row.id,
+    );
+    return session && participant ? { session, participant } : undefined;
+  }
+
+  /** Resolve the unique Prolific submission without a full-session scan. */
+  async findByProlificSession(
+    identity: ProlificIdentity,
+  ): Promise<{ session: Session; participant: Participant } | undefined> {
+    if (!this.dbEnabled) {
+      for (const session of this.allMemorySessions()) {
+        if (session.status === "aborted") continue;
+        const participant = session.participants.find(
+          (candidate) =>
+            candidate.prolific?.studyId === identity.studyId &&
+            candidate.prolific.sessionId === identity.sessionId,
+        );
+        if (participant) return { session, participant };
+      }
+      return undefined;
+    }
+
+    await this.ensureSeeded();
+    const row = await this.db.participantRecord.findUnique({
+      where: {
+        prolificStudyId_prolificSessionId: {
+          prolificStudyId: identity.studyId,
+          prolificSessionId: identity.sessionId,
+        },
+      },
+      select: { id: true, sessionId: true },
+    });
+    if (!row) return undefined;
+    const session = await this.getSession(row.sessionId);
+    if (!session || session.status === "aborted") return undefined;
+    const participant = session.participants.find(
+      (candidate) => candidate.id === row.id,
+    );
+    return participant ? { session, participant } : undefined;
+  }
+
   async getSession(id: string): Promise<Session | undefined> {
     if (!this.dbEnabled) return this.sessions.get(id);
     await this.ensureSeeded();
@@ -319,6 +459,187 @@ export class StoreService implements OnModuleInit {
     await this.ensureSeeded();
     const row = await this.db.conditionRecord.findUnique({ where: { id } });
     return row ? conditionFromRow(row) : undefined;
+  }
+
+  /** Add one reserved participant seat without touching live chat data. */
+  async addParticipant(sessionId: string, participant: Participant): Promise<void> {
+    if (!this.dbEnabled) {
+      const session = this.sessions.get(sessionId);
+      if (!session) throw new Error(`Unknown session ${sessionId}`);
+      if (!session.participants.some((candidate) => candidate.id === participant.id)) {
+        session.participants.push(participant);
+      }
+      return;
+    }
+
+    await this.ensureSeeded();
+    await this.db.participantRecord.create({
+      data: {
+        id: participant.id,
+        sessionId,
+        name: participant.name,
+        trackingToken: participant.trackingToken,
+        prolificPid: participant.prolific?.participantId,
+        prolificStudyId: participant.prolific?.studyId,
+        prolificSessionId: participant.prolific?.sessionId,
+        completedAt: toOptionalDate(participant.completedAt),
+      },
+    });
+  }
+
+  /** Update only lifecycle/provisioning columns; research data is untouched. */
+  async updateSessionLifecycle(
+    id: string,
+    patch: {
+      status?: Session["status"];
+      roomId?: string;
+      startedAt?: string;
+      completedAt?: string;
+    },
+  ): Promise<void> {
+    if (!this.dbEnabled) {
+      const session = this.sessions.get(id);
+      if (!session) throw new Error(`Unknown session ${id}`);
+      if (patch.status !== undefined) session.status = patch.status;
+      if (patch.roomId !== undefined) session.roomId = patch.roomId;
+      if (patch.startedAt !== undefined) session.startedAt = patch.startedAt;
+      if (patch.completedAt !== undefined) session.completedAt = patch.completedAt;
+      return;
+    }
+    await this.db.sessionRecord.update({
+      where: { id },
+      data: {
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
+        ...(patch.roomId !== undefined ? { roomId: patch.roomId } : {}),
+        ...(patch.startedAt !== undefined
+          ? { startedAt: toDate(patch.startedAt) }
+          : {}),
+        ...(patch.completedAt !== undefined
+          ? { completedAt: toDate(patch.completedAt) }
+          : {}),
+      },
+    });
+  }
+
+  /**
+   * Atomically claim a full waiting group for Matrix provisioning. Once
+   * claimed, a round switch leaves it alone: the group is complete and is
+   * already entering the live-session startup path.
+   */
+  async claimSessionProvisioning(id: string): Promise<boolean> {
+    if (!this.dbEnabled) {
+      const session = this.sessions.get(id);
+      if (!session) return false;
+      if (session.status === "waiting") session.status = "provisioning";
+      return session.status === "provisioning";
+    }
+    const claimed = await this.db.sessionRecord.updateMany({
+      where: { id, status: "waiting" },
+      data: { status: "provisioning" },
+    });
+    if (claimed.count > 0) return true;
+    const current = await this.db.sessionRecord.findUnique({
+      where: { id },
+      select: { status: true },
+    });
+    return current?.status === "provisioning";
+  }
+
+  /** Publish a fully prepared room without resurrecting an aborted session. */
+  async finishSessionProvisioning(
+    id: string,
+    roomId: string,
+    startedAt: string,
+  ): Promise<boolean> {
+    if (!this.dbEnabled) {
+      const session = this.sessions.get(id);
+      if (!session) return false;
+      if (session.status === "running") return session.roomId === roomId;
+      if (session.status !== "provisioning") return false;
+      session.roomId = roomId;
+      session.status = "running";
+      session.startedAt = startedAt;
+      return true;
+    }
+    const transitioned = await this.db.sessionRecord.updateMany({
+      where: { id, status: "provisioning" },
+      data: {
+        roomId,
+        status: "running",
+        startedAt: toDate(startedAt),
+      },
+    });
+    if (transitioned.count > 0) return true;
+    const current = await this.db.sessionRecord.findUnique({
+      where: { id },
+      select: { status: true, roomId: true },
+    });
+    return current?.status === "running" && current.roomId === roomId;
+  }
+
+  /** Persist one survey independently from the live session snapshot. */
+  async saveParticipantSurvey(
+    sessionId: string,
+    participantId: string,
+    kind: "entry" | "exit",
+    survey: Survey,
+  ): Promise<boolean> {
+    if (!this.dbEnabled) {
+      const participant = this.sessions
+        .get(sessionId)
+        ?.participants.find((candidate) => candidate.id === participantId);
+      if (!participant) return false;
+      if (kind === "entry") participant.entrySurvey = survey;
+      else participant.exitSurvey = survey;
+      return true;
+    }
+
+    const participant = await this.db.participantRecord.findFirst({
+      where: { id: participantId, sessionId },
+      select: { id: true },
+    });
+    if (!participant) return false;
+    await this.db.surveyRecord.upsert({
+      where: { participantId_kind: { participantId, kind } },
+      create: {
+        participantId,
+        kind,
+        answers: json(survey.answers),
+        submittedAt: toDate(survey.submittedAt),
+      },
+      update: {
+        answers: json(survey.answers),
+        submittedAt: toDate(survey.submittedAt),
+      },
+    });
+    return true;
+  }
+
+  /** Mark one participant complete without rewriting their session. */
+  async markParticipantCompleted(
+    sessionId: string,
+    participantId: string,
+    completedAt: string,
+  ): Promise<boolean> {
+    if (!this.dbEnabled) {
+      const participant = this.sessions
+        .get(sessionId)
+        ?.participants.find((candidate) => candidate.id === participantId);
+      if (!participant) return false;
+      participant.completedAt ??= completedAt;
+      return true;
+    }
+    const result = await this.db.participantRecord.updateMany({
+      where: { id: participantId, sessionId, completedAt: null },
+      data: { completedAt: toDate(completedAt) },
+    });
+    if (result.count > 0) return true;
+    return Boolean(
+      await this.db.participantRecord.findFirst({
+        where: { id: participantId, sessionId },
+        select: { id: true },
+      }),
+    );
   }
 
   async saveSession(session: Session): Promise<void> {
@@ -347,6 +668,7 @@ export class StoreService implements OnModuleInit {
           classificationFailures: json(session.classificationFailures ?? []),
           processedEventIds: json(session.processedEventIds ?? []),
           runtimeState: json(session.runtimeState ?? {}),
+          checkpointRevision: session.checkpointRevision ?? 0,
           durationMinutes: session.durationMinutes,
           roomId: session.roomId,
           createdAt: toDate(session.createdAt),
@@ -361,71 +683,68 @@ export class StoreService implements OnModuleInit {
           bot: json(session.bot),
           briefing: json(session.briefing),
           rankingTask: json(session.rankingTask),
-          ranking: json(session.ranking),
           polls: json(session.polls),
-          behavioralEvents: json(session.behavioralEvents),
-          classifications: json(session.contributionClassifications),
-          classificationFailures: json(session.classificationFailures ?? []),
-          processedEventIds: json(session.processedEventIds ?? []),
-          runtimeState: json(session.runtimeState ?? {}),
           durationMinutes: session.durationMinutes,
           roomId: session.roomId,
           startedAt: toOptionalDate(session.startedAt),
-          completedAt: toOptionalDate(session.completedAt),
+          ...(session.completedAt
+            ? { completedAt: toDate(session.completedAt) }
+            : {}),
         },
       });
 
       await this.saveParticipants(tx, session);
-      await this.replaceMessages(tx, session);
-      await this.replaceRankingHistory(tx, session);
-      await this.replaceInterventions(tx, session);
-      await this.replaceWindowEvaluations(tx, session);
+      await this.persistRuntimeCheckpoint(
+        tx,
+        session.id,
+        checkpointFromSession(session),
+      );
     });
   }
 
-  /** Persist only live chat-owned fields; never overwrite lifecycle/surveys. */
-  async saveRuntimeCheckpoint(session: Session): Promise<void> {
+  /**
+   * Persist only live chat-owned fields; never overwrite lifecycle/surveys.
+   * Collections are append/upserted rather than deleted and recreated, so a
+   * stale or interrupted checkpoint cannot erase previously committed data.
+   */
+  async saveRuntimeCheckpoint(
+    sessionId: string,
+    checkpoint: CheckpointSessionRequest,
+  ): Promise<void> {
     if (!this.dbEnabled) {
-      const stored = this.sessions.get(session.id);
-      if (!stored) return;
-      stored.chat = session.chat;
-      stored.ranking = session.ranking;
-      stored.rankingHistory = session.rankingHistory;
-      stored.interventions = session.interventions;
-      stored.behavioralEvents = session.behavioralEvents;
-      stored.contributionClassifications = session.contributionClassifications;
-      stored.windowEvaluations = session.windowEvaluations;
-      stored.classificationFailures = session.classificationFailures;
-      stored.processedEventIds = session.processedEventIds;
-      stored.runtimeState = session.runtimeState;
+      const stored = this.sessions.get(sessionId);
+      if (!stored) throw new Error(`Unknown session ${sessionId}`);
+      mergeCheckpointIntoSession(stored, checkpoint);
       return;
     }
 
     await this.db.$transaction(async (tx) => {
-      await tx.sessionRecord.update({
-        where: { id: session.id },
-        data: {
-          ranking: json(session.ranking),
-          behavioralEvents: json(session.behavioralEvents),
-          classifications: json(session.contributionClassifications),
-          classificationFailures: json(session.classificationFailures ?? []),
-          processedEventIds: json(session.processedEventIds ?? []),
-          runtimeState: json(session.runtimeState ?? {}),
-        },
-      });
-      await this.replaceMessages(tx, session);
-      await this.replaceRankingHistory(tx, session);
-      await this.replaceInterventions(tx, session);
-      await this.replaceWindowEvaluations(tx, session);
+      await this.persistRuntimeCheckpoint(tx, sessionId, checkpoint);
+    }, {
+      // The default interactive-transaction timeout is five seconds. During a
+      // recruitment wave, waiting briefly for a connection is safer than
+      // expiring an otherwise healthy monotonic checkpoint transaction.
+      maxWait: 10_000,
+      timeout: 15_000,
     });
   }
 
-  /** The oldest still-forming CURRENT-ROUND session with a free seat. */
-  async findForming(): Promise<Session | undefined> {
+  /** The oldest active, still-forming CURRENT-ROUND session with a free seat. */
+  async findForming(conditionId?: string): Promise<Session | undefined> {
     const current = await this.currentRound();
     const sessions = this.dbEnabled
-      ? await this.waitingSessionsFromDb()
-      : this.allMemorySessions().filter((s) => s.status === "waiting");
+      ? await this.waitingSessionsFromDb(current.id, conditionId)
+      : this.allMemorySessions().filter((session) => {
+          const currentCondition = this.conditions.find(
+            (condition) => condition.id === session.condition.id,
+          );
+          return (
+            session.status === "waiting" &&
+            session.roundId === current.id &&
+            currentCondition?.active === true &&
+            (!conditionId || session.condition.id === conditionId)
+          );
+        });
     return sessions
       .filter(
         (s) =>
@@ -433,6 +752,87 @@ export class StoreService implements OnModuleInit {
           s.participants.length < s.condition.groupSize,
       )
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+  }
+
+  /**
+   * Abort waiting lobbies in one targeted update. With `olderThan`, also clean
+   * up a provisioning group that has been unable to start for the full lobby
+   * timeout. Rows are retained for audit/export; only lifecycle state changes.
+   */
+  async abortWaitingSessions(
+    olderThan?: Date,
+  ): Promise<Array<{ id: string; createdAt: string; participantCount: number }>> {
+    if (!this.dbEnabled) {
+      const aborted: Array<{
+        id: string;
+        createdAt: string;
+        participantCount: number;
+      }> = [];
+      for (const session of this.sessions.values()) {
+        const abortableStatus = olderThan
+          ? session.status === "waiting" || session.status === "provisioning"
+          : session.status === "waiting";
+        if (
+          !abortableStatus ||
+          (olderThan && new Date(session.createdAt) >= olderThan)
+        ) {
+          continue;
+        }
+        session.status = "aborted";
+        aborted.push({
+          id: session.id,
+          createdAt: session.createdAt,
+          participantCount: session.participants.length,
+        });
+      }
+      return aborted;
+    }
+
+    await this.ensureSeeded();
+    const abortableStatuses = olderThan
+      ? ["waiting", "provisioning"]
+      : ["waiting"];
+    const rows = await this.db.sessionRecord.findMany({
+      where: {
+        status: { in: abortableStatuses },
+        ...(olderThan ? { createdAt: { lt: olderThan } } : {}),
+      },
+      select: {
+        id: true,
+        createdAt: true,
+        _count: { select: { participants: true } },
+      },
+    });
+    if (rows.length > 0) {
+      await this.db.sessionRecord.updateMany({
+        where: {
+          id: { in: rows.map((row) => row.id) },
+          status: { in: abortableStatuses },
+        },
+        data: { status: "aborted" },
+      });
+    }
+    return rows.map((row) => ({
+      id: row.id,
+      createdAt: row.createdAt.toISOString(),
+      participantCount: row._count.participants,
+    }));
+  }
+
+  /** Running sessions only, for Chat Service crash recovery. */
+  async runningSessions(): Promise<Session[]> {
+    if (!this.dbEnabled) {
+      return this.allMemorySessions().filter(
+        (session) => session.status === "running" && Boolean(session.roomId),
+      );
+    }
+    await this.ensureSeeded();
+    const rows = await this.db.sessionRecord.findMany({
+      where: { status: "running", roomId: { not: null } },
+      include: SESSION_INCLUDE,
+      orderBy: { createdAt: "asc" },
+    });
+    return rows.map(sessionFromRow);
   }
 
   async createForming(condition: Condition): Promise<Session> {
@@ -462,6 +862,8 @@ export class StoreService implements OnModuleInit {
       windowEvaluations: [],
       classificationFailures: [],
       processedEventIds: [],
+      redactedReactionEventIds: [],
+      reactionEvents: [],
       runtimeState: {},
       polls: [],
       durationMinutes: condition.durationMinutes,
@@ -567,10 +969,18 @@ export class StoreService implements OnModuleInit {
     return [...this.sessions.values()];
   }
 
-  private async waitingSessionsFromDb(): Promise<Session[]> {
+  private async waitingSessionsFromDb(
+    roundId: number,
+    conditionId?: string,
+  ): Promise<Session[]> {
     await this.ensureSeeded();
     const rows = await this.db.sessionRecord.findMany({
-      where: { status: "waiting" },
+      where: {
+        status: "waiting",
+        roundId,
+        condition: { active: true },
+        ...(conditionId ? { conditionId } : {}),
+      },
       include: SESSION_INCLUDE,
       orderBy: { createdAt: "asc" },
     });
@@ -589,11 +999,23 @@ export class StoreService implements OnModuleInit {
           sessionId: session.id,
           name: participant.name,
           trackingToken: participant.trackingToken,
+          prolificPid: participant.prolific?.participantId,
+          prolificStudyId: participant.prolific?.studyId,
+          prolificSessionId: participant.prolific?.sessionId,
+          completedAt: toOptionalDate(participant.completedAt),
         },
         update: {
           sessionId: session.id,
           name: participant.name,
           trackingToken: participant.trackingToken,
+          prolificPid: participant.prolific?.participantId,
+          prolificStudyId: participant.prolific?.studyId,
+          prolificSessionId: participant.prolific?.sessionId,
+          // A stale aggregate snapshot must never clear compensation
+          // eligibility written independently by completeParticipant().
+          ...(participant.completedAt
+            ? { completedAt: toDate(participant.completedAt) }
+            : {}),
         },
       });
       await this.saveSurvey(tx, participant, "entry", participant.entrySurvey);
@@ -628,84 +1050,190 @@ export class StoreService implements OnModuleInit {
     });
   }
 
-  private async replaceMessages(
+  /**
+   * Merge a full Chat Service snapshot into normalized research tables.
+   * Every operation is idempotent. No message/ranking/intervention row is
+   * deleted, which makes retrying after a timeout safe and crash-resilient.
+   */
+  private async persistRuntimeCheckpoint(
     tx: Prisma.TransactionClient,
-    session: Session,
+    sessionId: string,
+    checkpoint: CheckpointSessionRequest,
   ): Promise<void> {
-    await tx.messageRecord.deleteMany({ where: { sessionId: session.id } });
-    for (const message of session.chat.messages) {
-      await tx.messageRecord.create({
-        data: {
+    const current = await tx.sessionRecord.findUnique({
+      where: { id: sessionId },
+      select: {
+        ranking: true,
+        rankingHistory: {
+          select: { position: true, ranking: true },
+          orderBy: { position: "asc" },
+        },
+        behavioralEvents: true,
+        classifications: true,
+        classificationFailures: true,
+        processedEventIds: true,
+        runtimeState: true,
+        checkpointRevision: true,
+      },
+    });
+    if (!current) throw new Error(`Unknown session ${sessionId}`);
+    const incomingRevision = checkpoint.revision;
+    const acceptsMutableState =
+      incomingRevision === undefined ||
+      incomingRevision >= current.checkpointRevision;
+
+    const messages = checkpoint.messages ?? [];
+    if (messages.length > 0) {
+      await tx.messageRecord.createMany({
+        data: messages.map((message) => ({
           id: message.id,
-          sessionId: session.id,
+          sessionId,
           timestamp: toDate(message.timestamp),
           senderId: message.senderId,
-          recipientId: message.recipientId,
+          recipientId: message.recipientId ?? null,
           text: message.text,
-          reactions: {
-            create: message.reactions.map((reaction) => ({
-              key: reaction.key,
-              senderId: reaction.senderId,
-              timestamp: toDate(reaction.timestamp),
-            })),
-          },
+        })),
+        skipDuplicates: true,
+      });
+
+      // New checkpoints carry the immutable Matrix annotation event id. Keep
+      // legacy semantic matching only to upgrade pre-migration active rows.
+      const messageIds = messages.map((message) => message.id);
+      const existingReactions = await tx.reactionRecord.findMany({
+        where: { messageId: { in: messageIds } },
+        select: {
+          id: true,
+          eventId: true,
+          messageId: true,
+          key: true,
+          senderId: true,
         },
       });
+      const seenEventIds = new Set(
+        existingReactions.flatMap((reaction) =>
+          reaction.eventId ? [reaction.eventId] : [],
+        ),
+      );
+      const legacyByKey = new Map(
+        existingReactions
+          .filter((reaction) => !reaction.eventId)
+          .map((reaction) => [
+            reactionKey(reaction.messageId, reaction.key, reaction.senderId),
+            reaction.id,
+          ]),
+      );
+      const legacySeen = new Set(legacyByKey.keys());
+      const reactions: Prisma.ReactionRecordCreateManyInput[] = [];
+      for (const message of messages) {
+        for (const reaction of message.reactions) {
+          const key = reactionKey(message.id, reaction.key, reaction.senderId);
+          if (reaction.eventId) {
+            if (seenEventIds.has(reaction.eventId)) continue;
+            const legacyId = legacyByKey.get(key);
+            if (legacyId) {
+              await tx.reactionRecord.update({
+                where: { id: legacyId },
+                data: { eventId: reaction.eventId },
+              });
+              legacyByKey.delete(key);
+            } else {
+              reactions.push({
+                eventId: reaction.eventId,
+                messageId: message.id,
+                key: reaction.key,
+                senderId: reaction.senderId,
+                timestamp: toDate(reaction.timestamp),
+              });
+            }
+            seenEventIds.add(reaction.eventId);
+            continue;
+          }
+          if (legacySeen.has(key)) continue;
+          legacySeen.add(key);
+          reactions.push({
+            messageId: message.id,
+            key: reaction.key,
+            senderId: reaction.senderId,
+            timestamp: toDate(reaction.timestamp),
+          });
+        }
+      }
+      if (reactions.length > 0) {
+        await tx.reactionRecord.createMany({ data: reactions, skipDuplicates: true });
+      }
     }
-  }
 
-  private async replaceRankingHistory(
-    tx: Prisma.TransactionClient,
-    session: Session,
-  ): Promise<void> {
-    await tx.rankingHistoryRecord.deleteMany({ where: { sessionId: session.id } });
-    for (const [position, ranking] of (session.rankingHistory ?? []).entries()) {
-      await tx.rankingHistoryRecord.create({
-        data: {
-          sessionId: session.id,
-          position,
+    const reactionEvents = checkpoint.reactionEvents ?? [];
+    if (reactionEvents.length > 0) {
+      await tx.reactionRecord.createMany({
+        data: reactionEvents.map((reaction) => ({
+          eventId: reaction.eventId,
+          messageId: reaction.messageId,
+          key: reaction.key,
+          senderId: reaction.senderId,
+          timestamp: toDate(reaction.timestamp),
+          redacted: reaction.redacted,
+          redactionEventId: reaction.redactionEventId,
+          redactedAt: toOptionalDate(reaction.redactedAt),
+        })),
+        skipDuplicates: true,
+      });
+      // Redaction is monotonic. Never let a late active snapshot resurrect a
+      // reaction event that a newer checkpoint has already marked inactive.
+      for (const reaction of reactionEvents) {
+        if (!reaction.redacted) continue;
+        await tx.reactionRecord.updateMany({
+          where: { eventId: reaction.eventId },
+          data: {
+            redacted: true,
+            ...(reaction.redactionEventId
+              ? { redactionEventId: reaction.redactionEventId }
+              : {}),
+            ...(reaction.redactedAt
+              ? { redactedAt: toDate(reaction.redactedAt) }
+              : {}),
+          },
+        });
+      }
+    }
+    const redactedReactionEventIds = checkpoint.redactedReactionEventIds ?? [];
+    if (redactedReactionEventIds.length > 0) {
+      await tx.reactionRecord.updateMany({
+        where: { eventId: { in: redactedReactionEventIds } },
+        data: { redacted: true },
+      });
+    }
+
+    const rankingHistory = checkpoint.rankingHistory ?? [];
+    const storedRankings = current.rankingHistory.map((entry) =>
+      fromJson<Ranking>(entry.ranking),
+    );
+    const seenRankings = new Set(storedRankings.map(rankingKey));
+    const newRankings = rankingHistory.filter((ranking) => {
+      const key = rankingKey(ranking);
+      if (seenRankings.has(key)) return false;
+      seenRankings.add(key);
+      return true;
+    });
+    if (newRankings.length > 0) {
+      const nextPosition =
+        Math.max(-1, ...current.rankingHistory.map((entry) => entry.position)) + 1;
+      await tx.rankingHistoryRecord.createMany({
+        data: newRankings.map((ranking, offset) => ({
+          sessionId,
+          position: nextPosition + offset,
           ranking: json(ranking),
           updatedAt: toDate(ranking.updatedAt),
-        },
+        })),
       });
     }
-  }
 
-  private async replaceWindowEvaluations(
-    tx: Prisma.TransactionClient,
-    session: Session,
-  ): Promise<void> {
-    await tx.windowEvaluationRecord.deleteMany({
-      where: { sessionId: session.id },
-    });
-    for (const evaluation of session.windowEvaluations ?? []) {
-      await tx.windowEvaluationRecord.create({
-        data: {
-          id: evaluation.id,
-          sessionId: session.id,
-          conditionId: evaluation.conditionId,
-          arm: evaluation.arm,
-          windowIndex: evaluation.windowIndex,
-          windowStart: toDate(evaluation.windowStart),
-          windowEnd: toDate(evaluation.windowEnd),
-          outcome: evaluation.outcome,
-          llmMode: evaluation.llmMode,
-          payload: json(evaluation),
-        },
-      });
-    }
-  }
-
-  private async replaceInterventions(
-    tx: Prisma.TransactionClient,
-    session: Session,
-  ): Promise<void> {
-    await tx.interventionRecord.deleteMany({ where: { sessionId: session.id } });
-    for (const intervention of session.interventions) {
-      await tx.interventionRecord.create({
-        data: {
+    const interventions = checkpoint.interventions ?? [];
+    if (interventions.length > 0) {
+      await tx.interventionRecord.createMany({
+        data: interventions.map((intervention) => ({
           id: intervention.id,
-          sessionId: session.id,
+          sessionId,
           roomId: intervention.roomId,
           conditionId: intervention.conditionId,
           mode: intervention.mode,
@@ -716,10 +1244,346 @@ export class StoreService implements OnModuleInit {
           contributionWindowMinutes: intervention.contributionWindowMinutes,
           message: intervention.message,
           payload: json(intervention),
-        },
+        })),
+        skipDuplicates: true,
       });
     }
+
+    const evaluations = checkpoint.windowEvaluations ?? [];
+    if (evaluations.length > 0) {
+      await tx.windowEvaluationRecord.createMany({
+        data: evaluations.map((evaluation) => ({
+          id: evaluation.id,
+          sessionId,
+          conditionId: evaluation.conditionId,
+          arm: evaluation.arm,
+          windowIndex: evaluation.windowIndex,
+          windowStart: toDate(evaluation.windowStart),
+          windowEnd: toDate(evaluation.windowEnd),
+          outcome: evaluation.outcome,
+          llmMode: evaluation.llmMode,
+          payload: json(evaluation),
+        })),
+        skipDuplicates: true,
+      });
+    }
+
+    const currentBehavior = fromJson<BehavioralEvent[]>(current.behavioralEvents);
+    const currentClassifications = fromJson<ContributionClassification[]>(
+      current.classifications,
+    );
+    const currentFailures = fromJson<ClassificationFailure[]>(
+      current.classificationFailures,
+    );
+    const currentProcessed = fromJson<string[]>(current.processedEventIds);
+    const currentRuleState = fromJson<Record<string, unknown>>(current.runtimeState);
+    const latestRanking =
+      incomingRevision !== undefined
+        ? (rankingHistory.at(-1) ?? fromJson<Ranking>(current.ranking))
+        : storedRankings.length === 0
+          ? (rankingHistory.at(-1) ?? fromJson<Ranking>(current.ranking))
+          : newestRanking(fromJson<Ranking>(current.ranking), ...rankingHistory);
+
+    await tx.sessionRecord.update({
+      where: { id: sessionId },
+      data: {
+        ...(acceptsMutableState && rankingHistory.length > 0
+          ? { ranking: json(latestRanking) }
+          : {}),
+        behavioralEvents: json(
+          mergeCheckpointValues(
+            currentBehavior,
+            checkpoint.behavioralEvents ?? [],
+            (event) => event.id,
+            acceptsMutableState,
+          ),
+        ),
+        classifications: json(
+          mergeCheckpointValues(
+            currentClassifications,
+            checkpoint.contributionClassifications ?? [],
+            (classification) => classification.messageId,
+            acceptsMutableState,
+          ),
+        ),
+        classificationFailures: json(
+          mergeCheckpointValues(
+            currentFailures,
+            checkpoint.classificationFailures ?? [],
+            (failure) => failure.messageId,
+            acceptsMutableState,
+          ),
+        ),
+        processedEventIds: json([
+          ...new Set([...currentProcessed, ...(checkpoint.processedEventIds ?? [])]),
+        ]),
+        runtimeState: acceptsMutableState
+          ? json({
+              ...currentRuleState,
+              ...(checkpoint.ruleState ?? {}),
+            })
+          : json(currentRuleState),
+        ...(acceptsMutableState && incomingRevision !== undefined
+          ? { checkpointRevision: incomingRevision }
+          : {}),
+      },
+    });
   }
+}
+
+function checkpointFromSession(session: Session): CheckpointSessionRequest {
+  return {
+    revision: session.checkpointRevision,
+    messages: session.chat.messages,
+    rankingHistory: session.rankingHistory ?? [],
+    interventions: session.interventions,
+    behavioralEvents: session.behavioralEvents,
+    contributionClassifications: session.contributionClassifications,
+    windowEvaluations: session.windowEvaluations ?? [],
+    classificationFailures: session.classificationFailures ?? [],
+    processedEventIds: session.processedEventIds ?? [],
+    redactedReactionEventIds: session.redactedReactionEventIds ?? [],
+    reactionEvents: session.reactionEvents ?? [],
+    ruleState: session.runtimeState ?? {},
+  };
+}
+
+/** In-memory equivalent of the durable, monotonic checkpoint merge. */
+function mergeCheckpointIntoSession(
+  session: Session,
+  checkpoint: CheckpointSessionRequest,
+): void {
+  const incomingRevision = checkpoint.revision;
+  const acceptsMutableState =
+    incomingRevision === undefined ||
+    incomingRevision >= (session.checkpointRevision ?? 0);
+  const hadRankingHistory = (session.rankingHistory?.length ?? 0) > 0;
+  session.reactionEvents = mergeRecordedReactions(
+    session.reactionEvents ?? [],
+    checkpoint.reactionEvents ?? [],
+  );
+  const redactedReactionEventIds = new Set([
+    ...(session.redactedReactionEventIds ?? []),
+    ...(checkpoint.redactedReactionEventIds ?? []),
+    ...session.reactionEvents
+      .filter((reaction) => reaction.redacted)
+      .map((reaction) => reaction.eventId),
+  ]);
+  session.redactedReactionEventIds = [...redactedReactionEventIds];
+  session.chat.messages = mergeMessages(
+    session.chat.messages,
+    checkpoint.messages ?? [],
+    redactedReactionEventIds,
+  );
+  session.rankingHistory = appendUnique(
+    session.rankingHistory ?? [],
+    checkpoint.rankingHistory ?? [],
+    rankingKey,
+  );
+  session.interventions = mergeByKey(
+    session.interventions,
+    checkpoint.interventions ?? [],
+    (intervention) => intervention.id,
+  );
+  session.behavioralEvents = mergeCheckpointValues(
+    session.behavioralEvents,
+    checkpoint.behavioralEvents ?? [],
+    (event) => event.id,
+    acceptsMutableState,
+  );
+  session.contributionClassifications = mergeCheckpointValues(
+    session.contributionClassifications,
+    checkpoint.contributionClassifications ?? [],
+    (classification) => classification.messageId,
+    acceptsMutableState,
+  );
+  session.windowEvaluations = mergeByKey(
+    session.windowEvaluations ?? [],
+    checkpoint.windowEvaluations ?? [],
+    (evaluation) => evaluation.id,
+  );
+  session.classificationFailures = mergeCheckpointValues(
+    session.classificationFailures ?? [],
+    checkpoint.classificationFailures ?? [],
+    (failure) => failure.messageId,
+    acceptsMutableState,
+  );
+  session.processedEventIds = [
+    ...new Set([
+      ...(session.processedEventIds ?? []),
+      ...(checkpoint.processedEventIds ?? []),
+    ]),
+  ];
+  if (acceptsMutableState) {
+    session.runtimeState = {
+      ...(session.runtimeState ?? {}),
+      ...(checkpoint.ruleState ?? {}),
+    };
+    if (incomingRevision !== undefined) {
+      session.checkpointRevision = incomingRevision;
+    }
+  }
+  if (
+    acceptsMutableState &&
+    (checkpoint.rankingHistory?.length ?? 0) > 0
+  ) {
+    session.ranking =
+      incomingRevision !== undefined || !hadRankingHistory
+        ? checkpoint.rankingHistory!.at(-1)!
+        : newestRanking(session.ranking, ...(checkpoint.rankingHistory ?? []));
+  }
+}
+
+function mergeMessages(
+  existing: Message[],
+  incoming: Message[],
+  redactedReactionEventIds: ReadonlySet<string>,
+): Message[] {
+  const merged = new Map(existing.map((message) => [message.id, message]));
+  for (const message of incoming) {
+    const current = merged.get(message.id);
+    if (!current) {
+      merged.set(message.id, {
+        ...message,
+        reactions: message.reactions.filter(
+          (reaction) =>
+            !reaction.eventId ||
+            !redactedReactionEventIds.has(reaction.eventId),
+        ),
+      });
+      continue;
+    }
+    const seenReactions = new Set(
+      current.reactions
+        .filter(
+          (reaction) =>
+            !reaction.eventId ||
+            !redactedReactionEventIds.has(reaction.eventId),
+        )
+        .map((reaction) => reactionIdentityKey(message.id, reaction)),
+    );
+    const reactions = current.reactions.filter(
+      (reaction) =>
+        !reaction.eventId ||
+        !redactedReactionEventIds.has(reaction.eventId),
+    );
+    for (const reaction of message.reactions) {
+      if (
+        reaction.eventId &&
+        redactedReactionEventIds.has(reaction.eventId)
+      ) {
+        continue;
+      }
+      const key = reactionIdentityKey(message.id, reaction);
+      if (seenReactions.has(key)) continue;
+      seenReactions.add(key);
+      reactions.push(reaction);
+    }
+    merged.set(message.id, { ...current, reactions });
+  }
+  return [...merged.values()];
+}
+
+function mergeRecordedReactions(
+  existing: RecordedReaction[],
+  incoming: RecordedReaction[],
+): RecordedReaction[] {
+  const merged = new Map(existing.map((reaction) => [reaction.eventId, reaction]));
+  for (const reaction of incoming) {
+    const current = merged.get(reaction.eventId);
+    if (!current) {
+      merged.set(reaction.eventId, reaction);
+      continue;
+    }
+    merged.set(reaction.eventId, {
+      ...current,
+      ...reaction,
+      redacted: current.redacted || reaction.redacted,
+      redactionEventId:
+        reaction.redactionEventId ?? current.redactionEventId,
+      redactedAt: reaction.redactedAt ?? current.redactedAt,
+    });
+  }
+  return [...merged.values()];
+}
+
+function reactionIdentityKey(messageId: string, reaction: Reaction): string {
+  return reaction.eventId
+    ? `event:${reaction.eventId}`
+    : reactionKey(messageId, reaction.key, reaction.senderId);
+}
+
+function appendUnique<T>(
+  existing: T[],
+  incoming: T[],
+  key: (item: T) => string,
+): T[] {
+  const seen = new Set(existing.map(key));
+  const appended = [...existing];
+  for (const item of incoming) {
+    const itemKey = key(item);
+    if (seen.has(itemKey)) continue;
+    seen.add(itemKey);
+    appended.push(item);
+  }
+  return appended;
+}
+
+function rankingKey(ranking: Ranking): string {
+  if (ranking.eventId) return `event:${ranking.eventId}`;
+  const movement = ranking.movement
+    ? `${ranking.movement.itemId}:${ranking.movement.from}:${ranking.movement.to}`
+    : "";
+  return [
+    ranking.taskId,
+    ranking.updatedAt,
+    ranking.updatedBy,
+    ranking.order.join("\u0001"),
+    movement,
+  ].join("\u0000");
+}
+
+function newestRanking(first: Ranking, ...rest: Ranking[]): Ranking {
+  return rest.reduce((latest, candidate) => {
+    const latestTime = Date.parse(latest.updatedAt);
+    const candidateTime = Date.parse(candidate.updatedAt);
+    if (!Number.isFinite(candidateTime)) return latest;
+    if (!Number.isFinite(latestTime) || candidateTime >= latestTime) {
+      return candidate;
+    }
+    return latest;
+  }, first);
+}
+
+/**
+ * Newer snapshots may replace a value with the same logical key (for example
+ * a retried classification). A late snapshot may only contribute previously
+ * unseen records; it cannot roll a newer value back.
+ */
+function mergeCheckpointValues<T>(
+  existing: T[],
+  incoming: T[],
+  key: (item: T) => string,
+  acceptsReplacement: boolean,
+): T[] {
+  return acceptsReplacement
+    ? mergeByKey(existing, incoming, (item) => key(item))
+    : appendUnique(existing, incoming, key);
+}
+
+function mergeByKey<T>(
+  existing: T[],
+  incoming: T[],
+  key: (item: T, index: number) => string,
+): T[] {
+  const merged = new Map<string, T>();
+  existing.forEach((item, index) => merged.set(key(item, index), item));
+  incoming.forEach((item, index) => merged.set(key(item, index), item));
+  return [...merged.values()];
+}
+
+function reactionKey(messageId: string, key: string, senderId: string): string {
+  return `${messageId}\u0000${key}\u0000${senderId}`;
 }
 
 /** Unbiased Fisher-Yates shuffle for a new shared-ranking starting order. */
@@ -792,6 +1656,10 @@ function normalizeCondition(condition: Condition): Condition {
         condition.config.interventionMode ??
           DEFAULT_INTERVENTION_CONFIG.interventionMode,
       ),
+      // External iframe support is opt-in. Old, missing or malformed values
+      // always retain the existing structured ranking workspace.
+      workspaceMode:
+        condition.config.workspaceMode === "external" ? "external" : "ranking",
       scoreWeights: {
         ...DEFAULT_INTERVENTION_CONFIG.scoreWeights,
         ...condition.config.scoreWeights,
@@ -909,7 +1777,31 @@ function sessionFromRow(row: SessionRow): Session {
       row.classificationFailures,
     ),
     processedEventIds: fromJson<string[]>(row.processedEventIds),
+    redactedReactionEventIds: row.messages.flatMap((message) =>
+      message.reactions.flatMap((reaction) =>
+        reaction.redacted && reaction.eventId ? [reaction.eventId] : [],
+      ),
+    ),
+    reactionEvents: row.messages.flatMap((message) =>
+      message.reactions.flatMap((reaction) =>
+        reaction.eventId
+          ? [
+              {
+                eventId: reaction.eventId,
+                messageId: message.id,
+                key: reaction.key,
+                senderId: reaction.senderId,
+                timestamp: reaction.timestamp.toISOString(),
+                redacted: reaction.redacted,
+                redactionEventId: reaction.redactionEventId ?? undefined,
+                redactedAt: reaction.redactedAt?.toISOString(),
+              },
+            ]
+          : [],
+      ),
+    ),
     runtimeState: fromJson<Record<string, unknown>>(row.runtimeState),
+    checkpointRevision: row.checkpointRevision,
     polls: fromJson<Poll[]>(row.polls),
     durationMinutes: row.durationMinutes,
     roomId: row.roomId ?? undefined,
@@ -928,9 +1820,34 @@ function participantFromRow(
     id: row.id,
     name: row.name,
     trackingToken: row.trackingToken,
+    prolific:
+      row.prolificPid && row.prolificStudyId && row.prolificSessionId
+        ? {
+            participantId: row.prolificPid,
+            studyId: row.prolificStudyId,
+            sessionId: row.prolificSessionId,
+          }
+        : undefined,
+    completedAt: row.completedAt?.toISOString(),
     matrixUserId: row.matrixUserId ?? undefined,
     entrySurvey: entry ? surveyFromRow(entry) : undefined,
     exitSurvey: exit ? surveyFromRow(exit) : undefined,
+  };
+}
+
+function prolificArrivalFromRow(row: {
+  prolificPid: string;
+  prolificStudyId: string;
+  prolificSessionId: string;
+  participantRecordId: string | null;
+  arrivedAt: Date;
+}): ProlificArrival {
+  return {
+    participantId: row.prolificPid,
+    studyId: row.prolificStudyId,
+    sessionId: row.prolificSessionId,
+    participantRecordId: row.participantRecordId ?? undefined,
+    arrivedAt: row.arrivedAt.toISOString(),
   };
 }
 
@@ -948,11 +1865,14 @@ function messageFromRow(row: SessionRow["messages"][number]): Message {
     senderId: row.senderId,
     recipientId: row.recipientId,
     text: row.text,
-    reactions: row.reactions.map((reaction) => ({
-      key: reaction.key,
-      senderId: reaction.senderId,
-      timestamp: reaction.timestamp.toISOString(),
-    })),
+    reactions: row.reactions
+      .filter((reaction) => !reaction.redacted)
+      .map((reaction) => ({
+        ...(reaction.eventId ? { eventId: reaction.eventId } : {}),
+        key: reaction.key,
+        senderId: reaction.senderId,
+        timestamp: reaction.timestamp.toISOString(),
+      })),
   };
 }
 

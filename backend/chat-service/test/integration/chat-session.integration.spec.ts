@@ -94,6 +94,44 @@ describe("chat-service ↔ real Synapse (integration)", () => {
     await startSession(alice, [berta], testCondition("baseline"), 10);
   });
 
+  it("backfills messages sent while the recorder was restarting", async () => {
+    const alice = await registerUser("alice");
+    const roomId = await createInviteOnlyRoom(alice, "GDM restart backfill");
+    await inviteUser(alice, roomId, t.bot.botUserId);
+    const startedAt = new Date(Date.now() - 1000).toISOString();
+    const first = await sendText(alice, roomId, "sent while recorder was down 1");
+    const second = await sendText(alice, roomId, "sent while recorder was down 2");
+    const sessionId = randomUUID();
+
+    await request(t.http)
+      .post("/internal/sessions/start")
+      .send({
+        sessionId,
+        roomId,
+        condition: testCondition("baseline"),
+        durationMinutes: 10,
+        startedAt,
+        checkpoint: {
+          revision: 1,
+          messages: [],
+          rankingHistory: [],
+          interventions: [],
+          behavioralEvents: [],
+          contributionClassifications: [],
+          processedEventIds: [],
+          ruleState: {},
+        },
+      })
+      .expect(201);
+
+    await t.moduleRef.get(SessionsService).endSession(roomId);
+    const call = await finalizeFor(sessionId, 10_000);
+    expect(call.body.messages.map((message) => message.id)).toEqual([
+      first,
+      second,
+    ]);
+  });
+
   it("collects the discussion through its sync loop and finalizes on the timer", async () => {
     const alice = await registerUser("alice");
     const berta = await registerUser("berta");

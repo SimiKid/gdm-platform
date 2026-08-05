@@ -56,6 +56,43 @@ describe("SessionRuntime", () => {
     expect(rt.messages[0].reactions).toHaveLength(0);
   });
 
+  it("keeps a redacted reaction as an audit tombstone across restart", () => {
+    const first = new SessionRuntime("s", "!r", condition, 10, fakeBot());
+    first.recordMessage(message("m1"));
+    first.addReaction("re1", "m1", {
+      key: "👍",
+      senderId: "@u2:localhost",
+      timestamp: "2026-08-05T10:00:00.000Z",
+    });
+
+    const restored = new SessionRuntime(
+      "s",
+      "!r",
+      condition,
+      10,
+      fakeBot(),
+      undefined,
+      first.checkpoint(),
+    );
+    restored.removeRedacted(
+      "re1",
+      "rd1",
+      "2026-08-05T10:00:01.000Z",
+    );
+
+    const checkpoint = restored.checkpoint();
+    expect(checkpoint.messages[0].reactions).toEqual([]);
+    expect(checkpoint.reactionEvents).toEqual([
+      expect.objectContaining({
+        eventId: "re1",
+        messageId: "m1",
+        redacted: true,
+        redactionEventId: "rd1",
+      }),
+    ]);
+    expect(checkpoint.redactedReactionEventIds).toEqual(["re1"]);
+  });
+
   it("ignores reactions to unknown messages and unknown redactions", () => {
     const rt = new SessionRuntime("s", "!r", condition, 10, fakeBot());
     rt.addReaction("re1", "missing", {

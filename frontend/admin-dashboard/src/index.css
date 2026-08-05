@@ -412,6 +412,7 @@ tbody tr:last-child td {
   color: #8a5a00;
 }
 
+.status.provisioning,
 .status.running {
   background: #dbeafe;
   color: #1c4f9c;
@@ -668,6 +669,60 @@ tbody tr:last-child td {
   font-weight: 650;
   padding: 10px 14px;
   margin-top: 14px;
+}
+
+/* ── Shared participant workspace ─────────────────── */
+
+.workspace-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.workspace-options > label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid #d9e0ea;
+  border-radius: 8px;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+
+.workspace-options > label.selected {
+  border-color: #3366cc;
+  background: #eef4ff;
+}
+
+.workspace-options input {
+  margin-top: 3px;
+}
+
+.workspace-options span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workspace-options small {
+  color: #5f6f86;
+  line-height: 1.4;
+}
+
+.workspace-warning {
+  border: 1px solid #b45309;
+  border-radius: 8px;
+  background: #fff4d6;
+  color: #8a5a00;
+  font-size: 0.84rem;
+  padding: 10px 14px;
+  margin-top: 14px;
+}
+
+@media (max-width: 700px) {
+  .workspace-options {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ── 2-bot comparison test (Testing view) ──────────── */

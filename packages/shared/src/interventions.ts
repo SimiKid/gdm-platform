@@ -7,6 +7,21 @@ export type InterventionMode = "baseline" | "public" | "private";
 
 export type InterventionAudience = "none" | "public" | "private";
 
+/** Shared artifact shown beside the group chat. */
+export type WorkspaceMode = "ranking" | "external";
+
+/**
+ * Future provider-owned workspace embedded beside the chat.
+ *
+ * The platform deliberately does not create documents or collect their
+ * contents: a provider integration must supply a safe, group-specific URL.
+ * Until then, external mode renders an explicit not-configured placeholder.
+ */
+export interface ExternalWorkspaceConfig {
+  embedUrl?: string;
+  title?: string;
+}
+
 /**
  * Map pre-restructure modes (which carried a retired tone suffix, e.g.
  * "public-engaging") onto the current delivery axis, so conditions and
@@ -46,6 +61,13 @@ export interface DominanceWeights {
  * these settings so both can change later without rewriting the rule engine.
  */
 export interface InterventionConfig {
+  /**
+   * Shared artifact shown beside the chat. Missing/unknown values normalize
+   * to `ranking`, preserving every existing study condition.
+   */
+  workspaceMode?: WorkspaceMode;
+  /** Optional future iframe provider configuration. Not editable yet. */
+  externalWorkspace?: ExternalWorkspaceConfig;
   interventionMode: InterventionMode;
   /** Trigger once a participant owns at least this share of contribution. */
   contributionThreshold: number;
@@ -179,6 +201,7 @@ export interface WindowEvaluation {
 }
 
 export const DEFAULT_INTERVENTION_CONFIG: InterventionConfig = {
+  workspaceMode: "ranking",
   interventionMode: "public",
   contributionThreshold: 0.4,
   protectedStartMinutes: 3,

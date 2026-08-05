@@ -9,13 +9,22 @@ import { httpSessionManager } from "../study/sessionClient";
  * researcher in the admin dashboard (Settings → Compensation Link), with
  * the build-time VITE_PAYMENT_URL as fallback.
  */
-export default function DebriefingPage() {
+interface Props {
+  /** Returned by the participant-completion endpoint after the exit survey. */
+  completionUrl?: string;
+}
+
+export default function DebriefingPage({ completionUrl = "" }: Props) {
   const [read, setRead] = useState(false);
   const [paymentUrl, setPaymentUrl] = useState<string>(
     import.meta.env.VITE_PAYMENT_URL ?? "#",
   );
 
   useEffect(() => {
+    if (completionUrl) {
+      setPaymentUrl(completionUrl);
+      return;
+    }
     void httpSessionManager
       .getStudySettings()
       .then((settings) => {
@@ -24,7 +33,9 @@ export default function DebriefingPage() {
       .catch(() => {
         /* keep the build-time fallback */
       });
-  }, []);
+  }, [completionUrl]);
+
+  const paymentConfigured = paymentUrl !== "" && paymentUrl !== "#";
 
   return (
     <StudyShell>
@@ -67,14 +78,20 @@ export default function DebriefingPage() {
         </label>
 
         <div className="card-actions">
-          {read ? (
+          {read && paymentConfigured ? (
             <a className="btn btn-primary" href={paymentUrl}>
-              Claim compensation
+              Return to Prolific
             </a>
           ) : (
             <button type="button" className="btn btn-primary" disabled>
-              Claim compensation
+              Return to Prolific
             </button>
+          )}
+          {read && !paymentConfigured && (
+            <p className="error" role="alert">
+              The Prolific completion link has not been configured yet. Please
+              keep this page open and contact the researcher.
+            </p>
           )}
         </div>
       </div>

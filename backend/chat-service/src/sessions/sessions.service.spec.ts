@@ -6,7 +6,11 @@ import type {
 } from "../matrix/matrix-bot.service";
 import type { BotRules } from "../rules/bot-rules";
 import { DEFAULT_INTERVENTION_CONFIG } from "@gdm/shared";
-import type { Condition, StartSessionNotification } from "@gdm/shared";
+import type {
+  Condition,
+  RuntimeCheckpoint,
+  StartSessionNotification,
+} from "@gdm/shared";
 
 const condition: Condition = {
   id: "c",
@@ -25,6 +29,18 @@ const note: StartSessionNotification = {
   durationMinutes: 10,
 };
 
+function emptyCheckpoint(): RuntimeCheckpoint {
+  return {
+    messages: [],
+    rankingHistory: [],
+    interventions: [],
+    behavioralEvents: [],
+    contributionClassifications: [],
+    processedEventIds: [],
+    ruleState: {},
+  };
+}
+
 function makeBot() {
   const handlers: ((e: TimelineEvent) => void)[] = [];
   const bot = {
@@ -33,6 +49,7 @@ function makeBot() {
     join: vi.fn(async () => undefined),
     joinAs: vi.fn(async () => undefined),
     start: vi.fn(),
+    stop: vi.fn(),
     ensureReady: vi.fn(async () => undefined),
     comparisonBotUserIds: vi.fn(async () => [
       "@gdm_bot_a_x:localhost",
@@ -41,6 +58,7 @@ function makeBot() {
     sendText: vi.fn(async () => undefined),
     sendTextAs: vi.fn(async () => undefined),
     getJoinedMemberIds: vi.fn(async () => ["@u:localhost", "@u2:localhost"]),
+    roomHistory: vi.fn(async () => []),
   };
   return { bot: bot as unknown as MatrixBotService, emit: (e: TimelineEvent) => handlers.forEach((h) => h(e)) };
 }
@@ -111,12 +129,66 @@ describe("SessionsService (chat-service)", () => {
     });
     await vi.advanceTimersByTimeAsync(0);
     expect(rules.onEvent).toHaveBeenCalled();
+
+    (bot.joinAs as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    await vi.advanceTimersByTimeAsync(5000);
+    // Both identities were attempted initially and again on the bounded
+    // background retry; recording never stopped while they recovered.
+    expect(bot.joinAs).toHaveBeenCalledTimes(4);
   });
 
   it("does not start the same room twice", async () => {
     await svc.startSession(note);
     await svc.startSession(note);
     expect(bot.join).toHaveBeenCalledTimes(1);
+  });
+
+  it("coalesces concurrent duplicate start notifications", async () => {
+    let releaseJoin!: () => void;
+    (bot.join as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseJoin = resolve;
+        }),
+    );
+
+    const first = svc.startSession(note);
+    const duplicate = svc.startSession(note);
+    await vi.waitFor(() => expect(bot.join).toHaveBeenCalledTimes(1));
+    releaseJoin();
+    await Promise.all([first, duplicate]);
+
+    expect(bot.join).toHaveBeenCalledTimes(1);
+  });
+
+  it("replays uncheckpointed Matrix history before resuming a session", async () => {
+    (bot.roomHistory as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      {
+        roomId: "!r",
+        type: "m.room.message",
+        sender: "@u:localhost",
+        eventId: "missed-during-restart",
+        ts: 1000,
+        content: { body: "recover me" },
+      },
+    ]);
+
+    await svc.startSession({
+      ...note,
+      startedAt: "1970-01-01T00:00:00.000Z",
+      checkpoint: emptyCheckpoint(),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(bot.roomHistory).toHaveBeenCalledWith("!r", 0);
+    expect(rules.onEvent).toHaveBeenCalledOnce();
+
+    await svc.endSession("!r");
+    const body = JSON.parse(
+      String((fetchMock.mock.calls.at(-1)![1] as { body: string }).body),
+    );
+    expect(body.messages).toEqual([
+      expect.objectContaining({ id: "missed-during-restart", text: "recover me" }),
+    ]);
   });
 
   it("a failed join does not orphan the session — the next start retries", async () => {
@@ -155,6 +227,14 @@ describe("SessionsService (chat-service)", () => {
     const lastBody = JSON.parse(lastCall[1].body);
     expect(lastBody.messages).toHaveLength(2);
     expect(lastBody.messages[0].reactions).toHaveLength(0); // added then redacted
+    expect(lastBody.reactionEvents).toEqual([
+      expect.objectContaining({
+        eventId: "re1",
+        messageId: "m1",
+        redacted: true,
+        redactionEventId: "rd1",
+      }),
+    ]);
     expect(lastBody.messages[1]).toMatchObject({
       id: "b1",
       senderId: "@bot:localhost",
@@ -178,6 +258,54 @@ describe("SessionsService (chat-service)", () => {
     await svc.startSession(note);
     emit({ roomId: "!other", type: "m.room.message", sender: "@u:localhost", eventId: "x", ts: 1, content: { body: "hi" } });
     expect(rules.onEvent).not.toHaveBeenCalled();
+  });
+
+  it("never overlaps checkpoints and follows an in-flight write with one latest snapshot", async () => {
+    let finishFirst!: (response: { ok: boolean }) => void;
+    fetchMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ ok: boolean }>((resolve) => {
+            finishFirst = resolve;
+          }),
+      )
+      .mockResolvedValue({ ok: true });
+    await svc.startSession(note);
+
+    emit({
+      roomId: "!r",
+      type: "m.room.message",
+      sender: "@u:localhost",
+      eventId: "m1",
+      ts: 1000,
+      content: { body: "first" },
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // This event arrives while the first database request is unresolved. It
+    // must mark the room dirty, not start a competing full-snapshot write.
+    emit({
+      roomId: "!r",
+      type: "m.room.message",
+      sender: "@u2:localhost",
+      eventId: "m2",
+      ts: 2000,
+      content: { body: "second" },
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    finishFirst({ ok: true });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const latest = JSON.parse(
+      String((fetchMock.mock.calls[1][1] as { body: string }).body),
+    );
+    expect(latest.messages.map((message: { id: string }) => message.id)).toEqual([
+      "m1",
+      "m2",
+    ]);
   });
 
   it("evaluates the rules at every window boundary until the session ends", async () => {
@@ -238,6 +366,36 @@ describe("SessionsService (chat-service)", () => {
       expect.stringContaining("/finalize"),
       expect.any(Object),
     );
+  });
+
+  it("flushes an unscheduled latest snapshot during graceful shutdown", async () => {
+    await svc.startSession(note);
+    emit({
+      roomId: "!r",
+      type: "m.room.message",
+      sender: "@u:localhost",
+      eventId: "shutdown-message",
+      ts: 1000,
+      content: { body: "persist me before restart" },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The normal one-second debounce has not fired yet.
+    expect(fetchMock).not.toHaveBeenCalled();
+    await svc.beforeApplicationShutdown();
+
+    expect(bot.stop).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/checkpoint"),
+      expect.objectContaining({ method: "PUT" }),
+    );
+    const body = JSON.parse(
+      String((fetchMock.mock.calls[0][1] as { body: string }).body),
+    );
+    expect(body.messages).toEqual([
+      expect.objectContaining({ id: "shutdown-message" }),
+    ]);
   });
 
   it("endSession is idempotent", async () => {

@@ -17,6 +17,7 @@ import type {
   OpenSessionRequest,
   OpenSessionResponse,
   PublicSession,
+  RecordProlificArrivalRequest,
   Session,
   SessionSummary,
   StudySettings,
@@ -40,6 +41,18 @@ export class SessionsController {
   @Post("sessions")
   openSession(@Body() body: OpenSessionRequest): Promise<OpenSessionResponse> {
     return this.sessions.openSession(body);
+  }
+
+  /** Capture Prolific identity immediately when the external study opens. */
+  @Post("prolific/arrivals")
+  recordProlificArrival(@Body() body: RecordProlificArrivalRequest) {
+    return this.sessions.recordProlificArrival(body.prolific);
+  }
+
+  /** Resume the existing seat/stage after a Prolific participant reconnects. */
+  @Post("prolific/resume")
+  resumeProlific(@Body() body: RecordProlificArrivalRequest) {
+    return this.sessions.resumeProlific(body.prolific);
   }
 
   /** Admin: list all sessions. */
@@ -77,6 +90,15 @@ export class SessionsController {
     return this.sessions.completeSession(id);
   }
 
+  /** Mark one participant complete after their exit survey is safely stored. */
+  @Post("sessions/:sessionId/participants/:participantId/complete")
+  completeParticipant(
+    @Param("sessionId") sessionId: string,
+    @Param("participantId") participantId: string,
+  ) {
+    return this.sessions.completeParticipant(sessionId, participantId);
+  }
+
   /** Chat Service hands back the collected discussion at session end. */
   @Post("sessions/:id/finalize")
   @UseGuards(InternalGuard)
@@ -93,8 +115,8 @@ export class SessionsController {
   checkpoint(
     @Param("id") id: string,
     @Body() body: CheckpointSessionRequest,
-  ): Promise<Session> {
-    return this.sessions.checkpointSession(id, body);
+  ): Promise<{ ok: true }> {
+    return this.sessions.checkpointSession(id, body).then(() => ({ ok: true }));
   }
 
   /** Re-invite a restarted bot and return all recoverable running sessions. */
@@ -250,6 +272,13 @@ export class SessionsController {
     @Query("roundIds") roundIds?: string,
   ): Promise<string> {
     return this.sessions.exportSurveysCsv(researchFilter(conditionIds, roundIds));
+  }
+
+  /** Prolific arrivals, including people who left before claiming a seat. */
+  @Get("export/prolific-arrivals")
+  @UseGuards(AdminGuard)
+  exportProlificArrivals() {
+    return this.store.listProlificArrivals();
   }
 
   /** Behavioral events and per-participant aggregate contribution measures. */

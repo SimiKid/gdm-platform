@@ -25,6 +25,9 @@ describe("StoreService", () => {
       "private",
       "private",
     ]);
+    expect(conditions.every((c) => c.config.workspaceMode === "ranking")).toBe(
+      true,
+    );
   });
 
   it("upsertCondition updates editable condition settings", async () => {
@@ -41,6 +44,27 @@ describe("StoreService", () => {
     expect(updated.active).toBe(false);
     expect(updated.goal).toBe(7);
     expect(updated.config.contributionThreshold).toBe(0.5);
+  });
+
+  it("keeps ranking as the safe workspace default", async () => {
+    const condition = (await store.listConditions())[0];
+    const legacy = await store.upsertCondition({
+      ...condition,
+      config: {
+        ...condition.config,
+        workspaceMode: undefined,
+      },
+    });
+    expect(legacy.config.workspaceMode).toBe("ranking");
+
+    const external = await store.upsertCondition({
+      ...condition,
+      config: {
+        ...condition.config,
+        workspaceMode: "external",
+      },
+    });
+    expect(external.config.workspaceMode).toBe("external");
   });
 
   it("createForming builds a waiting session seeded with the ranking task", async () => {

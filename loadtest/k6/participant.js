@@ -20,6 +20,14 @@ const rankingMinSeconds = intEnv("LOADTEST_RANKING_MIN_SECONDS", 60);
 const rankingMaxSeconds = intEnv("LOADTEST_RANKING_MAX_SECONDS", 120);
 const reactionMinSeconds = intEnv("LOADTEST_REACTION_MIN_SECONDS", 45);
 const reactionMaxSeconds = intEnv("LOADTEST_REACTION_MAX_SECONDS", 120);
+const enrollmentBackoffBaseSeconds = intEnv(
+  "LOADTEST_ENROLL_BACKOFF_BASE_SECONDS",
+  1,
+);
+const enrollmentBackoffMaxSeconds = intEnv(
+  "LOADTEST_ENROLL_BACKOFF_MAX_SECONDS",
+  15,
+);
 
 if (!conditionId || !conditionId.startsWith("e2e-load-")) {
   throw new Error("LOADTEST_CONDITION_ID must be an isolated e2e-load-* condition");
@@ -40,6 +48,7 @@ const messagesObserved = new Counter("messages_observed");
 const matrixEventsSent = new Counter("matrix_events_sent");
 
 const failureLimit = Number(__ENV.LOADTEST_SLO_FAILURE_RATE || 0.01);
+const continueAfterSloFailure = profile.continueAfterSloFailure === true;
 const sendP95 = intEnv("LOADTEST_SLO_SEND_P95_MS", 750);
 const sendP99 = intEnv("LOADTEST_SLO_SEND_P99_MS", 2000);
 const peerP95 = intEnv("LOADTEST_SLO_PEER_P95_MS", 1500);
@@ -47,6 +56,29 @@ const peerP99 = intEnv("LOADTEST_SLO_PEER_P99_MS", 3000);
 const apiP95 = intEnv("LOADTEST_SLO_API_P95_MS", 1000);
 const sessionOpenP95 = intEnv("LOADTEST_SLO_SESSION_OPEN_P95_MS", 5000);
 const groupReadyP95 = intEnv("LOADTEST_SLO_GROUP_READY_P95_MS", 15000);
+const measuredTargets = [
+  ...new Set(profile.stages.map((stage) => stage.target).filter((target) => target > 0)),
+];
+const stageThresholds = {};
+for (const target of measuredTargets) {
+  stageThresholds[`matrix_send_ack_ms{load_target:${target}}`] = [
+    `p(95)<${sendP95}`,
+    `p(99)<${sendP99}`,
+  ];
+  stageThresholds[`matrix_peer_delivery_ms{load_target:${target}}`] = [
+    `p(95)<${peerP95}`,
+    `p(99)<${peerP99}`,
+  ];
+  stageThresholds[`session_open_ms{load_target:${target}}`] = [
+    `p(95)<${sessionOpenP95}`,
+  ];
+  stageThresholds[`group_ready_ms{load_target:${target}}`] = [
+    `p(95)<${groupReadyP95}`,
+  ];
+  stageThresholds[`protocol_failure_rate{load_target:${target}}`] = [
+    `rate<${failureLimit}`,
+  ];
+}
 
 export const options = {
   discardResponseBodies: false,
@@ -61,9 +93,26 @@ export const options = {
     },
   },
   thresholds: {
-    checks: [{ threshold: `rate>${1 - failureLimit}`, abortOnFail: true, delayAbortEval: "2m" }],
+    checks: [
+      {
+        threshold: `rate>${1 - failureLimit}`,
+        abortOnFail: !continueAfterSloFailure,
+        delayAbortEval: "2m",
+      },
+    ],
     protocol_failure_rate: [
-      { threshold: `rate<${failureLimit}`, abortOnFail: true, delayAbortEval: "2m" },
+      {
+        threshold: `rate<${failureLimit}`,
+        abortOnFail: !continueAfterSloFailure,
+        delayAbortEval: "2m",
+      },
+      // Keep collecting through ordinary SLO degradation, but stop if the
+      // platform broadly collapses for several minutes.
+      {
+        threshold: "rate<0.25",
+        abortOnFail: true,
+        delayAbortEval: "5m",
+      },
     ],
     http_429_count: ["count==0"],
     http_5xx_count: ["count==0"],
@@ -72,14 +121,31 @@ export const options = {
     session_open_ms: [`p(95)<${sessionOpenP95}`],
     group_ready_ms: [`p(95)<${groupReadyP95}`],
     "gdm_api_latency_ms{endpoint:session_poll}": [`p(95)<${apiP95}`],
+    ...stageThresholds,
   },
   summaryTrendStats: ["avg", "med", "p(90)", "p(95)", "p(99)", "max"],
 };
 
 let state;
+let enrollmentFailures = 0;
 
 export function participant() {
-  if (!state) state = enroll();
+  if (!state) {
+    try {
+      state = enroll();
+      enrollmentFailures = 0;
+    } catch (error) {
+      enrollmentFailures += 1;
+      const exponential = Math.min(
+        enrollmentBackoffMaxSeconds,
+        enrollmentBackoffBaseSeconds * 2 ** Math.min(6, enrollmentFailures - 1),
+      );
+      // Per-VU jitter avoids synchronized retries becoming a second traffic
+      // spike while preserving the failed iteration in k6's metrics.
+      sleep(randomBetween(exponential * 0.75, exponential * 1.25));
+      throw error;
+    }
+  }
   runDueActions(state);
   syncOnce(state, syncTimeoutMs);
 }
@@ -106,12 +172,12 @@ function enroll() {
     }),
     jsonParams("session_open"),
   );
-  sessionOpenMs.add(Date.now() - openedAt);
+  sessionOpenMs.add(Date.now() - openedAt, metricTags());
   requireStatus(response, 201, "session opened");
 
   const data = response.json();
   if (!data?.session?.id || !data?.participantId || !data?.matrix?.accessToken) {
-    protocolFailureRate.add(true);
+    protocolFailureRate.add(true, metricTags());
     throw new Error("openSession returned an incomplete response");
   }
 
@@ -139,7 +205,7 @@ function enroll() {
   submitEntrySurvey(participantState);
   const initialSyncAt = Date.now();
   syncOnce(participantState, 0);
-  matrixInitialSyncMs.add(Date.now() - initialSyncAt);
+  matrixInitialSyncMs.add(Date.now() - initialSyncAt, metricTags());
 
   while (!participantState.roomId) {
     syncOnce(participantState, 1000);
@@ -150,11 +216,14 @@ function enroll() {
       null,
       requestParams("session_poll"),
     );
-    apiLatencyMs.add(Date.now() - pollStarted, { endpoint: "session_poll" });
+    apiLatencyMs.add(Date.now() - pollStarted, {
+      ...metricTags(),
+      endpoint: "session_poll",
+    });
     requireStatus(poll, 200, "waiting-room poll");
     const session = poll.json();
     if (session.status === "aborted") {
-      protocolFailureRate.add(true);
+      protocolFailureRate.add(true, metricTags());
       throw new Error(`Session ${participantState.sessionId} was aborted while waiting`);
     }
     participantState.roomId = session.roomId || "";
@@ -164,8 +233,8 @@ function enroll() {
     if (!participantState.roomId) sleep(1);
   }
 
-  groupReadyMs.add(Date.now() - openedAt);
-  protocolFailureRate.add(false);
+  groupReadyMs.add(Date.now() - openedAt, metricTags());
+  protocolFailureRate.add(false, metricTags());
   return participantState;
 }
 
@@ -189,7 +258,10 @@ function submitEntrySurvey(participantState) {
     }),
     jsonParams("entry_survey"),
   );
-  apiLatencyMs.add(Date.now() - started, { endpoint: "entry_survey" });
+  apiLatencyMs.add(Date.now() - started, {
+    ...metricTags(),
+    endpoint: "entry_survey",
+  });
   requireStatus(response, 201, "entry survey stored");
 }
 
@@ -243,7 +315,7 @@ function sendTypingAndMessage(participantState) {
     "chat_message",
     true,
   );
-  if (response?.status === 200) messagesSent.add(1);
+  if (response?.status === 200) messagesSent.add(1, metricTags());
 
   sendTyping(participantState, false, 0);
   sendMatrixEvent(
@@ -330,9 +402,9 @@ function sendMatrixEvent(
     JSON.stringify(content),
     matrixParams(participantState, endpoint),
   );
-  if (measureMessage) matrixSendAckMs.add(Date.now() - started);
+  if (measureMessage) matrixSendAckMs.add(Date.now() - started, metricTags());
   requireStatus(response, 200, `Matrix ${endpoint}`);
-  matrixEventsSent.add(1);
+  matrixEventsSent.add(1, metricTags());
   return response;
 }
 
@@ -367,9 +439,12 @@ function observeTimeline(participantState, payload) {
       const marker = parseMarker(event?.content?.body);
       if (!marker || marker.runId !== runId) continue;
       const latency = Math.max(0, Date.now() - marker.sentAt);
-      if (event.sender === participantState.userId) matrixOwnDeliveryMs.add(latency);
-      else matrixPeerDeliveryMs.add(latency);
-      messagesObserved.add(1);
+      if (event.sender === participantState.userId) {
+        matrixOwnDeliveryMs.add(latency, metricTags());
+      } else {
+        matrixPeerDeliveryMs.add(latency, metricTags());
+      }
+      messagesObserved.add(1, metricTags());
     }
   }
 }
@@ -384,16 +459,18 @@ function parseMarker(body) {
 
 function request(method, url, body, params) {
   const response = http.request(method, url, body, params);
-  if (response.status === 429) http429.add(1);
-  if (response.status >= 500) http5xx.add(1);
+  if (response.status === 429) http429.add(1, metricTags());
+  if (response.status >= 500) http5xx.add(1, metricTags());
   return response;
 }
 
 function requireStatus(response, expected, label) {
-  const ok = check(response, {
-    [`${label}: HTTP ${expected}`]: (item) => item.status === expected,
-  });
-  protocolFailureRate.add(!ok);
+  const ok = check(
+    response,
+    { [`${label}: HTTP ${expected}`]: (item) => item.status === expected },
+    metricTags(),
+  );
+  protocolFailureRate.add(!ok, metricTags());
   if (!ok) {
     throw new Error(
       `${label} failed: HTTP ${response.status} ${String(response.body).slice(0, 300)}`,
@@ -404,7 +481,7 @@ function requireStatus(response, expected, label) {
 function requestParams(endpoint) {
   return {
     timeout: `${Math.max(syncTimeoutMs + 5000, 15000)}ms`,
-    tags: { endpoint, name: endpoint },
+    tags: { endpoint, name: endpoint, ...metricTags() },
   };
 }
 
@@ -436,6 +513,27 @@ function intEnv(name, fallback) {
   const value = Number(__ENV[name] || fallback);
   if (!Number.isFinite(value) || value < 0) throw new Error(`${name} must be numeric`);
   return Math.round(value);
+}
+
+function metricTags() {
+  return { load_target: currentLoadTarget() };
+}
+
+function currentLoadTarget() {
+  let elapsedMs = exec.instance.currentTestRunDuration;
+  for (const stage of profile.stages) {
+    const durationMs = durationToMs(stage.duration);
+    if (elapsedMs <= durationMs) return String(stage.target);
+    elapsedMs -= durationMs;
+  }
+  return String(profile.stages[profile.stages.length - 1]?.target ?? 0);
+}
+
+function durationToMs(value) {
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h)$/.exec(String(value));
+  if (!match) throw new Error(`Unsupported stage duration: ${value}`);
+  const factor = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 }[match[2]];
+  return Number(match[1]) * factor;
 }
 
 function normalizeHomeserverUrl(value) {

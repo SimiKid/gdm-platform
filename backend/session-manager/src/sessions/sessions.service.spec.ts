@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { SessionsService } from "./sessions.service";
 import { StoreService } from "../store/store.service";
 import type { MatrixService } from "../matrix/matrix.service";
-import type { Ranking } from "@gdm/shared";
+import type { Ranking, Session, SessionStatus } from "@gdm/shared";
 
 function fakeMatrix(): MatrixService {
   let n = 0;
@@ -24,12 +24,33 @@ function open() {
   return { trackingToken: `tt-${tokenCounter}`, participantName: "" };
 }
 
+async function waitForStatus(
+  svc: SessionsService,
+  sessionId: string,
+  status: SessionStatus,
+): Promise<Session> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const session = await svc.getSession(sessionId);
+    if (session.status === status) return session;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error(`session ${sessionId} did not reach ${status}`);
+}
+
+const prolific = {
+  participantId: "aaaaaaaaaaaaaaaaaaaaaaaa",
+  studyId: "bbbbbbbbbbbbbbbbbbbbbbbb",
+  sessionId: "cccccccccccccccccccccccc",
+};
+
 describe("SessionsService (session-manager)", () => {
   let store: StoreService;
   let matrix: MatrixService;
   let svc: SessionsService;
 
   beforeEach(() => {
+    delete process.env.PROLIFIC_STUDY_ID;
+    delete process.env.PROLIFIC_API_TOKEN;
     store = new StoreService();
     matrix = fakeMatrix();
     svc = new SessionsService(store, matrix);
@@ -69,13 +90,143 @@ describe("SessionsService (session-manager)", () => {
     expect(res.session.condition.id).toBe("private-llm");
   });
 
+  it("records and links a Prolific arrival without claiming duplicate seats", async () => {
+    const arrival = await svc.recordProlificArrival(prolific);
+    const again = await svc.recordProlificArrival(prolific);
+    expect(again.arrivedAt).toBe(arrival.arrivedAt);
+
+    const first = await svc.openSession({
+      trackingToken: "prolific-submission",
+      participantName: "",
+      prolific,
+    });
+    const duplicate = await svc.openSession({
+      trackingToken: "changed-client-token",
+      participantName: "",
+      prolific,
+    });
+    expect(duplicate.participantId).toBe(first.participantId);
+    expect((await store.listProlificArrivals())[0]).toMatchObject({
+      ...prolific,
+      participantRecordId: first.participantId,
+    });
+    expect((await svc.getSession(first.session.id)).participants[0].prolific).toEqual(
+      prolific,
+    );
+    await expect(svc.resumeProlific(prolific)).resolves.toMatchObject({
+      stage: "waiting",
+      openSession: { participantId: first.participantId },
+    });
+  });
+
+  it("rejects malformed or unexpected Prolific identifiers", async () => {
+    await expect(
+      svc.recordProlificArrival({ ...prolific, participantId: "not-an-id" }),
+    ).rejects.toThrow(/invalid prolific/i);
+
+    process.env.PROLIFIC_STUDY_ID = "dddddddddddddddddddddddd";
+    await expect(svc.recordProlificArrival(prolific)).rejects.toThrow(
+      /unexpected prolific study/i,
+    );
+  });
+
+  it("accepts alphanumeric Prolific preview identifiers", async () => {
+    await expect(
+      svc.recordProlificArrival({
+        participantId: "gggggggggggggggggggggggg",
+        studyId: "ssssssssssssssssssssssss",
+        sessionId: "zzzzzzzzzzzzzzzzzzzzzzzz",
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it("accepts a short preview session ID only without API validation", async () => {
+    const preview = { ...prolific, sessionId: "pppppppppppp" };
+
+    await expect(svc.recordProlificArrival(preview)).resolves.toBeDefined();
+
+    process.env.PROLIFIC_API_TOKEN = "server-only-token";
+    await expect(svc.recordProlificArrival(preview)).rejects.toThrow(
+      /invalid prolific/i,
+    );
+  });
+
+  it("verifies Prolific submission ownership when an API token is configured", async () => {
+    process.env.PROLIFIC_API_TOKEN = "server-only-token";
+    const prolificFetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        id: prolific.sessionId,
+        study_id: prolific.studyId,
+        participant: prolific.participantId,
+        status: "ACTIVE",
+      }),
+    }));
+    vi.stubGlobal("fetch", prolificFetch);
+
+    await svc.recordProlificArrival(prolific);
+    await svc.resumeProlific(prolific);
+
+    expect(prolificFetch).toHaveBeenCalledTimes(1);
+    expect(prolificFetch).toHaveBeenCalledWith(
+      `https://api.prolific.com/api/v1/submissions/${prolific.sessionId}/`,
+      expect.objectContaining({
+        headers: { Authorization: "Token server-only-token" },
+      }),
+    );
+  });
+
+  it.each(["AWAITING_REVIEW", "AWAITING REVIEW"])(
+    "accepts Prolific submission status %s",
+    async (status) => {
+      process.env.PROLIFIC_API_TOKEN = "server-only-token";
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: prolific.sessionId,
+            study_id: prolific.studyId,
+            participant: prolific.participantId,
+            status,
+          }),
+        })),
+      );
+
+      await expect(svc.recordProlificArrival(prolific)).resolves.toBeDefined();
+    },
+  );
+
+  it("rejects a Prolific submission whose API identity does not match", async () => {
+    process.env.PROLIFIC_API_TOKEN = "server-only-token";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: prolific.sessionId,
+          study_id: prolific.studyId,
+          participant: "dddddddddddddddddddddddd",
+          status: "ACTIVE",
+        }),
+      })),
+    );
+
+    await expect(svc.recordProlificArrival(prolific)).rejects.toThrow(
+      /identity mismatch/i,
+    );
+  });
+
   it("provisions the room once the group is full and notifies the chat service", async () => {
     const a = await svc.openSession(open());
     await svc.openSession(open());
     const c = await svc.openSession(open());
 
     expect(a.session.id).toBe(c.session.id); // filled the same forming session
-    const session = await svc.getSession(a.session.id);
+    const session = await waitForStatus(svc, a.session.id, "running");
     expect(session.status).toBe("running");
     expect(session.roomId).toBe("!room:localhost");
     expect(matrix.createRoom).toHaveBeenCalledOnce();
@@ -83,6 +234,39 @@ describe("SessionsService (session-manager)", () => {
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining("/internal/sessions/start"),
       expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("reuses a persisted private room after provisioning fails and never exposes it early", async () => {
+    (matrix.joinRoom as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("temporary join failure"),
+    );
+    const first = await svc.openSession(open());
+    await svc.openSession(open());
+    const third = await svc.openSession(open());
+
+    // Enrollment returns with a durable seat instead of waiting for Matrix.
+    expect(third.session.status).toBe("waiting");
+    expect(third.matrix.roomId).toBe("");
+    await waitForStatus(svc, first.session.id, "provisioning");
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if ((matrix.joinRoom as ReturnType<typeof vi.fn>).mock.calls.length > 0) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    // Let the rejected background single-flight clean itself up.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const internal = await svc.getSession(first.session.id);
+    expect(internal.roomId).toBe("!room:localhost");
+    const participantView = await svc.getPublicSession(first.session.id);
+    expect(participantView.roomId).toBeUndefined();
+
+    await waitForStatus(svc, first.session.id, "running");
+    expect(matrix.createRoom).toHaveBeenCalledTimes(1);
+    expect((await svc.getPublicSession(first.session.id)).roomId).toBe(
+      "!room:localhost",
     );
   });
 
@@ -94,9 +278,10 @@ describe("SessionsService (session-manager)", () => {
       name: "Compare",
       config: { ...baseline.config, comparisonMode: true },
     });
+    const first = await svc.openSession({ ...open(), conditionId: "compare" });
     await svc.openSession({ ...open(), conditionId: "compare" });
     await svc.openSession({ ...open(), conditionId: "compare" });
-    await svc.openSession({ ...open(), conditionId: "compare" });
+    await waitForStatus(svc, first.session.id, "running");
 
     // Rooms are invite-only: without these invites the comparison bots'
     // joins are rejected with 403 (the prod incident this guards against).
@@ -112,9 +297,10 @@ describe("SessionsService (session-manager)", () => {
   });
 
   it("regular conditions never invite the comparison bots", async () => {
+    const first = await svc.openSession(open());
     await svc.openSession(open());
     await svc.openSession(open());
-    await svc.openSession(open());
+    await waitForStatus(svc, first.session.id, "running");
 
     expect(matrix.invite).not.toHaveBeenCalledWith(
       "!room:localhost",
@@ -234,7 +420,7 @@ describe("SessionsService (session-manager)", () => {
 
   it("checkpoints live telemetry without completing and exports aggregates", async () => {
     const res = await svc.openSession(open());
-    const session = await svc.checkpointSession(res.session.id, {
+    await svc.checkpointSession(res.session.id, {
       messages: [
         {
           id: "m1",
@@ -273,6 +459,7 @@ describe("SessionsService (session-manager)", () => {
       processedEventIds: ["m1", "t1"],
       ruleState: { lastInterventionAtMs: 1 },
     });
+    const session = await svc.getSession(res.session.id);
 
     expect(session.status).toBe("waiting");
     expect(session.behavioralEvents).toHaveLength(1);
@@ -288,11 +475,15 @@ describe("SessionsService (session-manager)", () => {
     });
   });
 
-  it("re-invites a restarted bot and returns running checkpoints", async () => {
+  it("returns running checkpoints even when a bot re-invite is transiently rejected", async () => {
     const first = await svc.openSession(open());
     await svc.openSession(open());
     await svc.openSession(open());
+    await waitForStatus(svc, first.session.id, "running");
     (matrix.invite as ReturnType<typeof vi.fn>).mockClear();
+    (matrix.invite as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("already joined or homeserver busy"),
+    );
 
     const recovered = await svc.recoverRunningSessions("@new_bot:localhost");
 
@@ -315,6 +506,38 @@ describe("SessionsService (session-manager)", () => {
     expect(first.status).toBe("completed");
     const second = await svc.completeSession(res.session.id);
     expect(second.completedAt).toBe(first.completedAt);
+  });
+
+  it("completes an individual only after their exit survey is stored", async () => {
+    const res = await svc.openSession(open());
+    await expect(
+      svc.completeParticipant(res.session.id, res.participantId),
+    ).rejects.toThrow(/exit survey/i);
+
+    await svc.submitSurvey({
+      sessionId: res.session.id,
+      participantId: res.participantId,
+      kind: "exit",
+      survey: { answers: { satisfaction: 7 }, submittedAt: "now" },
+    });
+    await store.updateStudySettings({
+      compensationUrl:
+        "https://app.prolific.com/submissions/complete?cc=TEST1234",
+    });
+
+    const first = await svc.completeParticipant(
+      res.session.id,
+      res.participantId,
+    );
+    const second = await svc.completeParticipant(
+      res.session.id,
+      res.participantId,
+    );
+    expect(second.completedAt).toBe(first.completedAt);
+    expect(first.compensationUrl).toContain("app.prolific.com");
+    expect(
+      (await svc.getSession(res.session.id)).participants[0].completedAt,
+    ).toBe(first.completedAt);
   });
 
   it("exports sessions as JSON bundle and CSV summary", async () => {
@@ -424,6 +647,7 @@ describe("SessionsService (session-manager)", () => {
     const first = await svc.openSession(req);
     await svc.openSession(open());
     await svc.openSession(open());
+    await waitForStatus(svc, first.session.id, "running");
 
     const again = await svc.openSession(req);
     expect(again.session.id).toBe(first.session.id);
@@ -487,9 +711,10 @@ describe("SessionsService (session-manager)", () => {
   });
 
   it("invites participants and the bot into the invite-only room", async () => {
+    const first = await svc.openSession(open());
     await svc.openSession(open());
     await svc.openSession(open());
-    await svc.openSession(open());
+    await waitForStatus(svc, first.session.id, "running");
 
     // 3 participants + the chat-service bot.
     expect(matrix.invite).toHaveBeenCalledTimes(4);
@@ -563,7 +788,7 @@ describe("SessionsService (session-manager)", () => {
     await svc.openSession(open());
     await svc.openSession(open());
     const full = await svc.openSession(open()); // 3/3 → running
-    expect((await svc.getSession(full.session.id)).status).toBe("running");
+    await waitForStatus(svc, full.session.id, "running");
 
     const result = await svc.startRound();
     expect(result.abortedWaitingSessions).toBe(0);

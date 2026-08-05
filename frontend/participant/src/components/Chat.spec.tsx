@@ -1,8 +1,9 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { MatrixClient } from "matrix-js-sdk";
-import { RoomEvent } from "matrix-js-sdk";
+import { RoomEvent, RoomMemberEvent } from "matrix-js-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MATRIX_EVENT_TYPES } from "@gdm/shared";
+import type { PublicSession } from "@gdm/shared";
 import Chat from "./Chat";
 
 const ROOM_ID = "!room:test";
@@ -26,17 +27,22 @@ function matrixMessage({ id, sender, body, ts }: FakeMessage) {
   };
 }
 
-function createClient(initialMessages: FakeMessage[] = []) {
+function createClient(
+  initialMessages: FakeMessage[] = [],
+  initialMemberIds: string[] = [],
+) {
   const events = initialMessages.map(matrixMessage);
+  let memberIds = initialMemberIds;
   const listeners = new Map<unknown, Set<(...args: unknown[]) => void>>();
   const room = {
     roomId: ROOM_ID,
     name: "Test room",
     getLiveTimeline: () => ({ getEvents: () => events }),
-    getJoinedMembers: () => [],
+    getJoinedMembers: () => memberIds.map((userId) => ({ userId })),
   };
   const sendEvent = vi.fn().mockResolvedValue({ event_id: "$event" });
   const sendTyping = vi.fn().mockResolvedValue({});
+  const sendTextMessage = vi.fn().mockResolvedValue({ event_id: "$message" });
   const client = {
     getUserId: () => "@participant:test",
     getRooms: () => [room],
@@ -51,7 +57,7 @@ function createClient(initialMessages: FakeMessage[] = []) {
     }),
     sendEvent,
     sendTyping,
-    sendTextMessage: vi.fn().mockResolvedValue({ event_id: "$message" }),
+    sendTextMessage,
     redactEvent: vi.fn().mockResolvedValue({ event_id: "$redaction" }),
   };
 
@@ -63,13 +69,40 @@ function createClient(initialMessages: FakeMessage[] = []) {
     }
   }
 
+  function setJoinedMembers(nextMemberIds: string[]) {
+    memberIds = nextMemberIds;
+    for (const handler of listeners.get(RoomMemberEvent.Membership) ?? []) {
+      handler();
+    }
+  }
+
   return {
     client: client as unknown as MatrixClient,
     sendEvent,
     sendTyping,
+    sendTextMessage,
     pushMessage,
+    setJoinedMembers,
   };
 }
+
+const studySession = {
+  roomId: ROOM_ID,
+  condition: {
+    name: "Test condition",
+    groupSize: 3,
+    config: { protectedEndMinutes: 0 },
+  },
+  briefing: { title: "Test task", html: "<p>Briefing</p>" },
+  rankingTask: { id: "task", title: "Rank", items: [] },
+  ranking: {
+    taskId: "task",
+    order: [],
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    updatedBy: "system",
+  },
+  durationMinutes: 5,
+} as unknown as PublicSession;
 
 describe("Chat telemetry", () => {
   beforeEach(() => {
@@ -150,6 +183,58 @@ describe("Chat telemetry", () => {
     expect(screen.getByText("9:05")).toHaveClass("bot-meta");
   });
 
+  it("shows a neutral loading state until the complete participant membership arrives", () => {
+    const { client, setJoinedMembers } = createClient([], ["@alpha:test"]);
+    render(<Chat client={client} session={studySession} />);
+
+    expect(screen.getByText("Loading group...")).toBeInTheDocument();
+    expect(screen.queryByText("Gray")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Type a message")).not.toBeInTheDocument();
+
+    act(() => {
+      setJoinedMembers(["@alpha:test", "@beta:test", "@participant:test"]);
+    });
+
+    expect(screen.queryByText("Loading group...")).not.toBeInTheDocument();
+    expect(screen.getByText("Green")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Type a message")).toBeInTheDocument();
+  });
+
+  it("keeps the structured ranking as the default workspace", () => {
+    const { client } = createClient([], [
+      "@alpha:test",
+      "@beta:test",
+      "@participant:test",
+    ]);
+    render(<Chat client={client} session={studySession} />);
+
+    expect(screen.getByText("Rank")).toBeInTheDocument();
+    expect(screen.queryByText("External workspace")).not.toBeInTheDocument();
+  });
+
+  it("shows the external-workspace placeholder only when explicitly selected", () => {
+    const { client } = createClient([], [
+      "@alpha:test",
+      "@beta:test",
+      "@participant:test",
+    ]);
+    const externalSession = {
+      ...studySession,
+      condition: {
+        ...studySession.condition,
+        config: {
+          ...studySession.condition.config,
+          workspaceMode: "external",
+        },
+      },
+    } as PublicSession;
+    render(<Chat client={client} session={externalSession} />);
+
+    expect(screen.getByText("External workspace")).toBeInTheDocument();
+    expect(screen.getByText(/no external workspace provider is configured/i)).toBeInTheDocument();
+    expect(screen.queryByText("Rank")).not.toBeInTheDocument();
+  });
+
   it("preserves a scrolled-up position and counts new messages", () => {
     const { client, pushMessage } = createClient([
       {
@@ -197,5 +282,24 @@ describe("Chat telemetry", () => {
 
     expect(fireEvent(input, paste)).toBe(false);
     expect(paste.defaultPrevented).toBe(true);
+  });
+
+  it("inserts newlines with Shift+Enter and sends with Enter", () => {
+    const { client, sendTextMessage } = createClient();
+    render(<Chat client={client} session={null} />);
+    const input = screen.getByPlaceholderText("Type a message");
+
+    fireEvent.change(input, { target: { value: "First line\nSecond line" } });
+    expect(
+      fireEvent.keyDown(input, { key: "Enter", shiftKey: true }),
+    ).toBe(true);
+    expect(sendTextMessage).not.toHaveBeenCalled();
+    expect(input).toHaveValue("First line\nSecond line");
+
+    expect(fireEvent.keyDown(input, { key: "Enter" })).toBe(false);
+    expect(sendTextMessage).toHaveBeenCalledWith(
+      ROOM_ID,
+      "First line\nSecond line",
+    );
   });
 });
