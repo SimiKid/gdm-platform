@@ -44,9 +44,11 @@ The GDM platform is a monorepo with two backend services, two frontends, a share
 The diagram shows the local dev topology (ports from
 `docker-compose.override.yml`). In production nothing is exposed directly:
 a Caddy reverse proxy on 80/443 terminates TLS and routes `/_matrix` → Synapse
-(registration blocked), `/api` → Session Manager, `/admin` → the token-protected
-admin dashboard and everything else to the participant frontend. A localhost
-SSH tunnel remains available as an admin fallback. See
+(registration blocked), `/api` → Session Manager, `/admin` → the UZH-network-
+and-token-protected admin dashboard and everything else to the participant
+frontend. Caddy applies the same source-network restriction to researcher-only
+API routes while participant API routes remain public. A localhost SSH tunnel
+remains available as an admin fallback. See
 [deployment.md](deployment.md).
 
 ## Services
@@ -100,7 +102,7 @@ React SPA served by nginx. Implements the participant journey:
 4. **Ranking Task** — individual Moon Survival ranking with a 10-minute timer
 5. **Group Intro** — explanation of the upcoming group discussion
 6. **Waiting Room** — calls `POST /api/sessions` to join, polls for group readiness
-7. **Chat** — Matrix-based group chat with WhatsApp-style UI, shared ranking panel, briefing panel, countdown timer
+7. **Chat** — Matrix-based group chat with WhatsApp-style UI, briefing panel, countdown timer, and a condition-selected shared workspace. Structured ranking is the default; a dormant external-iframe extension point shows a not-configured placeholder until a provider is supplied.
 8. **Exit Survey** — post-study questionnaire with individual re-ranking
 9. **Debriefing** — study explanation and compensation link
 
@@ -178,4 +180,5 @@ Participant opens http://localhost:3000/
 - **Matrix as the chat layer.** Provides real-time messaging, per-message metadata (sender, timestamp), bot integration via the sync API, and the ability to self-host. Participants never interact with Matrix directly; the frontend abstracts it.
 - **Private messages in a shared room.** Rather than creating per-participant DM rooms, private bot nudges are sent to the group room with a custom `de.gdm.recipient` content field. The frontend filters visibility client-side. This simplifies room management while preserving the research requirement for private nudges.
 - **Condition snapshot at session creation.** A session copies its condition config when created. Admin changes to conditions only affect future sessions, ensuring running experiments are not disrupted.
+- **Ranking-safe workspace extension point.** `condition.config.workspaceMode` defaults and normalizes to `ranking`. Researchers can prepare future sessions for an `external` iframe from the shared Settings control, but no provider, authentication, lifecycle integration, or artifact collection is currently configured. External mode therefore renders an explicit placeholder rather than silently pretending to collect task data.
 - **Two separate Postgres databases.** Synapse has its own database (chat protocol state). Research data (sessions, surveys, interventions) lives in a dedicated database with a Prisma-managed schema, keeping study data cleanly separated.

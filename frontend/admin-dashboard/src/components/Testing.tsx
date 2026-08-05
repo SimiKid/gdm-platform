@@ -31,7 +31,10 @@ export default function Testing({ rows, sessions, onSaved }: Props) {
     (row) => row.condition.active,
   ).length;
   const openTestSessions = testSessions.filter(
-    (session) => session.status === "running" || session.status === "waiting",
+    (session) =>
+      session.status === "running" ||
+      session.status === "provisioning" ||
+      session.status === "waiting",
   ).length;
 
   return (

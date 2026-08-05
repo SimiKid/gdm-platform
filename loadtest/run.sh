@@ -13,9 +13,9 @@ fi
 
 profile="${1:-${LOADTEST_PROFILE:-smoke}}"
 case "$profile" in
-  smoke|step|spike|soak) ;;
+  smoke|diagnostic|step|spike|soak) ;;
   *)
-    printf 'Unknown profile: %s\nUse: %s [smoke|step|spike|soak]\n' "$profile" "$0" >&2
+    printf 'Unknown profile: %s\nUse: %s [smoke|diagnostic|step|spike|soak]\n' "$profile" "$0" >&2
     exit 2
     ;;
 esac
@@ -29,6 +29,7 @@ export LOADTEST_K6_IMAGE="${LOADTEST_K6_IMAGE:-grafana/k6:1.7.1}"
 export LOADTEST_RUN_ID="${LOADTEST_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$profile}"
 export LOADTEST_CONDITION_ID="${LOADTEST_CONDITION_ID:-e2e-load-$LOADTEST_RUN_ID}"
 export LOADTEST_RESULT_DIR="${LOADTEST_RESULT_DIR:-$script_dir/results/$LOADTEST_RUN_ID}"
+export LOADTEST_TRAFFIC_START_FILE="$LOADTEST_RESULT_DIR/traffic-started-at.txt"
 
 base_host="$(
   node -e 'process.stdout.write(new URL(process.argv[1]).hostname)' "$LOADTEST_BASE_URL"
@@ -74,6 +75,25 @@ fi
 mkdir -p "$LOADTEST_RESULT_DIR"
 chmod 755 "$LOADTEST_RESULT_DIR"
 
+{
+  printf 'captured_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf 'load_generator_os=%s\n' "$(uname -srv)"
+  printf 'node_version=%s\n' "$(node --version)"
+  printf 'repository_commit=%s\n' "$(git -C "$script_dir/.." rev-parse HEAD 2>/dev/null || printf unknown)"
+  if [[ -n "$(git -C "$script_dir/.." status --short 2>/dev/null)" ]]; then
+    printf 'repository_worktree=dirty\n'
+  else
+    printf 'repository_worktree=clean\n'
+  fi
+  if command -v k6 >/dev/null 2>&1; then
+    printf 'k6_source=local\n'
+    printf 'k6_version=%s\n' "$(k6 version 2>&1 | head -1)"
+  else
+    printf 'k6_source=docker\n'
+    printf 'k6_image=%s\n' "$LOADTEST_K6_IMAGE"
+  fi
+} >"$LOADTEST_RESULT_DIR/load-generator-preflight.txt"
+
 dashboard_pid=""
 canary_pid=""
 condition_created=0
@@ -94,9 +114,25 @@ cleanup() {
     node "$script_dir/scripts/condition.mjs" deactivate || true
   fi
 
+  if [[ -f "$LOADTEST_RESULT_DIR/server-metrics.jsonl" ]]; then
+    node "$script_dir/scripts/report.mjs" "$LOADTEST_RESULT_DIR" || true
+    if [[ -d "$LOADTEST_RESULT_DIR/share-with-admin" ]] && command -v tar >/dev/null 2>&1; then
+      tar -czf "$LOADTEST_RESULT_DIR/gdm-diagnostic-evidence-$LOADTEST_RUN_ID.tar.gz" \
+        -C "$LOADTEST_RESULT_DIR" share-with-admin || true
+    fi
+  fi
+
   printf '\nResults: %s\n' "$LOADTEST_RESULT_DIR"
   if [[ -f "$LOADTEST_RESULT_DIR/k6-report.html" ]]; then
     printf 'HTML report: %s\n' "$LOADTEST_RESULT_DIR/k6-report.html"
+  fi
+  if [[ -f "$LOADTEST_RESULT_DIR/diagnostic-report.html" ]]; then
+    printf 'Diagnostic report: %s\n' "$LOADTEST_RESULT_DIR/diagnostic-report.html"
+    printf 'Shareable bundle:   %s\n' "$LOADTEST_RESULT_DIR/share-with-admin"
+    if [[ -f "$LOADTEST_RESULT_DIR/gdm-diagnostic-evidence-$LOADTEST_RUN_ID.tar.gz" ]]; then
+      printf 'Email archive:      %s\n' \
+        "$LOADTEST_RESULT_DIR/gdm-diagnostic-evidence-$LOADTEST_RUN_ID.tar.gz"
+    fi
   fi
   exit "$exit_code"
 }
@@ -136,12 +172,32 @@ EOF
     ssh -o BatchMode=yes "$LOADTEST_SSH_TARGET" 'for container in infra-caddy-1 infra-synapse-1; do printf "%s=" "$container"; docker exec "$container" sh -c "ulimit -n"; done'
   )"
   printf '%s\n' "$fd_limits" >"$LOADTEST_RESULT_DIR/file-descriptor-preflight.txt"
+  ssh -o BatchMode=yes "$LOADTEST_SSH_TARGET" '
+    printf "captured_at="; date -u +%Y-%m-%dT%H:%M:%SZ
+    printf "hostname="; hostname
+    printf "kernel="; uname -sr
+    printf "cpu_cores="; nproc
+    while read -r key value _; do
+      case "$key" in
+        MemTotal:) printf "memory_total_kib=%s\\n" "$value" ;;
+        SwapTotal:) printf "swap_total_kib=%s\\n" "$value" ;;
+      esac
+    done < /proc/meminfo
+    printf "cgroup="; stat -fc %T /sys/fs/cgroup
+    printf "pressure_stall_information="; test -r /proc/pressure/cpu && echo available || echo unavailable
+    printf "block_devices="; for file in /sys/block/*/stat; do device=${file%/stat}; printf "%s " "${device##*/}"; done; echo
+    printf "docker_version="; docker version --format "{{.Server.Version}}"
+    docker inspect --format "container={{.Name}}|image={{.Config.Image}}|image_id={{.Image}}" $(docker ps -q) | sort
+  ' >"$LOADTEST_RESULT_DIR/diagnostic-preflight.txt"
   minimum_fd_limit="$(
     printf '%s\n' "$fd_limits" | awk -F= 'NR == 1 || $2 < minimum { minimum=$2 } END { print minimum+0 }'
   )"
   if [[ "$minimum_fd_limit" -lt 4096 ]]; then
     if [[ "$profile" == "smoke" ]]; then
       printf 'Warning: server file-descriptor limit is %s; do not proceed to a large profile unchanged.\n' \
+        "$minimum_fd_limit"
+    elif [[ "$profile" == "diagnostic" ]]; then
+      printf 'Warning: server file-descriptor limit is %s; recording the current VM configuration at up to 249 users.\n' \
         "$minimum_fd_limit"
     elif [[ "${LOADTEST_IGNORE_LOW_FD_LIMIT:-}" != "I_ACCEPT_THE_DESCRIPTOR_CEILING" ]]; then
       cat >&2 <<EOF
@@ -227,6 +283,8 @@ for variable in "${common_env[@]}"; do
     k6_env_args+=(-e "$variable=${!variable}")
   fi
 done
+
+node -e 'process.stdout.write(new Date().toISOString())' >"$LOADTEST_TRAFFIC_START_FILE"
 
 if command -v k6 >/dev/null 2>&1; then
   K6_WEB_DASHBOARD=true \

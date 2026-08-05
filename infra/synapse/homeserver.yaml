@@ -69,23 +69,45 @@ rc_login:
     per_second: 5
     burst_count: 20
 
-# Participants register in bursts when a group forms; relax the default
-# (0.17/s, burst 3) so simultaneous joins don't hit M_LIMIT_EXCEEDED.
+# Participant accounts all arrive from the Session Manager's one Docker IP.
+# Size the bucket for the largest benchmark wave; production blocks this API
+# at Caddy, so only the internal service can use the relaxed registration rate.
 rc_registration:
+  per_second: 50
+  burst_count: 300
+
+# Every group needs a private room created by the same internal orchestrator.
+# Synapse's default (burst 10, then roughly one room/minute) cannot support a
+# study recruitment wave. A 249-person run creates up to 83 rooms.
+rc_room_creation:
   per_second: 5
-  burst_count: 30
+  burst_count: 100
 
 # The same service bot is invited into every study room. Synapse's default
 # recipient limit allows only five rapid invites and then blocks new groups
 # for several minutes. External registration is blocked in production and
-# study rooms reserve invitation power for the orchestrator.
+# study rooms reserve invitation power for the orchestrator. The issuer burst
+# covers one 249-person wave (participants + recorder bots) without retries.
 rc_invites:
   per_room:
     per_second: 10
     burst_count: 50
   per_user:
-    per_second: 10
-    burst_count: 50
+    per_second: 20
+    burst_count: 100
   per_issuer:
-    per_second: 10
-    burst_count: 50
+    per_second: 50
+    # 249 participants + primary recorder + both comparison bots = 498.
+    burst_count: 600
+
+# The primary recorder (and, in comparison mode, each named bot) joins one
+# room per group. Synapse's default per-account burst of 10 would throttle the
+# recorder after only 30 participants; 249 participants need up to 83 joins.
+rc_joins:
+  local:
+    per_second: 25
+    burst_count: 100
+  # No remote rooms are part of the study, so keep the conservative default.
+  remote:
+    per_second: 0.01
+    burst_count: 10

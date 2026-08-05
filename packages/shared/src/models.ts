@@ -25,12 +25,33 @@ export interface Survey {
   submittedAt: string; // ISO 8601
 }
 
+/** Prolific identifiers appended to the external study URL. */
+export interface ProlificIdentity {
+  /** Pseudonymous participant identifier (`PROLIFIC_PID`). */
+  participantId: string;
+  /** Prolific study identifier (`STUDY_ID`). */
+  studyId: string;
+  /** Unique submission identifier (`SESSION_ID`). */
+  sessionId: string;
+}
+
+/** First server-side contact from a Prolific submission. */
+export interface ProlificArrival extends ProlificIdentity {
+  arrivedAt: string;
+  /** Set once the submission claims a seat in a study session. */
+  participantRecordId?: string;
+}
+
 /** A member of a hiring committee taking part in a study session. */
 export interface Participant {
   id: string;
   name: string;
   /** Per-participant tracking URL token (the "individual URL" in the wireframe). */
   trackingToken: string;
+  /** Present when the participant entered through Prolific. */
+  prolific?: ProlificIdentity;
+  /** Individual completion, separate from the group session lifecycle. */
+  completedAt?: string;
   /**
    * Matrix user id once credentials are provisioned. Messages, interventions
    * and contribution splits key on this, so exports need it to attribute
@@ -44,9 +65,20 @@ export interface Participant {
 
 /** Emoji / acknowledgment reaction attached to a message. */
 export interface Reaction {
+  /** Matrix annotation event id, used to make toggles/restarts lossless. */
+  eventId?: string;
   key: string; // e.g. "👍" or "m.acknowledged"
   senderId: string;
   timestamp: string; // ISO 8601
+}
+
+/** Immutable Matrix reaction event plus an optional later redaction. */
+export interface RecordedReaction extends Reaction {
+  eventId: string;
+  messageId: string;
+  redacted: boolean;
+  redactionEventId?: string;
+  redactedAt?: string;
 }
 
 /**
@@ -100,6 +132,8 @@ export interface RankingTask {
  * `order[0]` is rank #1.
  */
 export interface Ranking {
+  /** Matrix event id, attached by the recorder for lossless deduplication. */
+  eventId?: string;
   taskId: string;
   order: string[]; // RankingItem ids, best-to-worst
   updatedAt: string; // ISO 8601
@@ -225,6 +259,7 @@ export interface BotConfig {
 
 export type SessionStatus =
   | "waiting" // in the waiting room, gathering participants
+  | "provisioning" // full group; private room/bot access is being prepared
   | "running" // chat room live
   | "completed"
   | "aborted";
@@ -265,7 +300,13 @@ export interface Session {
   classificationFailures?: ClassificationFailure[];
   /** Internal restart checkpoint metadata; not used by participant clients. */
   processedEventIds?: string[];
+  /** Reaction event ids later redacted/toggled off; retained as tombstones. */
+  redactedReactionEventIds?: string[];
+  /** Full reaction audit trail, including toggled-off annotations. */
+  reactionEvents?: RecordedReaction[];
   runtimeState?: Record<string, unknown>;
+  /** Last durable Chat Service snapshot revision (internal recovery metadata). */
+  checkpointRevision?: number;
   polls: Poll[];
   /** Copied from the condition at assignment time; drives the chat timer. */
   durationMinutes: number;

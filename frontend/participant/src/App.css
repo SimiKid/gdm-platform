@@ -952,7 +952,7 @@ body {
 .message-input {
   position: relative;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 0.5rem;
   padding: 0.6rem 1rem;
   background: #f0f0f0;
@@ -1004,13 +1004,19 @@ body {
   font-weight: 600;
 }
 
-.message-input input {
+.message-input textarea {
   flex: 1;
   padding: 0.6rem 1rem;
   border: none;
   border-radius: 20px;
+  min-height: 2.6rem;
+  max-height: 6rem;
   font-size: 0.95rem;
+  font-family: inherit;
+  line-height: 1.35;
   outline: none;
+  resize: none;
+  overflow-y: auto;
   background: #fff;
 }
 
@@ -1181,6 +1187,43 @@ body {
     background: #fafafa;
     transform: translateX(0);
   }
+}
+
+/* ── Optional external workspace (future provider) ─── */
+
+.external-workspace,
+.external-workspace-placeholder {
+  margin: 0.75rem;
+  min-height: 12rem;
+}
+
+.external-workspace {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.external-workspace iframe {
+  width: 100%;
+  flex: 1;
+  min-height: 24rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.external-workspace-placeholder {
+  padding: 1rem;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink-soft);
+}
+
+.external-workspace-placeholder h3 {
+  margin-top: 0;
+  color: var(--ink);
 }
 
 /* ── Empty state ─────────────────────────────── */

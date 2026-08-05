@@ -8,6 +8,8 @@ import { BOT_RULES } from "./rules/bot-rules.token";
 import { InternalGuard } from "./auth/internal.guard";
 import { AnthropicContributionClassifier } from "./classifier/anthropic-contribution-classifier";
 import { CONTRIBUTION_CLASSIFIER } from "./classifier/contribution-classifier.token";
+import { AnthropicNudgeMessageGenerator } from "./nudge/anthropic-nudge-message-generator";
+import { NUDGE_MESSAGE_GENERATOR } from "./nudge/nudge-message-generator.token";
 
 @Module({
   controllers: [HealthController, SessionsController],
@@ -15,9 +17,14 @@ import { CONTRIBUTION_CLASSIFIER } from "./classifier/contribution-classifier.to
     SessionsService,
     MatrixBotService,
     AnthropicContributionClassifier,
+    AnthropicNudgeMessageGenerator,
     {
       provide: CONTRIBUTION_CLASSIFIER,
       useExisting: AnthropicContributionClassifier,
+    },
+    {
+      provide: NUDGE_MESSAGE_GENERATOR,
+      useExisting: AnthropicNudgeMessageGenerator,
     },
     { provide: BOT_RULES, useClass: StudyBotRules },
     InternalGuard,

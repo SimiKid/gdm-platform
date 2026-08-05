@@ -119,6 +119,48 @@ async function makeDominantRed(
 }
 
 describe("ContributionBotRules", () => {
+  it("uses a newly generated friendly message without changing the target or percentage", async () => {
+    const generated =
+      "Thanks for the thoughtful momentum, @Red — you've contributed 66% so far. Would you like to invite another voice into the next step?";
+    const generate = vi.fn(async () => generated);
+    const { rt, bot, event } = await makeDominantRed("public");
+
+    await new ContributionBotRules(undefined, {}, { generate }).onWindowElapsed(
+      rt,
+      event.ts + 1_000,
+    );
+
+    expect(generate).toHaveBeenCalledWith({
+      targetName: "Red",
+      contributionPercent: 66,
+      otherParticipantNames: ["Blue", "Green"],
+      previousMessages: [],
+    });
+    expect(bot.sendText).toHaveBeenCalledWith("!r", generated);
+    expect(rt.interventions[0]).toMatchObject({
+      targets: [{ userId: MEMBERS[0], identityName: "Red" }],
+      message: generated,
+    });
+  });
+
+  it("keeps nudging with a fixed fallback when generation fails", async () => {
+    const generate = vi.fn(async () => {
+      throw new Error("temporary outage");
+    });
+    const { rt, bot, event } = await makeDominantRed("public");
+
+    await new ContributionBotRules(undefined, {}, { generate }).onWindowElapsed(
+      rt,
+      event.ts + 1_000,
+    );
+
+    expect(bot.sendText).toHaveBeenCalledWith(
+      "!r",
+      expect.stringContaining("@Red"),
+    );
+    expect(rt.interventions).toHaveLength(1);
+  });
+
   it("public modes nudge the top contributor at the window end with their own percentage only", async () => {
     const { rt, bot, event } = await makeDominantRed("public");
     await new ContributionBotRules().onWindowElapsed(rt, event.ts + 1_000);

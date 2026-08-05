@@ -18,7 +18,16 @@ const session = {
 } as unknown as Session;
 
 beforeEach(() => {
-  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true })));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        completedAt: "2026-07-26T10:00:00.000Z",
+        compensationUrl: "https://app.prolific.com/submissions/complete?cc=TEST",
+      }),
+    })),
+  );
 });
 afterEach(() => vi.unstubAllGlobals());
 

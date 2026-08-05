@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { MatrixBotService } from "./matrix-bot.service";
 
 type FetchMock = ReturnType<typeof vi.fn> & {
@@ -6,6 +6,16 @@ type FetchMock = ReturnType<typeof vi.fn> & {
 };
 
 describe("MatrixBotService", () => {
+  beforeEach(() => {
+    vi.stubEnv("MATRIX_RATE_LIMIT_RETRIES", "0");
+    vi.stubEnv("MATRIX_RETRY_MAX_DELAY_MS", "1");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
   it("sendText PUTs an m.room.message", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true })));
     await new MatrixBotService().sendText("!r", "hello");
@@ -24,6 +34,22 @@ describe("MatrixBotService", () => {
     const body = JSON.parse((fetch as unknown as FetchMock).mock.calls[0][1].body);
     expect(body["de.gdm.recipient"]).toBe("@u:localhost");
     vi.unstubAllGlobals();
+  });
+
+  it("retries a rate-limited send with the same idempotent transaction id", async () => {
+    vi.stubEnv("MATRIX_RATE_LIMIT_RETRIES", "1");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ retry_after_ms: 1 }), { status: 429 }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new MatrixBotService().sendText("!r", "hello once");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0]).toBe(fetchMock.mock.calls[1][0]);
   });
 
   it("registers a named comparison identity once and sends under its token", async () => {
@@ -85,6 +111,36 @@ describe("MatrixBotService", () => {
       "@b:localhost",
     ]);
     vi.unstubAllGlobals();
+  });
+
+  it("paginates room history and returns only session events in order", async () => {
+    const event = (id: string, ts: number) => ({
+      type: "m.room.message",
+      sender: "@u:localhost",
+      event_id: id,
+      origin_server_ts: ts,
+      content: { body: id },
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ chunk: [event("m3", 300), event("m2", 200)], end: "p1" }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ chunk: [event("m1", 100), event("old", 99)], end: "p2" }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const history = await new MatrixBotService().roomHistory("!r", 100);
+
+    expect(history.map((item) => item.eventId)).toEqual(["m1", "m2", "m3"]);
+    expect(String(fetchMock.mock.calls[1][0])).toContain("from=p1");
   });
 
   it("registers and delivers timeline events from /sync to handlers", async () => {

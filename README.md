@@ -35,7 +35,7 @@ See [docs/getting-started.md](docs/getting-started.md) for prerequisites, ports,
 |---|---|
 | [Getting Started](docs/getting-started.md) | Prerequisites, running locally, configuration, useful commands |
 | [Architecture](docs/architecture.md) | Services, data flow, session lifecycle, design decisions |
-| [Bot Rulebook](docs/bot-rulebook.md) | Intervention logic: 2x2 conditions + baseline, contribution scoring, thresholds, message templates |
+| [Bot Rulebook](docs/bot-rulebook.md) | Intervention logic: 2x2 conditions + baseline, contribution scoring, thresholds, and generated nudge wording |
 | [Data Export](docs/data-export.md) | All export endpoints, JSON structures, and CSV column reference for researchers |
 | [Testing](docs/testing.md) | Test strategy: unit / integration / e2e layers, how to run them, conventions |
 | [Pilot Checklist](docs/pilot-checklist.md) | Step-by-step verification for local pilot runs |

@@ -26,9 +26,9 @@ single package.
 Fast, no network, no containers. They own the pure logic:
 
 - **`bot-rules.spec.ts`** — the intervention engine (contribution scoring,
-  thresholds, protected windows, message templates, the `llmMode: "active"`
-  composite dominance score, and the `LLM_MODE` env override). This is the
-  scientific core; keep its coverage rich.
+  thresholds, protected windows, generated wording integration and fallbacks,
+  the `llmMode: "active"` composite dominance score, and the `LLM_MODE` env
+  override). This is the scientific core; keep its coverage rich.
 - **`session-runtime.spec.ts`** — the per-room state machine (messages,
   reactions, redactions, ranking history); plus classifier and Matrix-bot
   specs (`anthropic-contribution-classifier.spec.ts`,

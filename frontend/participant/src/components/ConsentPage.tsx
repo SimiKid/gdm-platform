@@ -45,6 +45,12 @@ export default function ConsentPage({ onBegin }: Props) {
         <li>A group discussion and decision task in a chat room (15 minutes)</li>
         <li>A short exit survey</li>
       </ul>
+      <p>
+        The group discussion happens live. Please keep this study tab open and
+        stay available for the complete session, because leaving may disrupt
+        the other participants. A short connection loss is not itself a reason
+        to lose compensation; reopen the study from Prolific if needed.
+      </p>
 
       <h2>Voluntary Participation &amp; Withdrawal</h2>
       <p>
@@ -58,6 +64,11 @@ export default function ConsentPage({ onBegin }: Props) {
         <li>
           All data are collected pseudonymously; your responses cannot be
           linked to your identity.
+        </li>
+        <li>
+          If you were recruited through Prolific, your pseudonymous Prolific
+          participant, study, and submission IDs are stored so your responses
+          can be matched to your submission and compensation.
         </li>
         <li>
           Chat messages written during the group phase are recorded and

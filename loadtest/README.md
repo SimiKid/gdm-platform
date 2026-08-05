@@ -33,7 +33,8 @@ Edit `loadtest/.env`:
 
 1. Set `LOADTEST_ADMIN_TOKEN` to the server's `ADMIN_API_TOKEN`.
 2. Verify `LOADTEST_SSH_TARGET=masterproject`.
-3. Leave `LOADTEST_BROWSER_CANARY=0` for the first protocol-only run.
+3. Leave `LOADTEST_BROWSER_CANARY=0` for the first protocol-only smoke run;
+   enable it for the diagnostic run if Playwright is installed.
 4. For production only, set the exact confirmation value documented in the
    example file after scheduling a maintenance window.
 
@@ -72,22 +73,36 @@ After the smoke test passes, acknowledge it in `.env`:
 LOADTEST_ALLOW_LARGE_PROFILE=I_RAN_THE_SMOKE_TEST_FIRST
 ```
 
-Then run the progressive test:
+For the infrastructure evidence requested by the system administrator, run:
+
+```bash
+./loadtest/run.sh diagnostic
+```
+
+This profile ramps to and holds 30, 99 and 249 participants, then stops. It
+continues collecting after ordinary SLO failures so the report contains the
+resource state at the point of degradation. A separate 25% protocol-failure
+emergency threshold still aborts a broad platform collapse.
+
+Use `step` only when intentionally testing beyond 249 participants:
 
 ```bash
 ./loadtest/run.sh step
 ```
 
-The larger profiles also refuse to start if Caddy or Synapse still has fewer
+The 498/798-user profiles refuse to start if Caddy or Synapse still has fewer
 than 4,096 file descriptors. Raising the deployment to 65,535 is recommended;
 the refusal can be overridden only with the explicit value printed by the
-runner when intentionally testing the known ceiling.
+runner when intentionally testing the known ceiling. The 249-user diagnostic
+profile records the existing limit in its evidence bundle and emits a warning,
+but deliberately preserves the current VM configuration for the baseline.
 
 Available profiles:
 
 | Profile | Purpose |
 |---|---|
 | `smoke` | 30 users for five minutes |
+| `diagnostic` | 30 → 99 → 249, with stable evidence plateaus and no ordinary SLO abort |
 | `step` | 30 → 99 → 249 → 498 → 798 |
 | `spike` | 30 → 798 in one minute; run only after `step` |
 | `soak` | 498 users for one hour |
@@ -97,13 +112,24 @@ participants remain indefinitely in a partial group.
 
 ## Dashboards and results
 
-The system dashboard samples the deployment over SSH every five seconds:
+The system dashboard samples the deployment over SSH at the configured
+interval (ten seconds is recommended for diagnostic runs):
 
-- host load, memory, swap, `/var` disk usage, and established TCP connections;
-- CPU, memory, network, block I/O, and PIDs for every container;
+- host and per-core CPU (user/system/busy/idle/I/O-wait/steal), Linux load,
+  memory, swap, Pressure Stall Information, network rates and TCP connections;
+- disk throughput, IOPS, utilization, queue size, read/write await time and
+  I/O pressure;
+- CPU, RSS, read rate and write rate for the highest-resource processes in
+  every container;
+- CPU, memory, network rates, block-I/O rates and PIDs for every container;
 - file-descriptor usage and limits for Caddy, Synapse, Session Manager, and
   Chat Service;
-- active/total PostgreSQL connections.
+- PostgreSQL connections, transactions, cache hit ratio, temporary writes,
+  long-running activity and wait events.
+
+Counter-based rates are calculated between samples. This avoids treating
+cumulative Docker block-I/O totals as current pressure and does not require
+`mpstat`, `pidstat` or `iostat` to be installed on the VM.
 
 k6's dashboard shows virtual users, request rate, checks, custom latency
 trends, HTTP failures, and thresholds. It exports a self-contained
@@ -119,6 +145,26 @@ Each run directory contains:
 - `system-dashboard.log`
 - optional `browser-canary-*.log`
 - `file-descriptor-preflight.txt` (on SSH-enabled runs)
+
+At the end of every monitored run, `scripts/report.mjs` also generates:
+
+- `diagnostic-report.html` — the primary report to send or print to PDF;
+- `diagnostic-report.md` — a text-friendly equivalent;
+- `diagnostic-summary.json` — all derived stage summaries;
+- stage, CPU-core, container, process, disk and database CSV files;
+- `share-with-admin/` — a self-contained evidence bundle containing the
+  reports, CSVs, raw k6/system metrics, preflight configuration, canary logs
+  and SHA-256 checksums.
+- `gdm-diagnostic-evidence-<run-id>.tar.gz` — the same evidence bundle as one
+  attachment suitable for sending to the system administrator.
+
+The report separates stable 30/99/249 holds, excludes the first 20 seconds of
+each hold, lists the highest-resource services/processes, and explains exactly
+how every metric was obtained. Open it with:
+
+```bash
+open loadtest/results/<run-id>/diagnostic-report.html
+```
 
 The most important custom metrics are:
 
@@ -182,6 +228,10 @@ Stop it with `Ctrl-C`.
 - `LOADTEST_SESSION_MINUTES` controls when the server-side Chat Service
   finalizes rooms. The default is deliberately longer than the progressive
   profile so rooms do not expire midway through the test.
+- `LOADTEST_ENROLL_BACKOFF_BASE_SECONDS` and
+  `LOADTEST_ENROLL_BACKOFF_MAX_SECONDS` bound exponential per-participant retry
+  jitter after a failed enrollment. Failures still remain visible in k6; the
+  backoff only prevents them from turning into a synchronized retry storm.
 
 An interrupted load test may leave Chat Service runtimes alive until their
 configured duration expires. This is another reason to use a staging clone for

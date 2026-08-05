@@ -13,6 +13,7 @@ import type {
 
 const PROMPT_VERSION = "meaningfulness-v1";
 const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
+const REQUEST_TIMEOUT_MS = 10_000;
 /** Preceding messages included for reference resolution (study protocol). */
 const CONTEXT_MESSAGES = 3;
 
@@ -74,6 +75,9 @@ export class AnthropicContributionClassifier implements ContributionClassifier {
           "x-api-key": apiKey,
           "anthropic-version": "2023-06-01",
         },
+        // A stuck external classifier must never prevent the server-side
+        // session timer from checkpointing/finalizing the research record.
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         body: JSON.stringify({
           model,
           max_tokens: 500,

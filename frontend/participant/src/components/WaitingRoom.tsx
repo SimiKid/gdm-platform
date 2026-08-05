@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { createClient, ClientEvent } from "matrix-js-sdk";
 import type { MatrixClient } from "matrix-js-sdk";
-import type { PublicSession, Survey } from "@gdm/shared";
+import type { ProlificIdentity, PublicSession, Survey } from "@gdm/shared";
 import { httpSessionManager } from "../study/sessionClient";
 import { saveProgress } from "../study/progress";
 import StudyShell from "./StudyShell";
 
 interface Props {
   trackingToken: string;
+  prolific?: ProlificIdentity;
   conditionId?: string;
   entrySurvey: Survey | null;
   /** Called with a synced Matrix client, the session, and our participant id. */
@@ -31,6 +32,7 @@ interface Props {
  */
 export default function WaitingRoom({
   trackingToken,
+  prolific,
   conditionId,
   entrySurvey,
   onReady,
@@ -61,6 +63,7 @@ export default function WaitingRoom({
         const res = await httpSessionManager.openSession({
           trackingToken,
           participantName: "",
+          prolific,
           conditionId,
         });
         if (!alive.current) return;
@@ -154,7 +157,7 @@ export default function WaitingRoom({
       alive.current = false;
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [attempt, trackingToken, conditionId, entrySurvey]);
+  }, [attempt, trackingToken, prolific, conditionId, entrySurvey]);
 
   if (error) {
     return (

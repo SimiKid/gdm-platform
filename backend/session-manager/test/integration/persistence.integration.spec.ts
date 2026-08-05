@@ -183,10 +183,255 @@ describe("persistence & exports (integration)", () => {
       })
       .expect(200);
 
-    expect(checkpoint.body.contributionClassifications).toHaveLength(1);
-    expect(checkpoint.body.contributionClassifications[0].prompt).toHaveLength(
+    expect(checkpoint.body).toEqual({ ok: true });
+    const stored = (
+      await request(t.http).get(`/api/admin/sessions/${sessionId}`).expect(200)
+    ).body;
+    expect(stored.contributionClassifications).toHaveLength(1);
+    expect(stored.contributionClassifications[0].prompt).toHaveLength(
       largePrompt.length,
     );
+  });
+
+  it("merges partial/retried checkpoints without losing newer chat, survey, or completion data", async () => {
+    const opened = await openSession(t, "Checkpoint-safe", "baseline");
+    const sessionId = opened.session.id;
+    const participantId = opened.participantId;
+    const senderId = opened.matrix.userId;
+    const taskId = opened.session.rankingTask.id;
+    const baseOrder = opened.session.ranking.order;
+    const ranking1: Ranking = {
+      taskId,
+      order: baseOrder,
+      updatedAt: "2030-08-05T09:00:00.000Z",
+      updatedBy: participantId,
+    };
+    const ranking2: Ranking = {
+      taskId,
+      order: [...baseOrder].reverse(),
+      // Client clocks can move backwards; checkpoint revision/event order is
+      // authoritative for the current shared ranking.
+      updatedAt: "2030-08-05T08:59:00.000Z",
+      updatedBy: participantId,
+    };
+    const firstCheckpoint = {
+      revision: 1,
+      messages: [
+        {
+          id: "$safe-1:test",
+          timestamp: "2030-08-05T09:00:00.000Z",
+          senderId,
+          text: "first durable message",
+          reactions: [
+            {
+              key: "👍",
+              senderId: "@peer:test",
+              timestamp: "2030-08-05T09:00:01.000Z",
+            },
+          ],
+        },
+      ],
+      rankingHistory: [ranking1],
+      behavioralEvents: [
+        {
+          id: "$behavior-1:test",
+          type: "typing-stop",
+          participantId: senderId,
+          timestamp: "2030-08-05T09:00:02.000Z",
+          durationMs: 500,
+        },
+      ],
+      processedEventIds: ["$safe-1:test"],
+      ruleState: { phase: 1 },
+    };
+    const secondCheckpoint = {
+      revision: 2,
+      // Deliberately partial: this proves an incomplete/later request cannot
+      // erase rows committed by an earlier full snapshot.
+      messages: [
+        {
+          id: "$safe-2:test",
+          timestamp: "2030-08-05T09:01:00.000Z",
+          senderId,
+          text: "second durable message",
+          reactions: [],
+        },
+      ],
+      rankingHistory: [ranking2],
+      behavioralEvents: [
+        {
+          id: "$behavior-2:test",
+          type: "cursor-activity",
+          participantId: senderId,
+          timestamp: "2030-08-05T09:01:02.000Z",
+        },
+      ],
+      processedEventIds: ["$safe-2:test"],
+      ruleState: { phase: 2 },
+    };
+
+    await request(t.http)
+      .put(`/api/sessions/${sessionId}/checkpoint`)
+      .send(firstCheckpoint)
+      .expect(200);
+    await Promise.all([
+      request(t.http)
+        .put(`/api/sessions/${sessionId}/checkpoint`)
+        .send(secondCheckpoint)
+        .expect(200),
+      request(t.http)
+        .post("/api/surveys")
+        .send({
+          sessionId,
+          participantId,
+          kind: "exit",
+          survey: {
+            answers: { preserved: true },
+            submittedAt: "2030-08-05T09:02:00.000Z",
+          },
+        })
+        .expect(201),
+    ]);
+    const completion = (
+      await request(t.http)
+        .post(`/api/sessions/${sessionId}/participants/${participantId}/complete`)
+        .expect(201)
+    ).body;
+
+    // A late old request and an exact retry are both harmless.
+    await request(t.http)
+      .put(`/api/sessions/${sessionId}/checkpoint`)
+      .send(firstCheckpoint)
+      .expect(200);
+    await request(t.http)
+      .put(`/api/sessions/${sessionId}/checkpoint`)
+      .send(secondCheckpoint)
+      .expect(200);
+
+    await t.close();
+    t = await createTestApp();
+    const stored = (
+      await request(t.http).get(`/api/admin/sessions/${sessionId}`).expect(200)
+    ).body;
+    expect(stored.chat.messages.map((message: Message) => message.id)).toEqual([
+      "$safe-1:test",
+      "$safe-2:test",
+    ]);
+    expect(stored.chat.messages[0].reactions).toHaveLength(1);
+    expect(stored.rankingHistory).toEqual([ranking1, ranking2]);
+    expect(stored.ranking).toEqual(ranking2);
+    expect(stored.behavioralEvents.map((event: { id: string }) => event.id)).toEqual([
+      "$behavior-1:test",
+      "$behavior-2:test",
+    ]);
+    expect(stored.processedEventIds).toEqual([
+      "$safe-1:test",
+      "$safe-2:test",
+    ]);
+    expect(stored.runtimeState).toMatchObject({ phase: 2 });
+    expect(stored.checkpointRevision).toBe(2);
+    expect(stored.participants[0].exitSurvey.answers).toEqual({ preserved: true });
+    expect(stored.participants[0].completedAt).toBe(completion.completedAt);
+  });
+
+  it("keeps reaction redactions monotonic without deleting the audit event", async () => {
+    const opened = await openSession(t, "Reaction-safe", "baseline");
+    const sessionId = opened.session.id;
+    const message = {
+      id: "$reaction-message:test",
+      timestamp: "2030-08-05T10:00:00.000Z",
+      senderId: opened.matrix.userId,
+      text: "react to this",
+      reactions: [
+        {
+          eventId: "$reaction:test",
+          key: "👍",
+          senderId: "@peer:test",
+          timestamp: "2030-08-05T10:00:01.000Z",
+        },
+      ],
+    };
+    const activeReaction = {
+      eventId: "$reaction:test",
+      messageId: message.id,
+      key: "👍",
+      senderId: "@peer:test",
+      timestamp: "2030-08-05T10:00:01.000Z",
+      redacted: false,
+    };
+    const checkpoint1 = {
+      revision: 1,
+      messages: [message],
+      rankingHistory: [],
+      processedEventIds: [message.id, activeReaction.eventId],
+      reactionEvents: [activeReaction],
+      ruleState: {},
+    };
+    const legacyCheckpoint = {
+      ...checkpoint1,
+      revision: 0,
+      messages: [
+        {
+          ...message,
+          reactions: message.reactions.map(({ eventId: _eventId, ...reaction }) =>
+            reaction
+          ),
+        },
+      ],
+      reactionEvents: undefined,
+    };
+    const checkpoint2 = {
+      ...checkpoint1,
+      revision: 2,
+      messages: [{ ...message, reactions: [] }],
+      processedEventIds: [
+        message.id,
+        activeReaction.eventId,
+        "$redaction:test",
+      ],
+      redactedReactionEventIds: [activeReaction.eventId],
+      reactionEvents: [
+        {
+          ...activeReaction,
+          redacted: true,
+          redactionEventId: "$redaction:test",
+          redactedAt: "2030-08-05T10:00:02.000Z",
+        },
+      ],
+    };
+
+    await request(t.http)
+      .put(`/api/sessions/${sessionId}/checkpoint`)
+      .send(legacyCheckpoint)
+      .expect(200);
+    await request(t.http)
+      .put(`/api/sessions/${sessionId}/checkpoint`)
+      .send(checkpoint1)
+      .expect(200);
+    await request(t.http)
+      .put(`/api/sessions/${sessionId}/checkpoint`)
+      .send(checkpoint2)
+      .expect(200);
+    // A delayed older full snapshot must not make the emoji active again.
+    await request(t.http)
+      .put(`/api/sessions/${sessionId}/checkpoint`)
+      .send(checkpoint1)
+      .expect(200);
+
+    await t.close();
+    t = await createTestApp();
+    const stored = (
+      await request(t.http).get(`/api/admin/sessions/${sessionId}`).expect(200)
+    ).body;
+    expect(stored.chat.messages[0].reactions).toEqual([]);
+    expect(stored.redactedReactionEventIds).toEqual([activeReaction.eventId]);
+    expect(stored.reactionEvents).toEqual([
+      expect.objectContaining({
+        eventId: activeReaction.eventId,
+        redacted: true,
+        redactionEventId: "$redaction:test",
+      }),
+    ]);
   });
 
   it("stores entry and exit surveys and overwrites on resubmission", async () => {
@@ -233,6 +478,66 @@ describe("persistence & exports (integration)", () => {
     expect(exit.answers).toEqual({ satisfaction: 5 });
     expect(entry.participantId).toBe(participantId);
     expect(entry.trackingToken).toBe("tt-Solo");
+  });
+
+  it("persists Prolific arrival, participant identity, and individual completion", async () => {
+    const prolific = {
+      participantId: "aaaaaaaaaaaaaaaaaaaaaaaa",
+      studyId: "bbbbbbbbbbbbbbbbbbbbbbbb",
+      sessionId: "cccccccccccccccccccccccc",
+    };
+    await request(t.http)
+      .post("/api/prolific/arrivals")
+      .send({ prolific })
+      .expect(201);
+
+    const opened = (
+      await request(t.http)
+        .post("/api/sessions")
+        .send({
+          trackingToken: `prolific:${prolific.studyId}:${prolific.sessionId}`,
+          participantName: "",
+          conditionId: "baseline",
+          prolific,
+        })
+        .expect(201)
+    ).body;
+    await request(t.http)
+      .post("/api/surveys")
+      .send({
+        sessionId: opened.session.id,
+        participantId: opened.participantId,
+        kind: "exit",
+        survey: {
+          answers: { satisfaction: 7 },
+          submittedAt: "2026-07-26T10:00:00.000Z",
+        },
+      })
+      .expect(201);
+    const completion = (
+      await request(t.http)
+        .post(
+          `/api/sessions/${opened.session.id}/participants/${opened.participantId}/complete`,
+        )
+        .expect(201)
+    ).body;
+    expect(completion.completedAt).toBeDefined();
+
+    await t.close();
+    t = await createTestApp();
+
+    const arrivals = (
+      await request(t.http).get("/api/export/prolific-arrivals").expect(200)
+    ).body;
+    expect(arrivals[0]).toMatchObject({
+      ...prolific,
+      participantRecordId: opened.participantId,
+    });
+    const detailed = (
+      await request(t.http).get("/api/export/sessions").expect(200)
+    ).body.sessions[0].participants[0];
+    expect(detailed.prolific).toEqual(prolific);
+    expect(detailed.completedAt).toBe(completion.completedAt);
   });
 
   it("persists study settings across restarts", async () => {
