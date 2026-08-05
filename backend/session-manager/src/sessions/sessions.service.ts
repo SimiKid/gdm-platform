@@ -1025,6 +1025,8 @@ export class SessionsService {
     if (bot.userId) {
       try {
         await this.matrix.invite(roomId, bot.userId);
+        // Grant redaction rights so the bot can moderate abusive messages.
+        await this.matrix.setUserPowerLevel(roomId, bot.userId, 50);
       } catch (error) {
         // On a retry the primary bot may already be invited or joined. The
         // idempotent Chat Service start below is the authoritative check.

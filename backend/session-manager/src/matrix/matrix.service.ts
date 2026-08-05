@@ -184,6 +184,41 @@ export class MatrixService {
     }
   }
 
+  /** Set a user's power level in a room (e.g. to grant redaction rights). */
+  async setUserPowerLevel(
+    roomId: string,
+    userId: string,
+    level: number,
+  ): Promise<void> {
+    const orch = await this.getOrchestrator();
+    // Fetch current power levels, patch the user, and PUT back.
+    const getRes = await fetch(
+      `${this.internalUrl}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.power_levels/`,
+      { headers: { Authorization: `Bearer ${orch.accessToken}` } },
+    );
+    if (!getRes.ok) {
+      throw new Error(`get power_levels failed (${getRes.status})`);
+    }
+    const powerLevels = (await getRes.json()) as Record<string, unknown>;
+    const users = (powerLevels.users ?? {}) as Record<string, number>;
+    users[userId] = level;
+    powerLevels.users = users;
+    const putRes = await fetch(
+      `${this.internalUrl}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.power_levels/`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${orch.accessToken}`,
+        },
+        body: JSON.stringify(powerLevels),
+      },
+    );
+    if (!putRes.ok) {
+      throw new Error(`set power_levels failed (${putRes.status})`);
+    }
+  }
+
   /** Join a user (by their own token) into a room. */
   async joinRoom(accessToken: string, roomId: string): Promise<void> {
     const res = await this.fetchWithRateLimitRetry("join", () =>

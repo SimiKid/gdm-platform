@@ -24,6 +24,7 @@ import {
 import { SessionRuntime } from "./session-runtime";
 import { BOT_RULES } from "../rules/bot-rules.token";
 import type { BotRules } from "../rules/bot-rules";
+import { ModerationClassifier } from "../classifier/moderation-classifier";
 
 /**
  * Owns the live sessions the Chat Service is running. Started by the Session
@@ -87,6 +88,7 @@ export class SessionsService
   constructor(
     private readonly bot: MatrixBotService,
     @Inject(BOT_RULES) private readonly rules: BotRules,
+    private readonly moderation: ModerationClassifier,
   ) {
     this.bot.onTimelineEvent((event) => this.handleEvent(event));
   }
@@ -409,6 +411,33 @@ export class SessionsService
           });
         }
         break;
+      }
+    }
+
+    // Moderation: check participant messages for abusive content. Runs
+    // concurrently — if flagged the message is redacted and a private
+    // warning is sent. Fail-open: API errors never block messages.
+    if (event.type === "m.room.message") {
+      const body =
+        typeof event.content.body === "string" ? event.content.body : "";
+      if (body) {
+        this.moderation
+          .check(body)
+          .then(async (result) => {
+            if (!result.flagged) return;
+            this.log.warn(
+              `moderation flagged message ${event.eventId} from ${event.sender}: ${result.reason}`,
+            );
+            try {
+              await this.bot.redact(event.roomId, event.eventId, "moderation");
+              await this.bot.sendText(event.roomId, "Your message was removed because it violates the study's conduct policy. Please keep the discussion respectful.", {
+                [GDM_RECIPIENT_KEY]: event.sender,
+              });
+            } catch (err) {
+              this.log.error(`moderation redact/warn failed: ${String(err)}`);
+            }
+          })
+          .catch((err) => this.log.error(`moderation failed: ${String(err)}`));
       }
     }
 
