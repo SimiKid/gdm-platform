@@ -27,6 +27,7 @@ import type {
   Reaction,
   RecordedReaction,
   Session,
+  SessionSummary,
   StudyRound,
   StudySettings,
   Survey,
@@ -254,7 +255,29 @@ export class StoreService implements OnModuleInit {
       ? (await this.dbRounds()).map(roundFromRow)
       : [...this.memoryRounds];
     if (rounds.length === 0) rounds.push(await this.currentRound());
-    const sessions = (await this.allSessions()).filter(
+    if (this.dbEnabled) {
+      const counts = await this.db.sessionRecord.groupBy({
+        by: ["roundId", "status"],
+        where: { NOT: { conditionId: { startsWith: "e2e-" } } },
+        _count: { _all: true },
+      });
+      return rounds
+        .sort((a, b) => a.id - b.id)
+        .map((round) => ({
+          number: round.id,
+          label: round.label,
+          startedAt: round.startedAt,
+          endedAt: round.endedAt,
+          sessionCount: counts
+            .filter((row) => row.roundId === round.id && row.status !== "aborted")
+            .reduce((total, row) => total + row._count._all, 0),
+          completedCount:
+            counts.find(
+              (row) => row.roundId === round.id && row.status === "completed",
+            )?._count._all ?? 0,
+        }));
+    }
+    const sessions = this.allMemorySessions().filter(
       (session) => !session.condition.id.startsWith("e2e-"),
     );
     return rounds
@@ -370,6 +393,61 @@ export class StoreService implements OnModuleInit {
       orderBy: { createdAt: "asc" },
     });
     return rows.map(sessionFromRow);
+  }
+
+  /**
+   * Lightweight admin overview. Keep this separate from allSessions(): the
+   * dashboard needs counts and timestamps, not every historical chat message,
+   * reaction, ranking, intervention and model evaluation.
+   */
+  async listSessionSummaries(): Promise<SessionSummary[]> {
+    if (!this.dbEnabled) {
+      return this.allMemorySessions()
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .map(sessionSummary);
+    }
+    await this.ensureSeeded();
+    const rows = await this.db.sessionRecord.findMany({
+      select: {
+        id: true,
+        status: true,
+        roundId: true,
+        conditionId: true,
+        conditionSnapshot: true,
+        createdAt: true,
+        startedAt: true,
+        completedAt: true,
+        roomId: true,
+        _count: {
+          select: {
+            participants: true,
+            messages: true,
+            interventions: true,
+            rankingHistory: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    return rows.map((row) => {
+      const condition = fromJson<Condition>(row.conditionSnapshot);
+      return {
+        id: row.id,
+        status: row.status as SessionSummary["status"],
+        roundId: row.roundId,
+        conditionId: condition.id,
+        conditionName: condition.name,
+        participantCount: row._count.participants,
+        groupSize: condition.groupSize,
+        messageCount: row._count.messages,
+        interventionCount: row._count.interventions,
+        rankingEditCount: row._count.rankingHistory,
+        createdAt: row.createdAt.toISOString(),
+        startedAt: row.startedAt?.toISOString(),
+        completedAt: row.completedAt?.toISOString(),
+        roomId: row.roomId ?? undefined,
+      };
+    });
   }
 
   /**
@@ -1808,6 +1886,25 @@ function sessionFromRow(row: SessionRow): Session {
     createdAt: row.createdAt.toISOString(),
     startedAt: row.startedAt?.toISOString(),
     completedAt: row.completedAt?.toISOString(),
+  };
+}
+
+function sessionSummary(session: Session): SessionSummary {
+  return {
+    id: session.id,
+    status: session.status,
+    roundId: session.roundId,
+    conditionId: session.condition.id,
+    conditionName: session.condition.name,
+    participantCount: session.participants.length,
+    groupSize: session.condition.groupSize,
+    messageCount: session.chat.messages.length,
+    interventionCount: session.interventions.length,
+    rankingEditCount: session.rankingHistory?.length ?? 0,
+    createdAt: session.createdAt,
+    startedAt: session.startedAt,
+    completedAt: session.completedAt,
+    roomId: session.roomId,
   };
 }
 

@@ -404,10 +404,7 @@ export class SessionsService {
   }
 
   async listSessions(): Promise<SessionSummary[]> {
-    return (await this.store
-      .allSessions())
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .map(toSummary);
+    return this.store.listSessionSummaries();
   }
 
   async listInterventions(): Promise<InterventionSummary[]> {
@@ -1247,24 +1244,5 @@ function toPublicSession(session: Session): PublicSession {
     // invitation to enter a half-configured room.
     roomId: session.status === "provisioning" ? undefined : session.roomId,
     participants: session.participants.map((p) => ({ id: p.id, name: p.name })),
-  };
-}
-
-function toSummary(session: Session): SessionSummary {
-  return {
-    id: session.id,
-    status: session.status,
-    roundId: session.roundId,
-    conditionId: session.condition.id,
-    conditionName: session.condition.name,
-    participantCount: session.participants.length,
-    groupSize: session.condition.groupSize,
-    messageCount: session.chat.messages.length,
-    interventionCount: session.interventions.length,
-    rankingEditCount: session.rankingHistory?.length ?? 0,
-    createdAt: session.createdAt,
-    startedAt: session.startedAt,
-    completedAt: session.completedAt,
-    roomId: session.roomId,
   };
 }
