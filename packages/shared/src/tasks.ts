@@ -21,24 +21,19 @@ export const MOON_SURVIVAL_BRIEFING: Briefing = {
 export const MOON_SURVIVAL: RankingTask = {
   id: "moon-survival",
   title:
-    "Rank the 15 items by importance for reaching the rendezvous point: " +
-    "1 = most important, 15 = least important.",
+    "Rank the 10 items by importance for reaching the rendezvous point: " +
+    "1 = most important, 10 = least important.",
   items: [
     { id: "matches", label: "Box of matches" },
     { id: "food", label: "Food concentrate" },
-    { id: "rope", label: "50 ft nylon rope" },
     { id: "parachute", label: "Parachute silk" },
     { id: "heater", label: "Portable heating unit" },
     { id: "pistols", label: "Two .45 caliber pistols" },
-    { id: "milk", label: "One case dehydrated milk" },
     { id: "oxygen", label: "Two 100-lb tanks of oxygen" },
     { id: "map", label: "Stellar map" },
     { id: "raft", label: "Life raft" },
     { id: "compass", label: "Magnetic compass" },
-    { id: "water", label: "5 gallons of water" },
-    { id: "flares", label: "Signal flares" },
     { id: "firstaid", label: "First aid kit with injection needles" },
-    { id: "radio", label: "Solar-powered FM receiver-transmitter" },
   ],
 };
 
@@ -50,18 +45,13 @@ export const MOON_SURVIVAL: RankingTask = {
  */
 export const MOON_SURVIVAL_EXPERT_RANKING: Record<string, number> = {
   oxygen: 1,
-  water: 2,
-  map: 3,
-  food: 4,
-  radio: 5,
-  rope: 6,
-  firstaid: 7,
-  parachute: 8,
-  raft: 9,
-  flares: 10,
-  pistols: 11,
-  milk: 12,
-  heater: 13,
-  compass: 14,
-  matches: 15,
+  map: 2,
+  food: 3,
+  firstaid: 4,
+  parachute: 5,
+  raft: 6,
+  pistols: 7,
+  heater: 8,
+  compass: 9,
+  matches: 10,
 };
