@@ -546,7 +546,7 @@ export default function Chat({ client, session, onTimeUp }: Props) {
           {groupReady && (
             <span className="chat-user">
               <span className="user-dot" style={{ background: me.color }} />
-              {me.name}
+              You are writing as {me.name}
             </span>
           )}
         </div>
