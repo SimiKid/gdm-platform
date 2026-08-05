@@ -131,6 +131,22 @@ export class MatrixBotService implements OnModuleInit {
     await this.sendWith(this.accessToken, roomId, body, extraContent);
   }
 
+  /** Redact (delete) a message from a room. Requires sufficient power level. */
+  async redact(roomId: string, eventId: string, reason?: string): Promise<void> {
+    const txn = `r${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
+    const res = await fetch(
+      `${this.internalUrl}/_matrix/client/v3/rooms/${encodeURIComponent(
+        roomId,
+      )}/redact/${encodeURIComponent(eventId)}/${txn}`,
+      {
+        method: "PUT",
+        headers: this.authHeaders(),
+        body: JSON.stringify(reason ? { reason } : {}),
+      },
+    );
+    if (!res.ok) throw new Error(`bot redact failed (${res.status})`);
+  }
+
   async getJoinedMemberIds(roomId: string): Promise<string[]> {
     const res = await this.fetchWithRateLimitRetry("joined_members", () =>
       fetch(

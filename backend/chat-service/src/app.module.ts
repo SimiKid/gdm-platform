@@ -10,6 +10,7 @@ import { AnthropicContributionClassifier } from "./classifier/anthropic-contribu
 import { CONTRIBUTION_CLASSIFIER } from "./classifier/contribution-classifier.token";
 import { AnthropicNudgeMessageGenerator } from "./nudge/anthropic-nudge-message-generator";
 import { NUDGE_MESSAGE_GENERATOR } from "./nudge/nudge-message-generator.token";
+import { ModerationClassifier } from "./classifier/moderation-classifier";
 
 @Module({
   controllers: [HealthController, SessionsController],
@@ -18,6 +19,7 @@ import { NUDGE_MESSAGE_GENERATOR } from "./nudge/nudge-message-generator.token";
     MatrixBotService,
     AnthropicContributionClassifier,
     AnthropicNudgeMessageGenerator,
+    ModerationClassifier,
     {
       provide: CONTRIBUTION_CLASSIFIER,
       useExisting: AnthropicContributionClassifier,
