@@ -64,7 +64,7 @@ disable_existing_loggers: false
 
 export default async function setup(project: TestProject) {
   const image =
-    process.env.SYNAPSE_TEST_IMAGE ?? "matrixdotorg/synapse:1.157.2";
+    process.env.SYNAPSE_TEST_IMAGE ?? "matrixdotorg/synapse:v1.157.2";
   const container = await new GenericContainer(image)
     .withCopyContentToContainer([
       { content: HOMESERVER_YAML, target: "/data/homeserver.yaml" },
