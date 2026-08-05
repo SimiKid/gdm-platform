@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ConditionProgress,
   RoundsResponse,
@@ -25,8 +25,11 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   // The backend rejected our admin token (or we don't have one yet).
   const [needsToken, setNeedsToken] = useState(false);
+  const loadInFlight = useRef(false);
 
   const load = useCallback(async () => {
+    if (loadInFlight.current) return;
+    loadInFlight.current = true;
     try {
       const [progressRes, sessionsRes, roundsRes] = await Promise.all([
         apiFetch("/conditions/progress"),
@@ -57,6 +60,8 @@ export default function App() {
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load dashboard");
+    } finally {
+      loadInFlight.current = false;
     }
   }, []);
 
