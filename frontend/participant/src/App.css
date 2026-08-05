@@ -878,6 +878,26 @@ body {
 
 /* ── Bot / nudge messages ────────────────────── */
 
+.entry-message {
+  align-self: center;
+  max-width: 80%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 10px;
+  background: #e9ecef;
+  border: 1px solid #ced4da;
+  font-size: 0.85rem;
+  color: #333;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.entry-hint {
+  display: inline-block;
+  margin-top: 0.25rem;
+  color: #667781;
+  font-size: 0.8rem;
+}
+
 .bot-message {
   align-self: center;
   max-width: 80%;

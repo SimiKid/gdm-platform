@@ -558,6 +558,18 @@ export default function Chat({ client, session, onTimeUp }: Props) {
                 ref={messagesViewportRef}
                 onScroll={trackMessageScroll}
               >
+                {session && (
+                  <div className="entry-message">
+                    Welcome to the group discussion! You are in a session with{" "}
+                    {session.participants.length - 1} other{" "}
+                    {session.participants.length - 1 === 1 ? "person" : "people"}.
+                    Discuss the task and adjust the shared ranking on the right.
+                    <br />
+                    <span className="entry-hint">
+                      Tip: Use <strong>@</strong> to address people directly.
+                    </span>
+                  </div>
+                )}
                 {messages.map((msg) => {
                   if (msg.fromBot) {
                     return (
