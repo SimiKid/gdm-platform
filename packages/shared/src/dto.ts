@@ -25,6 +25,7 @@ import type {
   ProlificArrival,
   ProlificIdentity,
   Ranking,
+  RecordedReaction,
   Session,
   SessionStatus,
   StudySettings,
@@ -69,7 +70,10 @@ export type PublicSession = Omit<
   | "windowEvaluations"
   | "classificationFailures"
   | "processedEventIds"
+  | "redactedReactionEventIds"
+  | "reactionEvents"
   | "runtimeState"
+  | "checkpointRevision"
 > & {
   participants: PublicParticipant[];
 };
@@ -279,6 +283,8 @@ export interface StartSessionNotification {
 
 /** Durable snapshot used while a live session is still running. */
 export interface RuntimeCheckpoint {
+  /** Monotonic per-runtime revision used to reject late/stale snapshots. */
+  revision?: number;
   messages: Message[];
   rankingHistory: Ranking[];
   interventions: InterventionLog[];
@@ -289,6 +295,10 @@ export interface RuntimeCheckpoint {
   /** Optional: checkpoints written before this field existed omit it. */
   classificationFailures?: ClassificationFailure[];
   processedEventIds: string[];
+  /** Monotonic tombstones; optional for checkpoints written before this field. */
+  redactedReactionEventIds?: string[];
+  /** Full annotation audit trail; optional for legacy checkpoints. */
+  reactionEvents?: RecordedReaction[];
   ruleState: Record<string, unknown>;
 }
 
@@ -303,6 +313,8 @@ export interface RecoverSessionsRequest {
  * session end, to be persisted in the research DB.
  */
 export interface FinalizeSessionRequest {
+  /** Monotonic per-runtime revision used to reject late/stale snapshots. */
+  revision?: number;
   /** Full chat log (messages carry their aggregated reactions). */
   messages: Message[];
   /** Every shared-ranking state during the session, oldest → newest. */
@@ -314,6 +326,8 @@ export interface FinalizeSessionRequest {
   windowEvaluations?: WindowEvaluation[];
   classificationFailures?: ClassificationFailure[];
   processedEventIds?: string[];
+  redactedReactionEventIds?: string[];
+  reactionEvents?: RecordedReaction[];
   ruleState?: Record<string, unknown>;
 }
 

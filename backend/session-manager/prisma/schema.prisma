@@ -38,33 +38,34 @@ model StudyRoundRecord {
 }
 
 model SessionRecord {
-  id                String               @id
-  status            String
-  conditionId       String               @map("condition_id")
-  roundId           Int                  @default(1) @map("round_id")
-  conditionSnapshot Json                 @map("condition_snapshot")
-  bot               Json
-  briefing          Json
-  rankingTask       Json                 @map("ranking_task")
-  ranking           Json
-  polls             Json
-  behavioralEvents  Json                 @default("[]") @map("behavioral_events")
-  classifications   Json                 @default("[]") @map("contribution_classifications")
-  classificationFailures Json            @default("[]") @map("classification_failures")
-  processedEventIds Json                 @default("[]") @map("processed_event_ids")
-  runtimeState      Json                 @default("{}") @map("runtime_state")
-  durationMinutes   Int                  @map("duration_minutes")
-  roomId            String?              @map("room_id")
-  createdAt         DateTime             @default(now()) @map("created_at")
-  startedAt         DateTime?            @map("started_at")
-  completedAt       DateTime?            @map("completed_at")
-  condition         ConditionRecord      @relation(fields: [conditionId], references: [id])
-  round             StudyRoundRecord     @relation(fields: [roundId], references: [id])
-  participants      ParticipantRecord[]
-  messages          MessageRecord[]
-  rankingHistory    RankingHistoryRecord[]
-  interventions     InterventionRecord[]
-  windowEvaluations WindowEvaluationRecord[]
+  id                     String                   @id
+  status                 String
+  conditionId            String                   @map("condition_id")
+  roundId                Int                      @default(1) @map("round_id")
+  conditionSnapshot      Json                     @map("condition_snapshot")
+  bot                    Json
+  briefing               Json
+  rankingTask            Json                     @map("ranking_task")
+  ranking                Json
+  polls                  Json
+  behavioralEvents       Json                     @default("[]") @map("behavioral_events")
+  classifications        Json                     @default("[]") @map("contribution_classifications")
+  classificationFailures Json                     @default("[]") @map("classification_failures")
+  processedEventIds      Json                     @default("[]") @map("processed_event_ids")
+  runtimeState           Json                     @default("{}") @map("runtime_state")
+  checkpointRevision     Int                      @default(0) @map("checkpoint_revision")
+  durationMinutes        Int                      @map("duration_minutes")
+  roomId                 String?                  @map("room_id")
+  createdAt              DateTime                 @default(now()) @map("created_at")
+  startedAt              DateTime?                @map("started_at")
+  completedAt            DateTime?                @map("completed_at")
+  condition              ConditionRecord          @relation(fields: [conditionId], references: [id])
+  round                  StudyRoundRecord         @relation(fields: [roundId], references: [id])
+  participants           ParticipantRecord[]
+  messages               MessageRecord[]
+  rankingHistory         RankingHistoryRecord[]
+  interventions          InterventionRecord[]
+  windowEvaluations      WindowEvaluationRecord[]
 
   @@index([conditionId])
   @@index([roundId])
@@ -88,10 +89,10 @@ model ParticipantRecord {
   session           SessionRecord  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   surveys           SurveyRecord[]
 
+  @@unique([prolificStudyId, prolificSessionId])
   @@index([sessionId])
   @@index([trackingToken])
   @@index([prolificPid])
-  @@unique([prolificStudyId, prolificSessionId])
   @@map("participants")
 }
 
@@ -136,14 +137,18 @@ model MessageRecord {
 }
 
 model ReactionRecord {
-  id        String        @id @default(uuid())
-  messageId String        @map("message_id")
-  key       String
-  senderId  String        @map("sender_id")
-  timestamp DateTime
-  message   MessageRecord @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  id               String        @id @default(uuid())
+  messageId        String        @map("message_id")
+  eventId          String?       @unique @map("event_id")
+  key              String
+  senderId         String        @map("sender_id")
+  timestamp        DateTime
+  redacted         Boolean       @default(false)
+  redactionEventId String?       @map("redaction_event_id")
+  redactedAt       DateTime?     @map("redacted_at")
+  message          MessageRecord @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
-  @@index([messageId])
+  @@index([messageId, redacted])
   @@map("reactions")
 }
 
@@ -161,19 +166,19 @@ model RankingHistoryRecord {
 }
 
 model InterventionRecord {
-  id                         String        @id
-  sessionId                  String        @map("session_id")
-  roomId                     String        @map("room_id")
-  conditionId                String        @map("condition_id")
-  mode                       String
-  audience                   String
-  timestamp                  DateTime
-  trigger                    String
-  threshold                  Float
-  contributionWindowMinutes  Int           @map("contribution_window_minutes")
-  message                    String
-  payload                    Json
-  session                    SessionRecord @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  id                        String        @id
+  sessionId                 String        @map("session_id")
+  roomId                    String        @map("room_id")
+  conditionId               String        @map("condition_id")
+  mode                      String
+  audience                  String
+  timestamp                 DateTime
+  trigger                   String
+  threshold                 Float
+  contributionWindowMinutes Int           @map("contribution_window_minutes")
+  message                   String
+  payload                   Json
+  session                   SessionRecord @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId])
   @@index([conditionId])

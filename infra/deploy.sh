@@ -25,6 +25,11 @@ grep -q '^GDM_ENV=production' .env || {
 # template. Safe on every deploy: server_name changes only if .env changed
 # (which must never happen after the first start — the render script warns).
 sh render-homeserver.sh
+# Compose does not detect content changes inside bind-mounted files. Put the
+# rendered config hash in a container label so `up` recreates Synapse exactly
+# when its configuration changed (including rate-limit tuning).
+SYNAPSE_CONFIG_SHA=$(sha256sum synapse/homeserver.prod.yaml | cut -d' ' -f1)
+export SYNAPSE_CONFIG_SHA
 
 echo "Pulling images (IMAGE_TAG=${IMAGE_TAG:-latest})..."
 $COMPOSE pull

@@ -33,12 +33,12 @@
 		respond @adminDenied 403
 
 		handle /_matrix/* {
-			# Participant accounts are registered server-side by the Session
-			# Manager over the internal Docker network — Matrix registration must
-			# never be reachable from the internet (homeserver.yaml keeps it
-			# enabled).
-			@register path_regexp ^/_matrix/client/[^/]+/register
-			respond @register 403
+			# Accounts, rooms and invitations are provisioned by the Session
+			# Manager over the internal Docker network. Keep those high-burst
+			# endpoints away from participant credentials; browsers only need the
+			# already-created room's sync/message APIs.
+			@serverManaged path_regexp ^/_matrix/client/[^/]+/(register|createRoom|rooms/[^/]+/invite)$
+			respond @serverManaged 403
 
 			reverse_proxy synapse:8008
 		}

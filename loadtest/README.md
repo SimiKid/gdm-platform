@@ -228,6 +228,10 @@ Stop it with `Ctrl-C`.
 - `LOADTEST_SESSION_MINUTES` controls when the server-side Chat Service
   finalizes rooms. The default is deliberately longer than the progressive
   profile so rooms do not expire midway through the test.
+- `LOADTEST_ENROLL_BACKOFF_BASE_SECONDS` and
+  `LOADTEST_ENROLL_BACKOFF_MAX_SECONDS` bound exponential per-participant retry
+  jitter after a failed enrollment. Failures still remain visible in k6; the
+  backoff only prevents them from turning into a synchronized retry storm.
 
 An interrupted load test may leave Chat Service runtimes alive until their
 configured duration expires. This is another reason to use a staging clone for

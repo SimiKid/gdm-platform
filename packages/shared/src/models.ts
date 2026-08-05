@@ -65,9 +65,20 @@ export interface Participant {
 
 /** Emoji / acknowledgment reaction attached to a message. */
 export interface Reaction {
+  /** Matrix annotation event id, used to make toggles/restarts lossless. */
+  eventId?: string;
   key: string; // e.g. "👍" or "m.acknowledged"
   senderId: string;
   timestamp: string; // ISO 8601
+}
+
+/** Immutable Matrix reaction event plus an optional later redaction. */
+export interface RecordedReaction extends Reaction {
+  eventId: string;
+  messageId: string;
+  redacted: boolean;
+  redactionEventId?: string;
+  redactedAt?: string;
 }
 
 /**
@@ -121,6 +132,8 @@ export interface RankingTask {
  * `order[0]` is rank #1.
  */
 export interface Ranking {
+  /** Matrix event id, attached by the recorder for lossless deduplication. */
+  eventId?: string;
   taskId: string;
   order: string[]; // RankingItem ids, best-to-worst
   updatedAt: string; // ISO 8601
@@ -246,6 +259,7 @@ export interface BotConfig {
 
 export type SessionStatus =
   | "waiting" // in the waiting room, gathering participants
+  | "provisioning" // full group; private room/bot access is being prepared
   | "running" // chat room live
   | "completed"
   | "aborted";
@@ -286,7 +300,13 @@ export interface Session {
   classificationFailures?: ClassificationFailure[];
   /** Internal restart checkpoint metadata; not used by participant clients. */
   processedEventIds?: string[];
+  /** Reaction event ids later redacted/toggled off; retained as tombstones. */
+  redactedReactionEventIds?: string[];
+  /** Full reaction audit trail, including toggled-off annotations. */
+  reactionEvents?: RecordedReaction[];
   runtimeState?: Record<string, unknown>;
+  /** Last durable Chat Service snapshot revision (internal recovery metadata). */
+  checkpointRevision?: number;
   polls: Poll[];
   /** Copied from the condition at assignment time; drives the chat timer. */
   durationMinutes: number;

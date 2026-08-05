@@ -43,6 +43,9 @@ async function bootstrap() {
   // Dev: the Vite frontend runs on a different origin.
   app.enableCors();
   app.setGlobalPrefix("api");
+  // Let in-flight checkpoint transactions finish before Prisma disconnects
+  // during a container replacement.
+  app.enableShutdownHooks();
   const port = Number(process.env.PORT ?? 3001);
   await app.listen(port);
   new Logger("Bootstrap").log(`Session Manager listening on :${port}/api`);

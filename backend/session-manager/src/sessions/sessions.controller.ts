@@ -115,8 +115,8 @@ export class SessionsController {
   checkpoint(
     @Param("id") id: string,
     @Body() body: CheckpointSessionRequest,
-  ): Promise<Session> {
-    return this.sessions.checkpointSession(id, body);
+  ): Promise<{ ok: true }> {
+    return this.sessions.checkpointSession(id, body).then(() => ({ ok: true }));
   }
 
   /** Re-invite a restarted bot and return all recoverable running sessions. */

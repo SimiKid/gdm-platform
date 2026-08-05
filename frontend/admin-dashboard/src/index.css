@@ -412,6 +412,7 @@ tbody tr:last-child td {
   color: #8a5a00;
 }
 
+.status.provisioning,
 .status.running {
   background: #dbeafe;
   color: #1c4f9c;

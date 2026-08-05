@@ -6,8 +6,14 @@
 services:
   # ── Matrix Synapse ────────────────────────────────────
   synapse:
-    image: matrixdotorg/synapse:latest
+    # Pin the version currently validated in production/integration tests;
+    # upgrade deliberately so a deploy cannot silently change Matrix behavior.
+    image: matrixdotorg/synapse:1.157.2
     restart: unless-stopped
+    labels:
+      # Production deploy.sh injects the rendered config hash. A changed bind
+      # mount alone does not make Compose recreate a container.
+      gdm.synapse-config-sha: ${SYNAPSE_CONFIG_SHA:-development}
     volumes:
       - synapse-data:/data
       - ./synapse/homeserver.yaml:/data/homeserver.yaml:ro
@@ -17,6 +23,10 @@ services:
     environment:
       UID: "0"
       GID: "0"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     depends_on:
       synapse-db:
         condition: service_healthy
@@ -65,6 +75,7 @@ services:
       context: ..
       dockerfile: backend/session-manager/Dockerfile
     restart: unless-stopped
+    stop_grace_period: 45s
     environment:
       GDM_ENV: ${GDM_ENV:-development}
       PORT: "3001"
@@ -78,6 +89,13 @@ services:
       WAITING_TIMEOUT_MINUTES: ${WAITING_TIMEOUT_MINUTES:-30}
       PROLIFIC_STUDY_ID: ${PROLIFIC_STUDY_ID:-}
       PROLIFIC_API_TOKEN: ${PROLIFIC_API_TOKEN:-}
+      MATRIX_RATE_LIMIT_RETRIES: ${MATRIX_RATE_LIMIT_RETRIES:-8}
+      MATRIX_RETRY_MAX_DELAY_MS: ${MATRIX_RETRY_MAX_DELAY_MS:-30000}
+      MATRIX_REQUEST_TIMEOUT_MS: ${MATRIX_REQUEST_TIMEOUT_MS:-15000}
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     depends_on:
       synapse:
         condition: service_healthy
@@ -96,6 +114,9 @@ services:
       context: ..
       dockerfile: backend/chat-service/Dockerfile
     restart: unless-stopped
+    # Lets the shutdown hook finish in-flight classifiers/checkpoints and send
+    # one final monotonic snapshot before the container is killed.
+    stop_grace_period: 75s
     environment:
       GDM_ENV: ${GDM_ENV:-development}
       PORT: "3002"
@@ -105,6 +126,15 @@ services:
       LLM_MODE: ${LLM_MODE:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
+      CHECKPOINT_TIMEOUT_MS: ${CHECKPOINT_TIMEOUT_MS:-30000}
+      MATRIX_RATE_LIMIT_RETRIES: ${MATRIX_RATE_LIMIT_RETRIES:-8}
+      MATRIX_RETRY_MAX_DELAY_MS: ${MATRIX_RETRY_MAX_DELAY_MS:-30000}
+      MATRIX_REQUEST_TIMEOUT_MS: ${MATRIX_REQUEST_TIMEOUT_MS:-15000}
+      MATRIX_SYNC_REQUEST_TIMEOUT_MS: ${MATRIX_SYNC_REQUEST_TIMEOUT_MS:-40000}
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     depends_on:
       synapse:
         condition: service_healthy

@@ -10,6 +10,8 @@ import { MatrixService } from "./matrix.service";
 describe("MatrixService", () => {
   let svc: MatrixService;
   beforeEach(() => {
+    process.env.MATRIX_RATE_LIMIT_RETRIES = "0";
+    process.env.MATRIX_RETRY_MAX_DELAY_MS = "1";
     svc = new MatrixService();
   });
 
@@ -31,6 +33,29 @@ describe("MatrixService", () => {
       vi.fn(async () => ({ ok: false, status: 429, text: async () => "limit" })),
     );
     await expect(svc.registerUser("x")).rejects.toThrow(/register failed/);
+  });
+
+  it("retries a rate-limited request using Synapse's retry hint", async () => {
+    process.env.MATRIX_RATE_LIMIT_RETRIES = "1";
+    svc = new MatrixService();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ retry_after_ms: 1 }), { status: 429 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ user_id: "@x:localhost", access_token: "tok" }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(svc.registerUser("x")).resolves.toEqual({
+      userId: "@x:localhost",
+      accessToken: "tok",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("createRoom logs in the stable orchestrator once and reuses it", async () => {

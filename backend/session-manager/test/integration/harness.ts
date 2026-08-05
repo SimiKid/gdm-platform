@@ -4,7 +4,11 @@ import { Test } from "@nestjs/testing";
 import request from "supertest";
 import { PrismaClient } from "@prisma/client";
 import { inject } from "vitest";
-import type { OpenSessionResponse, StartSessionNotification } from "@gdm/shared";
+import type {
+  OpenSessionResponse,
+  PublicSession,
+  StartSessionNotification,
+} from "@gdm/shared";
 import { AppModule } from "../../src/app.module";
 import { MatrixService, type MatrixCreds } from "../../src/matrix/matrix.service";
 import { configureRequestBodyLimit } from "../../src/request-body";
@@ -177,5 +181,23 @@ export async function fillSession(
   for (let i = 1; i <= groupSize; i++) {
     responses.push(await openSession(t, `P${i}-${conditionId}`, conditionId));
   }
+  // Room provisioning is intentionally detached from participant enrollment;
+  // mirror the real waiting-room poll before tests act on the live session.
+  await waitForRunningSession(t, responses[0].session.id);
   return responses;
+}
+
+/** Poll exactly like the participant waiting room until provisioning is safe. */
+export async function waitForRunningSession(
+  t: TestApp,
+  sessionId: string,
+): Promise<PublicSession> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const current = await request(t.http).get(`/api/sessions/${sessionId}`).expect(200);
+    if (current.body.status === "running") {
+      return current.body as PublicSession;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error(`session ${sessionId} did not finish provisioning`);
 }

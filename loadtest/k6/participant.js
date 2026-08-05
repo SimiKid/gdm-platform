@@ -20,6 +20,14 @@ const rankingMinSeconds = intEnv("LOADTEST_RANKING_MIN_SECONDS", 60);
 const rankingMaxSeconds = intEnv("LOADTEST_RANKING_MAX_SECONDS", 120);
 const reactionMinSeconds = intEnv("LOADTEST_REACTION_MIN_SECONDS", 45);
 const reactionMaxSeconds = intEnv("LOADTEST_REACTION_MAX_SECONDS", 120);
+const enrollmentBackoffBaseSeconds = intEnv(
+  "LOADTEST_ENROLL_BACKOFF_BASE_SECONDS",
+  1,
+);
+const enrollmentBackoffMaxSeconds = intEnv(
+  "LOADTEST_ENROLL_BACKOFF_MAX_SECONDS",
+  15,
+);
 
 if (!conditionId || !conditionId.startsWith("e2e-load-")) {
   throw new Error("LOADTEST_CONDITION_ID must be an isolated e2e-load-* condition");
@@ -119,9 +127,25 @@ export const options = {
 };
 
 let state;
+let enrollmentFailures = 0;
 
 export function participant() {
-  if (!state) state = enroll();
+  if (!state) {
+    try {
+      state = enroll();
+      enrollmentFailures = 0;
+    } catch (error) {
+      enrollmentFailures += 1;
+      const exponential = Math.min(
+        enrollmentBackoffMaxSeconds,
+        enrollmentBackoffBaseSeconds * 2 ** Math.min(6, enrollmentFailures - 1),
+      );
+      // Per-VU jitter avoids synchronized retries becoming a second traffic
+      // spike while preserving the failed iteration in k6's metrics.
+      sleep(randomBetween(exponential * 0.75, exponential * 1.25));
+      throw error;
+    }
+  }
   runDueActions(state);
   syncOnce(state, syncTimeoutMs);
 }

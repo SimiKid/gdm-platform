@@ -26,6 +26,10 @@ services:
     environment:
       PUBLIC_HOST: ${PUBLIC_HOST:?set PUBLIC_HOST in .env}
       ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
