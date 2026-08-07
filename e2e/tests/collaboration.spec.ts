@@ -12,6 +12,7 @@ import {
 
 const FIRST_MESSAGE = "Oxygen should stay at the top of our team ranking.";
 const SECOND_MESSAGE = "Agreed, and water should remain close behind.";
+const MULTILINE_MESSAGE = "Suggested order:\n- oxygen first\n- water second";
 const PARTICIPANT_IDENTITIES = ["Red", "Blue"];
 
 test("@collaboration live feedback, reactions, ranking and telemetry work together", async ({
@@ -57,6 +58,18 @@ test("@collaboration live feedback, reactions, ranking and telemetry work togeth
       await expect(author.page.getByText(SECOND_MESSAGE, { exact: true })).toBeVisible({
         timeout: 30_000,
       });
+
+      await sendChat(author.page, MULTILINE_MESSAGE);
+      const receivedBody = observer.page.locator(".message.other .body", {
+        hasText: "Suggested order:",
+      });
+      await expect(receivedBody).toBeVisible({ timeout: 30_000 });
+      await expect
+        .poll(() => receivedBody.evaluate((element) => getComputedStyle(element).whiteSpace))
+        .toBe("pre-wrap");
+      await expect
+        .poll(() => receivedBody.evaluate((element) => (element as HTMLElement).innerText))
+        .toBe(MULTILINE_MESSAGE);
     });
 
     await test.step("emoji reactions are not offered (turn-taking design)", async () => {
