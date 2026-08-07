@@ -35,6 +35,7 @@ import {
   filterResearchSessions,
   type ResearchFilter,
 } from "../reports/filter";
+import { validateSurveyAnswers } from "../validation/request-validation";
 
 @Injectable()
 export class SessionsService {
@@ -53,6 +54,9 @@ export class SessionsService {
   private readonly waitingTimeoutMinutes = Number(
     process.env.WAITING_TIMEOUT_MINUTES ?? 30,
   );
+  /** Optional live-recruitment gate; generic/pilot links remain available when false. */
+  private readonly prolificRequired =
+    process.env.PROLIFIC_REQUIRE_VALIDATION === "true";
   /** Avoid repeating the Prolific API lookup across arrival → resume → join. */
   private readonly verifiedProlificSubmissions = new Map<string, number>();
   /** Serialize durable runtime writes per session without blocking other groups. */
@@ -86,6 +90,11 @@ export class SessionsService {
     // External validation and Matrix provisioning must never occupy the global
     // seat-assignment lock. Only the short find-or-create/add-seat section is
     // serialized, preventing duplicate lobbies without queueing network I/O.
+    if (this.prolificRequired && !req.prolific) {
+      throw new BadRequestException(
+        "A verified Prolific study link is required",
+      );
+    }
     await this.validateProlificIdentity(req.prolific);
     if (req.prolific) await this.store.recordProlificArrival(req.prolific);
 
@@ -163,6 +172,34 @@ export class SessionsService {
       ? await this.findByProlificSession(req.prolific)
       : await this.findByTrackingToken(req.trackingToken);
     if (existing) {
+      if (existing.session.status === "aborted" && req.prolific) {
+        const nextSession =
+          (await this.findForming(req.conditionId)) ??
+          (await this.store.createForming(
+            await this.assignCondition(req.conditionId),
+          ));
+        await this.store.moveParticipant(
+          existing.participant.id,
+          existing.session.id,
+          nextSession.id,
+        );
+        nextSession.participants.push(existing.participant);
+        if (req.prolific) {
+          await this.store.linkProlificArrival(
+            req.prolific,
+            existing.participant.id,
+          );
+        }
+        this.log.log(
+          `requeued Prolific participant ${existing.participant.id} from ` +
+            `aborted session ${existing.session.id} to ${nextSession.id}`,
+        );
+        return {
+          session: nextSession,
+          participant: existing.participant,
+          existing: true,
+        };
+      }
       if (req.prolific) {
         await this.store.linkProlificArrival(
           req.prolific,
@@ -263,6 +300,7 @@ export class SessionsService {
     ].join(":");
     const cachedUntil = this.verifiedProlificSubmissions.get(cacheKey) ?? 0;
     if (cachedUntil > Date.now()) return;
+    this.pruneProlificVerificationCache();
 
     let response: Response;
     try {
@@ -326,6 +364,21 @@ export class SessionsService {
     this.verifiedProlificSubmissions.set(cacheKey, Date.now() + 60_000);
   }
 
+  /** Keep attacker-controlled identifiers from growing the verification cache forever. */
+  private pruneProlificVerificationCache(): void {
+    const now = Date.now();
+    for (const [key, expiresAt] of this.verifiedProlificSubmissions) {
+      if (expiresAt <= now) this.verifiedProlificSubmissions.delete(key);
+    }
+    while (this.verifiedProlificSubmissions.size >= 5_000) {
+      const oldest = this.verifiedProlificSubmissions.keys().next().value as
+        | string
+        | undefined;
+      if (!oldest) break;
+      this.verifiedProlificSubmissions.delete(oldest);
+    }
+  }
+
   async recordProlificArrival(
     identity: ProlificIdentity,
   ): Promise<ProlificArrival> {
@@ -340,6 +393,15 @@ export class SessionsService {
     await this.validateProlificIdentity(identity);
     const existing = await this.findByProlificSession(identity);
     if (!existing) return null;
+
+    if (existing.session.status === "aborted") {
+      const openSession = await this.openSession({
+        trackingToken: existing.participant.trackingToken,
+        participantName: existing.participant.name,
+        prolific: identity,
+      });
+      return { stage: "waiting", openSession };
+    }
 
     const openSession = await this.rejoinResponse(
       existing.session,
@@ -812,6 +874,9 @@ export class SessionsService {
     for (const session of running) {
       try {
         await this.matrix.invite(session.roomId!, botUserId);
+        // A freshly registered recovery bot must regain the redaction power
+        // granted during initial room provisioning before moderation is used.
+        await this.matrix.setUserPowerLevel(session.roomId!, botUserId, 50);
       } catch (error) {
         // The bot may already be invited/joined, or Synapse may be briefly
         // unavailable. Return this room regardless: the bot's authenticated
@@ -859,6 +924,11 @@ export class SessionsService {
   }
 
   async submitSurvey(req: SubmitSurveyRequest): Promise<void> {
+    const session = await this.getSession(req.sessionId);
+    validateSurveyAnswers(
+      req,
+      session.rankingTask.items.map((item) => item.id),
+    );
     const saved = await this.store.saveParticipantSurvey(
       req.sessionId,
       req.participantId,

@@ -29,7 +29,7 @@ test("@results the Results tab renders, filters by round, and serves the researc
   try {
     if (ADMIN_TOKEN) {
       await context.addInitScript(
-        (token) => localStorage.setItem("gdm-admin-token", token),
+        (token) => sessionStorage.setItem("gdm-admin-token", token),
         ADMIN_TOKEN,
       );
     }

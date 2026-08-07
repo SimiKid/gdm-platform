@@ -202,7 +202,7 @@ test("@exports every researcher export is downloadable, authenticated and exclud
       try {
         if (ADMIN_TOKEN) {
           await context.addInitScript(
-            (token) => localStorage.setItem("gdm-admin-token", token),
+            (token) => sessionStorage.setItem("gdm-admin-token", token),
             ADMIN_TOKEN,
           );
         }
@@ -250,7 +250,7 @@ test("@exports every researcher export is downloadable, authenticated and exclud
         expect(
           (
             await fetch(`${API}/sessions`, {
-              headers: { "x-admin-token": "e2e-intentionally-wrong" },
+              headers: { Authorization: "Bearer e2e-intentionally-wrong" },
             })
           ).status,
         ).toBe(401);

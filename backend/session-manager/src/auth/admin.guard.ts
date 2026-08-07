@@ -5,18 +5,17 @@ import {
   Logger,
   UnauthorizedException,
 } from "@nestjs/common";
+import { bearerToken, safeTokenEqual } from "./bearer-token";
 
 interface IncomingRequest {
   headers: Record<string, string | string[] | undefined>;
-  query: Record<string, unknown>;
 }
 
 /**
  * Protects researcher-only endpoints (condition/settings mutations, session
  * listings, data exports). The token is set via ADMIN_API_TOKEN and sent as an
- * `x-admin-token` header, or — for plain download links — a `token` query
- * parameter. When ADMIN_API_TOKEN is unset the guard is open (local dev);
- * a real study run must set it.
+ * standard Authorization bearer header. When ADMIN_API_TOKEN is unset the
+ * guard is open (local dev); a real study run must set it.
  */
 @Injectable()
 export class AdminGuard implements CanActivate {
@@ -35,10 +34,8 @@ export class AdminGuard implements CanActivate {
       return true;
     }
     const req = context.switchToHttp().getRequest<IncomingRequest>();
-    const provided =
-      req.headers["x-admin-token"] ??
-      (typeof req.query.token === "string" ? req.query.token : undefined);
-    if (provided === expected) return true;
+    const provided = bearerToken(req.headers.authorization);
+    if (provided && safeTokenEqual(provided, expected)) return true;
     throw new UnauthorizedException("Admin token required");
   }
 }

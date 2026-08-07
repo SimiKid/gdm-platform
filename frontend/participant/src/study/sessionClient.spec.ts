@@ -1,7 +1,11 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { httpSessionManager } from "./sessionClient";
 
-afterEach(() => vi.unstubAllGlobals());
+beforeEach(() => sessionStorage.setItem("gdm-tracking-token", "participant-token"));
+afterEach(() => {
+  sessionStorage.clear();
+  vi.unstubAllGlobals();
+});
 
 function okJson(value: unknown) {
   return vi.fn(async () => ({
@@ -80,6 +84,14 @@ describe("httpSessionManager", () => {
     vi.stubGlobal("fetch", okJson({ id: "s" }));
     const session = await httpSessionManager.getSession("s");
     expect(session.id).toBe("s");
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/sessions/s"),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer participant-token",
+        }),
+      }),
+    );
   });
 
   it("submitSurvey POSTs to /surveys", async () => {

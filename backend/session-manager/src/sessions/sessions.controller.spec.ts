@@ -76,13 +76,16 @@ describe("SessionsController", () => {
         sessionId: "s",
         participantId: "p",
         kind: "entry",
-        survey: { answers: {}, submittedAt: "" },
+        survey: {
+          answers: {},
+          submittedAt: "2026-08-07T12:00:00.000Z",
+        },
       }),
     ).resolves.toEqual({ ok: true });
   });
 
   it("complete delegates by id", async () => {
-    await ctrl.complete("s");
+    await expect(ctrl.complete("s")).resolves.toEqual({ ok: true });
     expect(sessions.completeSession).toHaveBeenCalledWith("s");
   });
 

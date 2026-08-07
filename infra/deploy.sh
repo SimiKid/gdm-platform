@@ -16,10 +16,16 @@ cd "$(dirname "$0")"
 COMPOSE="docker compose --env-file .env -f docker-compose.yml -f docker-compose.prod.yml"
 
 [ -f .env ] || { echo "ERROR: infra/.env not found — see docs/deployment.md (first-time setup)." >&2; exit 1; }
+chmod 600 .env
 grep -q '^GDM_ENV=production' .env || {
   echo "ERROR: infra/.env does not set GDM_ENV=production — refusing to deploy a dev config." >&2
   exit 1
 }
+
+# Capture all persistent state before pulling an image whose entrypoint may run
+# a forward-only Prisma migration. A partial/running-broken stack fails closed.
+echo "Creating pre-deploy backup..."
+sh backup.sh
 
 # Re-render the Synapse config so homeserver.prod.yaml matches .env and the
 # template. Safe on every deploy: server_name changes only if .env changed
@@ -37,10 +43,36 @@ $COMPOSE pull
 echo "Starting stack..."
 $COMPOSE up -d --no-build --remove-orphans
 
+echo "Waiting for application readiness..."
+for service in research-db synapse-db synapse session-manager chat-service; do
+  attempts=0
+  while :; do
+    container=$($COMPOSE ps -q "$service")
+    [ -n "$container" ] || {
+      echo "ERROR: $service has no running container" >&2
+      $COMPOSE ps
+      exit 1
+    }
+    service_status=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container")
+    if [ "$service_status" = "healthy" ] || [ "$service_status" = "running" ]; then
+      break
+    fi
+    attempts=$((attempts + 1))
+    if [ "$attempts" -ge 60 ]; then
+      echo "ERROR: $service did not become ready (status=$service_status)" >&2
+      $COMPOSE logs --tail=100 "$service"
+      exit 1
+    fi
+    sleep 2
+  done
+done
+
 # The VM has only 10 GB in /var — drop superseded image layers right away.
 docker image prune -f
 
 echo
 $COMPOSE ps
 echo
-echo "Deployed. Verify: curl -fsS https://$(grep '^PUBLIC_HOST=' .env | cut -d= -f2)/api/health"
+host=$(grep '^PUBLIC_HOST=' .env | cut -d= -f2)
+curl -fsS "https://$host/api/health/ready" >/dev/null
+echo "Deployed and ready: https://$host/api/health/ready"

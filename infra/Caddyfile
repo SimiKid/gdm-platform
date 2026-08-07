@@ -18,32 +18,66 @@
 		not remote_ip 89.206.64.0/18 130.60.0.0/16 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 144.200.0.0/16 185.207.116.0/22 185.207.120.0/24 192.41.132.0/22 192.41.136.0/24
 		expression `
 			path('/admin', '/admin/*',
-				'/api/admin/*',
+				'/api/admin', '/api/admin/*',
 				'/api/conditions', '/api/conditions/*',
 				'/api/interventions',
-				'/api/export/*')
+				'/api/export/*',
+				'/api/reports', '/api/reports/*',
+				'/api/rounds', '/api/rounds/*')
 			|| (path('/api/sessions') && method('GET'))
-			|| (path('/api/settings') && method('PUT'))
+			|| path('/api/settings')
 		`
 	}
+
+	# Browser/API hardening. frame-src remains unrestricted because the optional
+	# external-workspace feature deliberately embeds a researcher-configured URL.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		-Server
+		-X-Powered-By
+	}
+	@apiResponses path /api/*
+	header @apiResponses Cache-Control "no-store"
 
 	# route preserves the security check ahead of the terminal handle blocks.
 	# Without it, Caddy's normal directive sorting places respond after handle.
 	route {
 		respond @adminDenied 403
 
+		# These service-to-service endpoints are reachable only on the Docker
+		# network. Reject them before parsing a potentially large checkpoint body.
+		@internalApi path_regexp internalApi ^/api/sessions/(?:recover|[^/]+/(?:checkpoint|finalize))$
+		respond @internalApi 404
+
+		# This deployment has no remote Matrix peers. Participant clients do not
+		# need server-to-server federation or signing-key endpoints.
+		@federation path /_matrix/federation/* /_matrix/key/*
+		respond @federation 404
+
 		handle /_matrix/* {
 			# Accounts, rooms and invitations are provisioned by the Session
 			# Manager over the internal Docker network. Keep those high-burst
 			# endpoints away from participant credentials; browsers only need the
 			# already-created room's sync/message APIs.
-			@serverManaged path_regexp ^/_matrix/client/[^/]+/(register|createRoom|rooms/[^/]+/invite)$
+			@serverManaged path_regexp ^/_matrix/client/[^/]+/(register|login|createRoom|rooms/[^/]+/invite)(/.*)?$
 			respond @serverManaged 403
 
+			request_body {
+				max_size 2MB
+			}
 			reverse_proxy synapse:8008
 		}
 
 		handle /api/* {
+			# Public participant/admin requests are small. The larger live-session
+			# checkpoints bypass Caddy on the internal Docker network.
+			request_body {
+				max_size 512KB
+			}
 			reverse_proxy session-manager:3001
 		}
 

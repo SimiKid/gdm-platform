@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { MOON_SURVIVAL } from "@gdm/shared";
 
 interface Props {
   /** Called when the participant confirms and presses "Join chat". */
@@ -14,8 +15,8 @@ export default function GroupIntroPage({ onJoin }: Props) {
       <h1>Next: Discuss and decide as a group</h1>
       <p>
         You will now join a chat room with the other participants in your
-        session. Together, your group will discuss the same 15 items and agree
-        on one shared team ranking.
+        session. Together, your group will discuss the same{" "}
+        {MOON_SURVIVAL.items.length} items and agree on one shared team ranking.
       </p>
       <ul>
         <li>
@@ -31,8 +32,8 @@ export default function GroupIntroPage({ onJoin }: Props) {
           session organizationally.
         </li>
         <li>
-          You have 15 minutes. The team ranking is submitted through the shared
-          ranking panel.
+          The discussion timer is shown in the chat. The team ranking is
+          submitted through the shared ranking panel.
         </li>
         <li>
           Please keep the discussion within the chat room and do not use

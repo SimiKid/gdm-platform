@@ -486,13 +486,44 @@ export class StoreService implements OnModuleInit {
     return session && participant ? { session, participant } : undefined;
   }
 
+  /** Constant-shape participant authorization lookup for REST endpoints. */
+  async hasParticipantAccess(
+    sessionId: string,
+    trackingToken: string,
+    participantId?: string,
+  ): Promise<boolean> {
+    if (!sessionId || !trackingToken) return false;
+    if (!this.dbEnabled) {
+      return Boolean(
+        this.sessions
+          .get(sessionId)
+          ?.participants.some(
+            (participant) =>
+              participant.trackingToken === trackingToken &&
+              (!participantId || participant.id === participantId),
+          ),
+      );
+    }
+
+    await this.ensureSeeded();
+    return Boolean(
+      await this.db.participantRecord.findFirst({
+        where: {
+          sessionId,
+          trackingToken,
+          ...(participantId ? { id: participantId } : {}),
+        },
+        select: { id: true },
+      }),
+    );
+  }
+
   /** Resolve the unique Prolific submission without a full-session scan. */
   async findByProlificSession(
     identity: ProlificIdentity,
   ): Promise<{ session: Session; participant: Participant } | undefined> {
     if (!this.dbEnabled) {
       for (const session of this.allMemorySessions()) {
-        if (session.status === "aborted") continue;
         const participant = session.participants.find(
           (candidate) =>
             candidate.prolific?.studyId === identity.studyId &&
@@ -515,11 +546,39 @@ export class StoreService implements OnModuleInit {
     });
     if (!row) return undefined;
     const session = await this.getSession(row.sessionId);
-    if (!session || session.status === "aborted") return undefined;
+    if (!session) return undefined;
     const participant = session.participants.find(
       (candidate) => candidate.id === row.id,
     );
     return participant ? { session, participant } : undefined;
+  }
+
+  /** Move an aborted Prolific seat into a new lobby without deleting its data. */
+  async moveParticipant(
+    participantId: string,
+    fromSessionId: string,
+    toSessionId: string,
+  ): Promise<void> {
+    if (!this.dbEnabled) {
+      const source = this.sessions.get(fromSessionId);
+      const target = this.sessions.get(toSessionId);
+      if (!source || !target) throw new Error("Unknown session during requeue");
+      const index = source.participants.findIndex(
+        (participant) => participant.id === participantId,
+      );
+      if (index < 0) throw new Error(`Unknown participant ${participantId}`);
+      source.participants.splice(index, 1);
+      return;
+    }
+
+    await this.ensureSeeded();
+    const moved = await this.db.participantRecord.updateMany({
+      where: { id: participantId, sessionId: fromSessionId },
+      data: { sessionId: toSessionId },
+    });
+    if (moved.count !== 1) {
+      throw new Error(`Could not requeue participant ${participantId}`);
+    }
   }
 
   async getSession(id: string): Promise<Session | undefined> {
@@ -1398,7 +1457,7 @@ export class StoreService implements OnModuleInit {
         runtimeState: acceptsMutableState
           ? json({
               ...currentRuleState,
-              ...(checkpoint.ruleState ?? {}),
+              ...checkpoint.ruleState,
             })
           : json(currentRuleState),
         ...(acceptsMutableState && incomingRevision !== undefined
@@ -1494,8 +1553,8 @@ function mergeCheckpointIntoSession(
   ];
   if (acceptsMutableState) {
     session.runtimeState = {
-      ...(session.runtimeState ?? {}),
-      ...(checkpoint.ruleState ?? {}),
+      ...session.runtimeState,
+      ...checkpoint.ruleState,
     };
     if (incomingRevision !== undefined) {
       session.checkpointRevision = incomingRevision;
@@ -1722,9 +1781,12 @@ function normalizeCondition(condition: Condition): Condition {
     ...condition,
     // Admin input can arrive empty/NaN — clamp to values a session can run
     // with (duration 0 would mean a countdown that never starts).
-    goal: clampInt(condition.goal, 0),
-    durationMinutes: clampInt(condition.durationMinutes, 1),
-    groupSize: clampInt(condition.groupSize, 2),
+    id: String(condition.id ?? "").trim().slice(0, 128),
+    name: String(condition.name ?? "").trim().slice(0, 160),
+    active: condition.active === true,
+    goal: clampInt(condition.goal, 0, 100_000),
+    durationMinutes: clampInt(condition.durationMinutes, 1, 240),
+    groupSize: clampInt(condition.groupSize, 2, 50),
     config: {
       ...DEFAULT_INTERVENTION_CONFIG,
       ...condition.config,
@@ -1751,12 +1813,14 @@ function normalizeCondition(condition: Condition): Condition {
         condition.config.protectedStartMinutes ??
           DEFAULT_INTERVENTION_CONFIG.protectedStartMinutes,
         DEFAULT_INTERVENTION_CONFIG.protectedStartMinutes,
+        240,
       ),
       // Fractional minutes allowed (pilots/tests use sub-minute windows).
       contributionWindowMinutes: clampMinutes(
         condition.config.contributionWindowMinutes ??
           DEFAULT_INTERVENTION_CONFIG.contributionWindowMinutes,
         DEFAULT_INTERVENTION_CONFIG.contributionWindowMinutes,
+        240,
       ),
       contributionThreshold: clampFraction(
         condition.config.contributionThreshold ??
@@ -1768,15 +1832,23 @@ function normalizeCondition(condition: Condition): Condition {
 }
 
 /** Non-negative (possibly fractional) minutes (NaN/empty → the fallback). */
-function clampNonNegative(value: number, fallback: number): number {
+function clampNonNegative(
+  value: number,
+  fallback: number,
+  maximum: number,
+): number {
   if (!Number.isFinite(value)) return fallback;
-  return Math.max(0, value);
+  return Math.max(0, Math.min(maximum, value));
 }
 
 /** Lower-bound a minutes value at 0.1, keeping fractions (NaN → fallback). */
-function clampMinutes(value: number, fallback: number): number {
+function clampMinutes(
+  value: number,
+  fallback: number,
+  maximum: number,
+): number {
   if (!Number.isFinite(value)) return fallback;
-  return Math.max(0.1, value);
+  return Math.max(0.1, Math.min(maximum, value));
 }
 
 /** Clamp a 0..1 fraction from admin input (NaN/empty → the fallback). */
@@ -1786,9 +1858,11 @@ function clampFraction(value: number, fallback: number): number {
 }
 
 /** Round to an integer and enforce a lower bound (NaN → the bound). */
-function clampInt(value: number, min: number): number {
+function clampInt(value: number, min: number, max: number): number {
   const rounded = Math.round(value);
-  return Number.isFinite(rounded) ? Math.max(min, rounded) : min;
+  return Number.isFinite(rounded)
+    ? Math.max(min, Math.min(max, rounded))
+    : min;
 }
 
 function conditionData(condition: Condition): Prisma.ConditionRecordCreateInput {

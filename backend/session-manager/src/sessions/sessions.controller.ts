@@ -9,6 +9,7 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import type {
   ConditionProgress,
   CheckpointSessionRequest,
@@ -29,7 +30,15 @@ import { SessionsService } from "./sessions.service";
 import { StoreService } from "../store/store.service";
 import { AdminGuard } from "../auth/admin.guard";
 import { InternalGuard } from "../auth/internal.guard";
+import { ParticipantGuard } from "../auth/participant.guard";
 import { parseConditionIds, parseRoundIds } from "../reports/filter";
+import {
+  validateCompensationUrl,
+  validateCondition,
+  validateOpenSessionRequest,
+  validateProlificArrivalRequest,
+  validateSurveyRequest,
+} from "../validation/request-validation";
 
 @Controller()
 export class SessionsController {
@@ -39,19 +48,25 @@ export class SessionsController {
   ) {}
 
   @Post("sessions")
+  @Throttle({ default: { limit: 600, ttl: 60_000 } })
   openSession(@Body() body: OpenSessionRequest): Promise<OpenSessionResponse> {
+    validateOpenSessionRequest(body);
     return this.sessions.openSession(body);
   }
 
   /** Capture Prolific identity immediately when the external study opens. */
   @Post("prolific/arrivals")
+  @Throttle({ default: { limit: 300, ttl: 60_000 } })
   recordProlificArrival(@Body() body: RecordProlificArrivalRequest) {
+    validateProlificArrivalRequest(body);
     return this.sessions.recordProlificArrival(body.prolific);
   }
 
   /** Resume the existing seat/stage after a Prolific participant reconnects. */
   @Post("prolific/resume")
+  @Throttle({ default: { limit: 300, ttl: 60_000 } })
   resumeProlific(@Body() body: RecordProlificArrivalRequest) {
+    validateProlificArrivalRequest(body);
     return this.sessions.resumeProlific(body.prolific);
   }
 
@@ -67,6 +82,7 @@ export class SessionsController {
    * Participant-facing: tracking tokens and survey answers are stripped.
    */
   @Get("sessions/:id")
+  @UseGuards(ParticipantGuard)
   getSession(@Param("id") id: string): Promise<PublicSession> {
     return this.sessions.getPublicSession(id);
   }
@@ -79,19 +95,26 @@ export class SessionsController {
   }
 
   @Post("surveys")
+  @UseGuards(ParticipantGuard)
   async submitSurvey(@Body() body: SubmitSurveyRequest): Promise<{ ok: true }> {
+    validateSurveyRequest(body);
     await this.sessions.submitSurvey(body);
     return { ok: true };
   }
 
   /** Mark the discussion finished (called when the timer runs out). */
   @Post("sessions/:id/complete")
-  complete(@Param("id") id: string): Promise<Session> {
-    return this.sessions.completeSession(id);
+  @UseGuards(ParticipantGuard)
+  async complete(@Param("id") id: string): Promise<{ ok: true }> {
+    // The service returns its internal Session for its own idempotency tests;
+    // never serialize participant tokens or survey answers back to a browser.
+    await this.sessions.completeSession(id);
+    return { ok: true };
   }
 
   /** Mark one participant complete after their exit survey is safely stored. */
   @Post("sessions/:sessionId/participants/:participantId/complete")
+  @UseGuards(ParticipantGuard)
   completeParticipant(
     @Param("sessionId") sessionId: string,
     @Param("participantId") participantId: string,
@@ -160,11 +183,13 @@ export class SessionsController {
     @Param("id") id: string,
     @Body() body: UpsertConditionRequest,
   ) {
+    validateCondition(body?.condition);
     return this.store.upsertCondition({ ...body.condition, id });
   }
 
   /** Study-wide settings; the participant app reads the compensation link. */
   @Get("settings")
+  @UseGuards(AdminGuard)
   settings(): Promise<StudySettings> {
     return this.store.getStudySettings();
   }
@@ -175,7 +200,10 @@ export class SessionsController {
   updateSettings(
     @Body() body: UpdateStudySettingsRequest,
   ): Promise<StudySettings> {
-    return this.store.updateStudySettings(body.settings ?? {});
+    const compensationUrl = validateCompensationUrl(
+      body?.settings?.compensationUrl ?? "",
+    );
+    return this.store.updateStudySettings({ compensationUrl });
   }
 
   /** Admin/debug: newest interventions across all sessions. */

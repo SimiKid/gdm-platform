@@ -43,20 +43,15 @@ export default function WaitingRoom({
   // Bumping this re-runs the join flow (manual retry, aborted-session rejoin).
   const [attempt, setAttempt] = useState(0);
 
-  // Run one join flow per attempt, even under StrictMode's double-invoke.
-  const ranAttempt = useRef(-1);
-  // `alive` is reset to true on (re)mount and set false only on real unmount,
-  // so the single in-flight run survives StrictMode's mount→cleanup→mount.
-  const alive = useRef(true);
-  const pollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+  const pollRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // Keep the latest onReady without making it an effect dependency.
   const onReadyRef = useRef(onReady);
   onReadyRef.current = onReady;
 
   useEffect(() => {
-    alive.current = true;
-    if (ranAttempt.current === attempt) return;
-    ranAttempt.current = attempt;
+    let cancelled = false;
+    let handedOff = false;
+    let matrixClient: MatrixClient | undefined;
 
     async function run() {
       try {
@@ -66,7 +61,7 @@ export default function WaitingRoom({
           prolific,
           conditionId,
         });
-        if (!alive.current) return;
+        if (cancelled) return;
 
         setCount(res.session.participants.length);
         setGroupSize(res.session.condition.groupSize);
@@ -94,6 +89,7 @@ export default function WaitingRoom({
           accessToken: res.matrix.accessToken,
           userId: res.matrix.userId,
         });
+        matrixClient = client;
         await client.startClient({ initialSyncLimit: 20 });
         await new Promise<void>((resolve, reject) => {
           const timeout = setTimeout(
@@ -106,9 +102,14 @@ export default function WaitingRoom({
             else reject(new Error(`Chat connection failed (${state})`));
           });
         });
-        if (!alive.current) return;
+        if (cancelled) {
+          client.stopClient();
+          return;
+        }
 
         const ready = (session: PublicSession) => {
+          if (cancelled || handedOff) return;
+          handedOff = true;
           saveProgress({
             stage: "chat",
             sessionId: session.id,
@@ -125,13 +126,13 @@ export default function WaitingRoom({
         }
 
         // Otherwise poll until the Session Manager provisions the room.
-        pollRef.current = setInterval(async () => {
+        const poll = async () => {
           try {
             const session = await httpSessionManager.getSession(res.session.id);
-            if (!alive.current) return;
+            if (cancelled || handedOff) return;
             if (session.status === "aborted") {
               // Our forming group timed out (no-shows). Rejoin a fresh one.
-              clearInterval(pollRef.current);
+              clearTimeout(pollRef.current);
               client.stopClient();
               setAttempt((a) => a + 1);
               return;
@@ -139,23 +140,30 @@ export default function WaitingRoom({
             setCount(session.participants.length);
             setGroupSize(session.condition.groupSize);
             if (session.roomId) {
-              clearInterval(pollRef.current);
+              clearTimeout(pollRef.current);
               ready(session);
+              return;
             }
           } catch {
             /* transient — keep polling */
           }
-        }, 2000);
+          if (!cancelled && !handedOff) {
+            pollRef.current = setTimeout(() => void poll(), 2000);
+          }
+        };
+        pollRef.current = setTimeout(() => void poll(), 2000);
       } catch (err: unknown) {
-        if (!alive.current) return;
+        matrixClient?.stopClient();
+        if (cancelled) return;
         setError(err instanceof Error ? err.message : "Could not join a session");
       }
     }
 
     void run();
     return () => {
-      alive.current = false;
-      if (pollRef.current) clearInterval(pollRef.current);
+      cancelled = true;
+      if (pollRef.current) clearTimeout(pollRef.current);
+      if (!handedOff) matrixClient?.stopClient();
     };
   }, [attempt, trackingToken, prolific, conditionId, entrySurvey]);
 

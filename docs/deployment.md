@@ -52,6 +52,10 @@ VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (fallback)
      and keep the pinned `ANTHROPIC_MODEL`. Leave `LLM_MODE` empty so each
      condition's own detection arm applies. The key is read only by
      `chat-service`.
+   - For live Prolific-only recruitment, set the draft's 24-character
+     `PROLIFIC_STUDY_ID`, a researcher **API token** in
+     `PROLIFIC_API_TOKEN`, and `PROLIFIC_REQUIRE_VALIDATION=true`. Leave the
+     gate false for internal pilots that deliberately use generic links.
 
 3. **Log in to GHCR** (needed while the packages are private; a GitHub
    personal access token with `read:packages` suffices):
@@ -73,7 +77,7 @@ VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (fallback)
 
 6. **Verify**:
    ```bash
-   curl -fsS https://gdmproject.ifi.uzh.ch/api/health   # {"status":"ok"}
+   curl -fsS https://gdmproject.ifi.uzh.ch/api/health/ready
    curl -fsS https://gdmproject.ifi.uzh.ch/_matrix/client/versions
    # registration must be blocked:
    curl -s -o /dev/null -w '%{http_code}\n' \
@@ -87,11 +91,15 @@ VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (fallback)
      the Prolific completion URL. There is no environment-variable fallback in
      the deployed images — without this setting, participants reach the
      debriefing page with a dead link.
-   - The Prolific study URL must pass the Prolific participant id as the
-     tracking token: `https://gdmproject.ifi.uzh.ch/?p={{%PROLIFIC_PID%}}`.
-     Without `?p=`, the participant gets a random self-issued token and the
-     exported `tracking_token` cannot be matched to a Prolific submission
-     (which is what `linkage.csv` is for).
+   - Select Prolific's URL-parameter recording and use its standard external
+     study URL (Prolific may append these parameters automatically):
+     `https://gdmproject.ifi.uzh.ch/?PROLIFIC_PID={{%PROLIFIC_PID%}}&STUDY_ID={{%STUDY_ID%}}&SESSION_ID={{%SESSION_ID%}}`.
+     The backend verifies that the submission, participant, and configured
+     study match before admitting anyone when
+     `PROLIFIC_REQUIRE_VALIDATION=true`.
+   - Confirm the completion code in Prolific exactly matches the completion
+     URL stored in Admin → Settings. Keep submission processing on manual
+     review until the pilot export has been checked.
 
 ## Smoke test (e2e against production)
 
@@ -180,8 +188,9 @@ Prisma migrations run automatically before Session Manager startup
 **forward-only** and not all of them are additive: the study-rounds migration
 (`20260801000000_study_rounds`) creates a `study_rounds` table, backfills a
 Round 1 row, and adds a `NOT NULL` `round_id` column with a foreign key to
-`sessions`. Take a database backup before any deploy that carries a new
-migration.
+`sessions`. `deploy.sh` now runs `backup.sh` before every image pull or
+migration and refuses to continue if only part of the persistent stack can be
+backed up.
 
 ## Enabling Anthropic nudge wording and classification
 
@@ -240,25 +249,34 @@ Then open http://localhost:3003 and enter the same token.
 
 ## Backup & restore
 
-The state worth protecting: both Postgres volumes (+ Synapse media).
+The state worth protecting is both Postgres databases plus Synapse's signing
+key/media volume. Every deployment creates and verifies a complete backup set:
 
 ```bash
 cd ~/gdm-platform/infra
-C="docker compose --env-file .env -f docker-compose.yml -f docker-compose.prod.yml"
-# research data (sessions, surveys, chat log)
-$C exec -T research-db pg_dump -U gdm gdm_research > backup-research-$(date +%F).sql
-# matrix homeserver
-$C exec -T synapse-db pg_dump -U synapse synapse > backup-synapse-$(date +%F).sql
+sh backup.sh
+ls -lh backups/
 ```
 
-The user/database names above are the `.env.example` defaults — if you changed
-`RESEARCH_DB_USER`/`RESEARCH_DB_NAME` or `SYNAPSE_DB_USER`/`SYNAPSE_DB_NAME`,
-use your values.
+The script reads the actual database names from `.env`, uses restrictive file
+permissions, validates both custom-format PostgreSQL archives with
+`pg_restore --list`, verifies the Synapse gzip archive, and writes portable
+SHA-256 checksums. It does not delete old sets automatically. Copy every new
+set off the VM (`scp` from your machine — `/var` is small). During active
+collection, also schedule `backup.sh` daily and monitor available disk space.
 
-Copy backups off the VM (`scp` from your machine — `/var` is small). During
-an active study, run this daily (cron) and before every deploy.
+Verify a copied set from inside its directory:
 
-Restore into a fresh volume: `$C exec -T research-db psql -U gdm gdm_research < backup-….sql`.
+```bash
+sha256sum -c checksums-<timestamp>.sha256
+```
+
+Restore a database archive into an empty database (replace names from `.env`):
+
+```bash
+$C exec -T research-db pg_restore --clean --if-exists --no-owner \
+  -U gdm -d gdm_research < research-<timestamp>.dump
+```
 
 ## Disk space (/var is 10 GB)
 

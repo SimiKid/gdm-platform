@@ -30,4 +30,6 @@ COPY --from=build /app/backend/chat-service/dist backend/chat-service/dist
 
 EXPOSE 3002
 
+USER node
+
 CMD ["node", "backend/chat-service/dist/main.js"]

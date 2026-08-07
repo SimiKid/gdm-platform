@@ -14,6 +14,7 @@ function fakeMatrix(): MatrixService {
     createRoom: vi.fn(async () => "!room:localhost"),
     joinRoom: vi.fn(async () => undefined),
     invite: vi.fn(async () => undefined),
+    setUserPowerLevel: vi.fn(async () => undefined),
   } as unknown as MatrixService;
 }
 
@@ -51,6 +52,7 @@ describe("SessionsService (session-manager)", () => {
   beforeEach(() => {
     delete process.env.PROLIFIC_STUDY_ID;
     delete process.env.PROLIFIC_API_TOKEN;
+    delete process.env.PROLIFIC_REQUIRE_VALIDATION;
     store = new StoreService();
     matrix = fakeMatrix();
     svc = new SessionsService(store, matrix);
@@ -117,6 +119,32 @@ describe("SessionsService (session-manager)", () => {
       stage: "waiting",
       openSession: { participantId: first.participantId },
     });
+  });
+
+  it("moves an aborted Prolific seat into a fresh lobby without losing identity", async () => {
+    const first = await svc.openSession({
+      trackingToken: `prolific:${prolific.studyId}:${prolific.sessionId}`,
+      participantName: "",
+      prolific,
+    });
+    await store.abortWaitingSessions();
+
+    const requeued = await svc.openSession({
+      trackingToken: `prolific:${prolific.studyId}:${prolific.sessionId}`,
+      participantName: "",
+      prolific,
+    });
+    expect(requeued.session.id).not.toBe(first.session.id);
+    expect(requeued.participantId).toBe(first.participantId);
+    expect(requeued.session.status).toBe("waiting");
+  });
+
+  it("can require verified Prolific admission without disabling generic pilots by default", async () => {
+    process.env.PROLIFIC_REQUIRE_VALIDATION = "true";
+    const guarded = new SessionsService(store, matrix);
+    await expect(guarded.openSession(open())).rejects.toThrow(
+      "verified Prolific study link is required",
+    );
   });
 
   it("rejects malformed or unexpected Prolific identifiers", async () => {
@@ -623,7 +651,9 @@ describe("SessionsService (session-manager)", () => {
 
     // CSV variants: headers, escaping, serialized details.
     const messagesCsv = await svc.exportMessagesCsv();
-    expect(messagesCsv).toContain("session_id,condition_id,condition_name,message_id");
+    expect(messagesCsv).toContain(
+      "session_id,condition_id,condition_name,round,message_id",
+    );
     expect(messagesCsv).toContain('"hi, ""team"""');
     expect(messagesCsv).toContain("👍");
 

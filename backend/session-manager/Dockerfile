@@ -31,4 +31,6 @@ COPY --from=build /app/backend/session-manager/dist backend/session-manager/dist
 
 EXPOSE 3001
 
+USER node
+
 CMD ["sh", "-c", "backend/session-manager/node_modules/.bin/prisma migrate deploy --schema backend/session-manager/prisma/schema.prisma && node backend/session-manager/dist/main.js"]

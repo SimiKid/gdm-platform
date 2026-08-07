@@ -4,7 +4,8 @@ import type {
   ReportsSummaryResponse,
   RoundsResponse,
 } from "@gdm/shared";
-import { apiFetch, exportUrl, isTestCondition } from "../api";
+import { apiFetch, isTestCondition } from "../api";
+import AuthenticatedDownloadLink from "./AuthenticatedDownloadLink";
 
 const RESEARCH_EXPORTS = [
   { key: "participants", label: "Participants (surveys + activity joined)" },
@@ -141,13 +142,14 @@ export default function Results({ rounds }: { rounds: RoundsResponse | null }) {
           codebook documenting each column.
         </p>
         <div className="download-primary">
-          <a
+          <AuthenticatedDownloadLink
             className="link-button"
-            href={exportUrl("/export/research.zip", query)}
-            download="research_bundle.zip"
+            path="/export/research.zip"
+            query={query}
+            filename="research_bundle.zip"
           >
             Research Bundle (ZIP + codebook)
-          </a>
+          </AuthenticatedDownloadLink>
         </div>
         <details className="export-advanced">
           <summary>Individual research datasets</summary>
@@ -157,22 +159,22 @@ export default function Results({ rounds }: { rounds: RoundsResponse | null }) {
                 <tr key={key}>
                   <td>{label}</td>
                   <td>
-                    <a
+                    <AuthenticatedDownloadLink
                       className="link-button"
-                      href={exportUrl(`/export/${key}`, query)}
-                      target="_blank"
-                      rel="noreferrer"
+                      path={`/export/${key}`}
+                      query={query}
+                      filename={`${key}.json`}
                     >
                       JSON
-                    </a>
-                    <a
+                    </AuthenticatedDownloadLink>
+                    <AuthenticatedDownloadLink
                       className="link-button"
-                      href={exportUrl(`/export/${key}.csv`, query)}
-                      target="_blank"
-                      rel="noreferrer"
+                      path={`/export/${key}.csv`}
+                      query={query}
+                      filename={`${key}.csv`}
                     >
                       CSV
-                    </a>
+                    </AuthenticatedDownloadLink>
                   </td>
                 </tr>
               ))}
@@ -189,13 +191,14 @@ export default function Results({ rounds }: { rounds: RoundsResponse | null }) {
           folders and never share it; it is deliberately excluded from the
           research bundle.
         </p>
-        <a
+        <AuthenticatedDownloadLink
           className="link-button secondary"
-          href={exportUrl("/export/linkage.csv", query)}
-          download="linkage.csv"
+          path="/export/linkage.csv"
+          query={query}
+          filename="linkage.csv"
         >
           Linkage (CSV, identifying)
-        </a>
+        </AuthenticatedDownloadLink>
       </section>
     </>
   );

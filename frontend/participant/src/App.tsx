@@ -92,6 +92,15 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [booting, setBooting] = useState(true);
 
+  // Matrix sync loops are long-lived; stop the previous client whenever the
+  // study changes stage or this application unmounts.
+  useEffect(
+    () => () => {
+      client?.stopClient();
+    },
+    [client],
+  );
+
   async function enterStudy(
     token: string,
     forcedConditionId?: string,
@@ -202,7 +211,6 @@ export default function App() {
         case "done":
           setParticipantId(progress.participantId);
           // Idempotently retrieve the completion URL again after a refresh.
-          // Legacy/generic sessions fall back to the public study setting.
           try {
             const completion = await httpSessionManager.completeParticipant(
               progress.sessionId,
@@ -316,6 +324,8 @@ export default function App() {
         client={client}
         session={session}
         onTimeUp={(finalOrder) => {
+          client.stopClient();
+          setClient(null);
           setGroupRanking(finalOrder);
           updateStage("exit");
           setStage("exit");

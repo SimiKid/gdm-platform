@@ -6,7 +6,8 @@ import type {
   SessionStatus,
   SessionSummary,
 } from "@gdm/shared";
-import { PARTICIPANT_BASE, apiFetch, exportUrl, isTestCondition } from "../api";
+import { PARTICIPANT_BASE, apiFetch, isTestCondition } from "../api";
+import AuthenticatedDownloadLink from "./AuthenticatedDownloadLink";
 
 /** Researcher-facing wording for backend session states (wireframe: lobby/active). */
 const STATUS_LABEL: Record<SessionStatus, string> = {
@@ -177,12 +178,12 @@ function ExportCard() {
     <section className="section">
       <h2>Export Data</h2>
       <div className="download-primary">
-        <a className="link-button secondary" href={exportUrl("/export/sessions", "")} download="detailed_data.json">
+        <AuthenticatedDownloadLink className="link-button secondary" path="/export/sessions" filename="detailed_data.json">
           Full Data (JSON)
-        </a>
-        <a className="link-button" href={exportUrl("/export/sessions.csv", "")} download="overview.csv">
+        </AuthenticatedDownloadLink>
+        <AuthenticatedDownloadLink className="link-button" path="/export/sessions.csv" filename="overview.csv">
           Overview (CSV)
-        </a>
+        </AuthenticatedDownloadLink>
       </div>
       <details className="export-advanced">
         <summary>Individual datasets</summary>
@@ -192,12 +193,12 @@ function ExportCard() {
               <tr key={key}>
                 <td>{label}</td>
                 <td>
-                  <a className="link-button" href={exportUrl(`/export/${key}`, "")} target="_blank" rel="noreferrer">
+                  <AuthenticatedDownloadLink className="link-button" path={`/export/${key}`} filename={`${key}.json`}>
                     JSON
-                  </a>
-                  <a className="link-button" href={exportUrl(`/export/${key}.csv`, "")} target="_blank" rel="noreferrer">
+                  </AuthenticatedDownloadLink>
+                  <AuthenticatedDownloadLink className="link-button" path={`/export/${key}.csv`} filename={`${key}.csv`}>
                     CSV
-                  </a>
+                  </AuthenticatedDownloadLink>
                 </td>
               </tr>
             ))}

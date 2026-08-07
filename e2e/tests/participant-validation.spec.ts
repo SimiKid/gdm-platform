@@ -59,9 +59,9 @@ test("@validation participant forms explain and block incomplete answers", async
       name: /^Add .* to the ranking$/,
     });
     await expect(submit).toBeDisabled();
-    await expect(page.getByText("Rank all 15 items to submit (15 remaining).")).toBeVisible();
+    await expect(page.getByText("Rank all 10 items to submit (10 remaining).")).toBeVisible();
     await addButtons.first().click();
-    await expect(page.getByText("Rank all 15 items to submit (14 remaining).")).toBeVisible();
+    await expect(page.getByText("Rank all 10 items to submit (9 remaining).")).toBeVisible();
     while ((await addButtons.count()) > 0) await addButtons.first().click();
     await expect(submit).toBeEnabled();
     await submit.click();
