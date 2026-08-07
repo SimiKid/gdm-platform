@@ -12,18 +12,12 @@ import {
 const DOMINANT_MESSAGE =
   "Detailed proposal: rank the oxygen tanks first because the crew cannot survive without breathable oxygen while crossing the lunar surface.";
 
-// Nudge texts are identical across both delivery modes (study protocol:
-// only delivery differs). The first nudge always uses the first template.
-const FIRST_NUDGE_TEXT = "a lot of energy";
-const SECOND_NUDGE_TEXT = "leading the discussion";
-
 const SCENARIOS: Array<{
   mode: "public" | "private";
   audience: "public" | "private";
-  text: string;
 }> = [
-  { mode: "public", audience: "public", text: FIRST_NUDGE_TEXT },
-  { mode: "private", audience: "private", text: FIRST_NUDGE_TEXT },
+  { mode: "public", audience: "public" },
+  { mode: "private", audience: "private" },
 ];
 
 for (const scenario of SCENARIOS) {
@@ -56,19 +50,22 @@ for (const scenario of SCENARIOS) {
 
       await sendChat(target, DOMINANT_MESSAGE);
 
-      const targetNudge = target.locator(".bot-message", {
-        hasText: scenario.text,
-      });
+      // Production generates fresh wording for every nudge. Assert the stable
+      // protocol fields and delivery behavior instead of a fallback phrase.
+      const targetNudge = target.locator(".bot-message");
       await expect(targetNudge).toHaveCount(1, { timeout: 30_000 });
+      const firstNudgeBody = targetNudge.locator(".bot-body");
+      await expect(firstNudgeBody).toContainText("100%");
+      const firstRenderedMessage = (await firstNudgeBody.textContent()) ?? "";
       if (scenario.audience === "private") {
         await expect(targetNudge).toHaveClass(/private/);
         await expect(targetNudge.locator(".audience-badge")).toContainText(
           "Private message to you",
         );
       } else {
-        await expect(
-          observer.locator(".bot-message", { hasText: scenario.text }),
-        ).toHaveCount(1, { timeout: 30_000 });
+        await expect(observer.locator(".bot-message")).toHaveCount(1, {
+          timeout: 30_000,
+        });
         await expect(targetNudge.locator(".audience-badge")).toContainText(
           "Message to ALL in the group",
         );
@@ -76,22 +73,33 @@ for (const scenario of SCENARIOS) {
 
       // The nudge reset the tracker, so in the next window the observer's
       // message makes them the sole (100%) contributor and draws the second
-      // nudge (template #2) at that window's end. Each participant must
+      // nudge at that window's end. Each participant must
       // still see only the nudges addressed to them in private mode.
       await sendChat(observer, "ok");
       await expect(
         target.locator(".message .body", { hasText: "ok" }),
       ).toBeVisible({ timeout: 30_000 });
-      const observerNudge = observer.locator(".bot-message", {
-        hasText: SECOND_NUDGE_TEXT,
-      });
-      await expect(observerNudge).toHaveCount(1, { timeout: 30_000 });
+      let secondRenderedMessage = "";
       if (scenario.audience === "private") {
-        await expect(observer.locator(".bot-message")).toHaveCount(1);
+        const observerNudge = observer.locator(".bot-message");
+        await expect(observerNudge).toHaveCount(1, { timeout: 30_000 });
+        const observerNudgeBody = observerNudge.locator(".bot-body");
+        await expect(observerNudgeBody).toContainText("100%");
+        secondRenderedMessage = (await observerNudgeBody.textContent()) ?? "";
         await expect(target.locator(".bot-message")).toHaveCount(1);
       } else {
-        await expect(observer.locator(".bot-message")).toHaveCount(2);
-        await expect(target.locator(".bot-message")).toHaveCount(2);
+        await expect(observer.locator(".bot-message")).toHaveCount(2, {
+          timeout: 30_000,
+        });
+        await expect(target.locator(".bot-message")).toHaveCount(2, {
+          timeout: 30_000,
+        });
+        const observerNudgeBody = observer
+          .locator(".bot-message")
+          .nth(1)
+          .locator(".bot-body");
+        await expect(observerNudgeBody).toContainText("100%");
+        secondRenderedMessage = (await observerNudgeBody.textContent()) ?? "";
       }
 
       const detail = await pollAdminSession(
@@ -133,6 +141,16 @@ for (const scenario of SCENARIOS) {
       expect(detail.interventions[1].targets).toEqual([
         expect.objectContaining({ userId: group.members[1].matrix.userId }),
       ]);
+      for (const item of detail.interventions) {
+        expect(item.message).toContain(`@${item.targets[0].identityName}`);
+        expect(item.message).toContain("100%");
+        expect(item.message.split(/\s+/).length).toBeLessThanOrEqual(45);
+      }
+      expect(detail.interventions[0].message).not.toBe(
+        detail.interventions[1].message,
+      );
+      expect(firstRenderedMessage).toBe(detail.interventions[0].message);
+      expect(secondRenderedMessage).toBe(detail.interventions[1].message);
       expect(detail.contributionClassifications).toEqual([]);
       expect(detail.chat.messages.map((message) => message.text)).toEqual(
         expect.arrayContaining([DOMINANT_MESSAGE, "ok"]),
@@ -140,7 +158,7 @@ for (const scenario of SCENARIOS) {
       // Bot nudges are part of the research chat log, carrying the recipient
       // for private delivery (and never counting toward contribution).
       const recordedNudge = detail.chat.messages.find((message) =>
-        message.text.includes(scenario.text),
+        message.text === intervention.message,
       );
       expect(recordedNudge).toBeDefined();
       if (scenario.audience === "private") {
