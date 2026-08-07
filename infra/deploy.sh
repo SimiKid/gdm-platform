@@ -74,5 +74,5 @@ echo
 $COMPOSE ps
 echo
 host=$(grep '^PUBLIC_HOST=' .env | cut -d= -f2)
-curl -fsS "https://$host/api/health/ready" >/dev/null
+wget -qO- "https://$host/api/health/ready" >/dev/null
 echo "Deployed and ready: https://$host/api/health/ready"
