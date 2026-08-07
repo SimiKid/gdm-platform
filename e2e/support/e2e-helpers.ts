@@ -12,10 +12,15 @@ export const API =
 export const ADMIN = process.env.E2E_ADMIN_URL ?? "http://localhost:3003";
 export const ADMIN_TOKEN = process.env.E2E_ADMIN_TOKEN ?? "";
 export const API_HEADERS = ADMIN_TOKEN
-  ? { "x-admin-token": ADMIN_TOKEN }
+  ? { Authorization: `Bearer ${ADMIN_TOKEN}` }
   : undefined;
 
 const PROGRESS_STORAGE_KEY = "gdm-study-progress";
+const PARTICIPANT_TOKEN_KEY = "gdm-tracking-token";
+
+export function participantHeaders(token: string): Record<string, string> {
+  return { Authorization: `Bearer ${token}` };
+}
 
 export interface TestCondition {
   id: string;
@@ -280,7 +285,9 @@ export async function provisionGroup(
     await expect
       .poll(
         async () => {
-          const response = await request.get(`${API}/sessions/${sessionId}`);
+          const response = await request.get(`${API}/sessions/${sessionId}`, {
+            headers: participantHeaders(opened[0].trackingToken),
+          });
           await requireOk(response, `load session ${sessionId}`);
           publicSession = (await response.json()) as PublicSession;
           return publicSession.status === "running" && Boolean(publicSession.roomId);
@@ -299,11 +306,14 @@ export async function provisionGroup(
       contexts.push(context);
       const matrix = { ...member.matrix, roomId };
       await context.addInitScript(
-        ({ progressKey, progress }) => {
+        ({ progressKey, tokenKey, token, progress }) => {
           sessionStorage.setItem(progressKey, JSON.stringify(progress));
+          sessionStorage.setItem(tokenKey, token);
         },
         {
           progressKey: PROGRESS_STORAGE_KEY,
+          tokenKey: PARTICIPANT_TOKEN_KEY,
+          token: member.trackingToken,
           progress: {
             stage: "chat",
             sessionId,
@@ -340,7 +350,11 @@ export async function provisionGroup(
   } catch (error) {
     await Promise.allSettled(contexts.map((context) => context.close()));
     if (sessionId) {
-      await request.post(`${API}/sessions/${sessionId}/complete`).catch(() => undefined);
+      await request
+        .post(`${API}/sessions/${sessionId}/complete`, {
+          headers: participantHeaders(opened[0]?.trackingToken ?? ""),
+        })
+        .catch(() => undefined);
     }
     throw error;
   }
@@ -388,7 +402,9 @@ export async function closeGroup(group: ProvisionedGroup): Promise<void> {
     group.members.map((member) => member.context.close()),
   );
   await group.request
-    .post(`${API}/sessions/${group.sessionId}/complete`)
+    .post(`${API}/sessions/${group.sessionId}/complete`, {
+      headers: participantHeaders(group.members[0].trackingToken),
+    })
     .catch(() => undefined);
 }
 

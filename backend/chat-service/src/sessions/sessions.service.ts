@@ -484,7 +484,7 @@ export class SessionsService
     if (windowTimer) clearTimeout(windowTimer);
     this.windowTimers.delete(roomId);
     await this.windowRequests.get(roomId);
-    await Promise.allSettled([...(this.ruleRequests.get(roomId) ?? [])]);
+    await Promise.allSettled(this.ruleRequests.get(roomId) ?? []);
     const timer = this.checkpointTimers.get(roomId);
     if (timer) clearTimeout(timer);
     this.checkpointTimers.delete(roomId);

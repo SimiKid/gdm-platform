@@ -110,7 +110,10 @@ describe("persistence & exports (integration)", () => {
     t = await createTestApp();
 
     const session = (
-      await request(t.http).get(`/api/sessions/${sessionId}`).expect(200)
+      await request(t.http)
+        .get(`/api/sessions/${sessionId}`)
+        .set("Authorization", "Bearer tt-P1-baseline")
+        .expect(200)
     ).body;
 
     expect(session.status).toBe("completed");
@@ -281,6 +284,7 @@ describe("persistence & exports (integration)", () => {
         .expect(200),
       request(t.http)
         .post("/api/surveys")
+        .set("Authorization", "Bearer tt-Checkpoint-safe")
         .send({
           sessionId,
           participantId,
@@ -295,6 +299,7 @@ describe("persistence & exports (integration)", () => {
     const completion = (
       await request(t.http)
         .post(`/api/sessions/${sessionId}/participants/${participantId}/complete`)
+        .set("Authorization", "Bearer tt-Checkpoint-safe")
         .expect(201)
     ).body;
 
@@ -442,6 +447,7 @@ describe("persistence & exports (integration)", () => {
     const submit = (kind: "entry" | "exit", answers: Record<string, unknown>) =>
       request(t.http)
         .post("/api/surveys")
+        .set("Authorization", "Bearer tt-Solo")
         .send({
           sessionId,
           participantId,
@@ -457,13 +463,14 @@ describe("persistence & exports (integration)", () => {
 
     await request(t.http)
       .post("/api/surveys")
+      .set("Authorization", "Bearer tt-Solo")
       .send({
         sessionId,
         participantId: "ghost",
         kind: "entry",
         survey: { answers: {}, submittedAt: "2026-07-07T09:00:00.000Z" },
       })
-      .expect(404);
+      .expect(401);
 
     await t.close();
     t = await createTestApp();
@@ -504,6 +511,10 @@ describe("persistence & exports (integration)", () => {
     ).body;
     await request(t.http)
       .post("/api/surveys")
+      .set(
+        "Authorization",
+        `Bearer prolific:${prolific.studyId}:${prolific.sessionId}`,
+      )
       .send({
         sessionId: opened.session.id,
         participantId: opened.participantId,
@@ -518,6 +529,10 @@ describe("persistence & exports (integration)", () => {
       await request(t.http)
         .post(
           `/api/sessions/${opened.session.id}/participants/${opened.participantId}/complete`,
+        )
+        .set(
+          "Authorization",
+          `Bearer prolific:${prolific.studyId}:${prolific.sessionId}`,
         )
         .expect(201)
     ).body;

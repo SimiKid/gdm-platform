@@ -18,6 +18,7 @@ import type {
 import { AdminGuard } from "../auth/admin.guard";
 import { SessionsService } from "../sessions/sessions.service";
 import { StoreService } from "../store/store.service";
+import { validateRoundLabel } from "../validation/request-validation";
 
 /**
  * Study rounds: the researcher runs the study in numbered waves, possibly
@@ -46,7 +47,7 @@ export class RoundsController {
   @Post("rounds")
   @UseGuards(AdminGuard)
   start(@Body() body: StartRoundRequest): Promise<StartRoundResponse> {
-    return this.sessions.startRound(body?.label);
+    return this.sessions.startRound(validateRoundLabel(body?.label));
   }
 
   /** Rename a round (the free-text label; numbers are fixed). */
@@ -58,7 +59,7 @@ export class RoundsController {
   ): Promise<StudyRound> {
     const id = Number(number);
     const updated = Number.isInteger(id)
-      ? await this.store.updateRoundLabel(id, body?.label ?? "")
+      ? await this.store.updateRoundLabel(id, validateRoundLabel(body?.label))
       : undefined;
     if (!updated) throw new NotFoundException(`Unknown round ${number}`);
     const rounds = await this.store.listRounds();

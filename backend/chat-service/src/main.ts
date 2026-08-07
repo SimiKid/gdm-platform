@@ -10,9 +10,14 @@ import { AppModule } from "./app.module";
  */
 function assertProductionConfig() {
   if (process.env.GDM_ENV !== "production") return;
-  if (!process.env.INTERNAL_API_TOKEN) {
+  if (
+    !process.env.INTERNAL_API_TOKEN ||
+    process.env.INTERNAL_API_TOKEN.trim().length < 32
+  ) {
     const logger = new Logger("Bootstrap");
-    logger.error("INTERNAL_API_TOKEN is empty — internal endpoints would be unprotected");
+    logger.error(
+      "INTERNAL_API_TOKEN must be a fresh secret of at least 32 characters",
+    );
     logger.error("GDM_ENV=production requires it; fix infra/.env and restart.");
     process.exit(1);
   }

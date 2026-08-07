@@ -34,6 +34,7 @@ export class MatrixBotService implements OnModuleInit {
   private userId = "";
   private accessToken = "";
   private running = false;
+  private syncConnected = false;
   private registration?: Promise<void>;
   private syncAbort?: AbortController;
   private readonly handlers: EventHandler[] = [];
@@ -74,6 +75,12 @@ export class MatrixBotService implements OnModuleInit {
 
   get botUserId(): string {
     return this.userId;
+  }
+
+  get isReady(): boolean {
+    return Boolean(
+      this.userId && this.accessToken && this.running && this.syncConnected,
+    );
   }
 
   /**
@@ -221,6 +228,7 @@ export class MatrixBotService implements OnModuleInit {
 
   stop(): void {
     this.running = false;
+    this.syncConnected = false;
     this.syncAbort?.abort();
   }
 
@@ -346,9 +354,11 @@ export class MatrixBotService implements OnModuleInit {
           ]),
         });
         if (!res.ok) {
+          this.syncConnected = false;
           if (this.running) await this.delay(2000);
           continue;
         }
+        this.syncConnected = true;
         const data = (await res.json()) as SyncResponse;
         since = data.next_batch;
         const joined = data.rooms?.join ?? {};
@@ -360,6 +370,7 @@ export class MatrixBotService implements OnModuleInit {
         }
       } catch (err) {
         if (!this.running) break;
+        this.syncConnected = false;
         this.log.error(`sync error: ${String(err)}`);
         await this.delay(2000);
       } finally {

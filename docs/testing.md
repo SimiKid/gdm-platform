@@ -166,8 +166,8 @@ Notes:
 - The suite can target any deployed stack: `E2E_PARTICIPANT_URL`,
   `E2E_SESSION_MANAGER_URL` and `E2E_ADMIN_URL` override the localhost
   defaults, and `E2E_ADMIN_TOKEN` authenticates against a stack whose
-  `ADMIN_API_TOKEN` is set (attached as `x-admin-token` to API calls and
-  pre-seeded into the dashboard's localStorage). See the smoke-test section
+  `ADMIN_API_TOKEN` is set (attached as an `Authorization: Bearer` credential
+  to API calls and pre-seeded into the dashboard's sessionStorage). See the smoke-test section
   in [deployment.md](deployment.md) for the ready-made production command.
 - Keep the full suite at one worker. For a deliberate load probe, target only
   `tests/golden-path.spec.ts` with `--repeat-each=N --workers=W`; each worker

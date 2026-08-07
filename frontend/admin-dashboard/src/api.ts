@@ -1,8 +1,8 @@
 /**
  * Session Manager access for the dashboard. All researcher endpoints are
  * protected by ADMIN_API_TOKEN on the backend; the token is entered once in
- * the dashboard and kept in localStorage. When the backend runs without a
- * token (local dev), everything works without entering one.
+ * the dashboard and kept only for this browser tab. When the backend runs
+ * without a token (local dev), everything works without entering one.
  */
 
 export const API_BASE =
@@ -14,7 +14,16 @@ const TOKEN_KEY = "gdm-admin-token";
 
 export function getAdminToken(): string {
   try {
-    return localStorage.getItem(TOKEN_KEY) ?? "";
+    const current = sessionStorage.getItem(TOKEN_KEY);
+    if (current) return current;
+    // Migrate credentials saved by older releases, then remove the persistent
+    // copy so closing the browser also closes the admin session.
+    const legacy = localStorage.getItem(TOKEN_KEY) ?? "";
+    if (legacy) {
+      sessionStorage.setItem(TOKEN_KEY, legacy);
+      localStorage.removeItem(TOKEN_KEY);
+    }
+    return legacy;
   } catch {
     return "";
   }
@@ -22,8 +31,9 @@ export function getAdminToken(): string {
 
 export function setAdminToken(token: string): void {
   try {
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
+    if (token) sessionStorage.setItem(TOKEN_KEY, token);
+    else sessionStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(TOKEN_KEY);
   } catch {
     /* ignore */
   }
@@ -32,12 +42,11 @@ export function setAdminToken(token: string): void {
 /** fetch against the Session Manager with the admin token attached. */
 export function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const token = getAdminToken();
+  const headers = new Headers(init.headers);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
   return fetch(`${API_BASE}${path}`, {
     ...init,
-    headers: {
-      ...(init.headers ?? {}),
-      ...(token ? { "x-admin-token": token } : {}),
-    },
+    headers,
   });
 }
 
@@ -51,13 +60,18 @@ export function isTestCondition(conditionId: string): boolean {
 }
 
 /**
- * Download links can't carry headers, so exports accept the token as a query
- * parameter instead.
+ * Safe href used by authenticated download links. Credentials are never
+ * included in URLs, browser history, or referrers.
  */
 export function exportUrl(path: string, query: string): string {
-  const token = getAdminToken();
   const params = new URLSearchParams(query);
-  if (token) params.set("token", token);
   const qs = params.toString();
   return `${API_BASE}${path}${qs ? `?${qs}` : ""}`;
+}
+
+/** Relative version of exportUrl for apiFetch(). */
+export function exportPath(path: string, query: string): string {
+  const params = new URLSearchParams(query);
+  const qs = params.toString();
+  return `${path}${qs ? `?${qs}` : ""}`;
 }

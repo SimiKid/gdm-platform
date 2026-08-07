@@ -64,7 +64,7 @@ describe("matchmaking & lifecycle (integration)", () => {
     // room only after Matrix members and the recorder are ready.
     expect(third.session.status).toBe("waiting");
     expect(third.matrix.roomId).toBe("");
-    const running = await waitForRunningSession(t, first.session.id);
+    const running = await waitForRunningSession(t, first.session.id, "tt-Anna");
     expect(running.startedAt).toBeDefined();
     expect(running.roomId).toBe("!room-1:test");
 
@@ -94,6 +94,7 @@ describe("matchmaking & lifecycle (integration)", () => {
     // What the Waiting Room polls comes back from Postgres, not memory.
     const polled = await request(t.http)
       .get(`/api/sessions/${first.session.id}`)
+      .set("Authorization", "Bearer tt-Anna")
       .expect(200);
     expect(polled.body.status).toBe("running");
     expect(polled.body.roomId).toBe("!room-1:test");
@@ -129,7 +130,7 @@ describe("matchmaking & lifecycle (integration)", () => {
 
     const sessionIds = new Set(responses.map((r) => r.session.id));
     expect(sessionIds.size).toBe(1);
-    await waitForRunningSession(t, responses[0].session.id);
+    await waitForRunningSession(t, responses[0].session.id, "tt-Ann");
     expect(t.matrix.createdRooms).toHaveLength(1);
     expect(responses.every((r) => r.matrix.roomId === "")).toBe(true);
   });
@@ -144,25 +145,70 @@ describe("matchmaking & lifecycle (integration)", () => {
     expect(again.session.participants).toHaveLength(1);
   });
 
+  it("requeues an aborted Prolific submission without violating its unique key", async () => {
+    const prolific = {
+      participantId: "aaaaaaaaaaaaaaaaaaaaaaaa",
+      studyId: "bbbbbbbbbbbbbbbbbbbbbbbb",
+      sessionId: "cccccccccccccccccccccccc",
+    };
+    const requestBody = {
+      trackingToken: `prolific:${prolific.studyId}:${prolific.sessionId}`,
+      participantName: "",
+      prolific,
+      conditionId: "baseline",
+    };
+    const first = (
+      await request(t.http).post("/api/sessions").send(requestBody).expect(201)
+    ).body;
+    await request(t.http).post("/api/rounds").send({}).expect(201);
+    const requeued = (
+      await request(t.http).post("/api/sessions").send(requestBody).expect(201)
+    ).body;
+
+    expect(requeued.session.id).not.toBe(first.session.id);
+    expect(requeued.participantId).toBe(first.participantId);
+    expect(requeued.session.status).toBe("waiting");
+  });
+
   it("does not leak tracking tokens or surveys through participant endpoints", async () => {
     const first = await openSession(t, "Anna", "baseline");
     await request(t.http)
       .post("/api/surveys")
+      .set("Authorization", "Bearer tt-Anna")
       .send({
         sessionId: first.session.id,
         participantId: first.participantId,
         kind: "entry",
-        survey: { answers: { secret: "yes" }, submittedAt: "now" },
+        survey: {
+          answers: { secret: "yes" },
+          submittedAt: "2026-08-07T12:00:00.000Z",
+        },
       })
       .expect(201);
 
     const polled = await request(t.http)
       .get(`/api/sessions/${first.session.id}`)
+      .set("Authorization", "Bearer tt-Anna")
       .expect(200);
     const raw = JSON.stringify(polled.body);
     expect(raw).not.toContain("tt-Anna");
     expect(raw).not.toContain("secret");
     expect(polled.body.participants).toHaveLength(1);
+  });
+
+  it("requires the seat credential for participant REST endpoints", async () => {
+    const first = await openSession(t, "Anna", "baseline");
+    await request(t.http)
+      .get(`/api/sessions/${first.session.id}`)
+      .expect(401);
+    await request(t.http)
+      .get(`/api/sessions/${first.session.id}`)
+      .set("Authorization", "Bearer wrong-seat")
+      .expect(401);
+    await request(t.http)
+      .get(`/api/sessions/${first.session.id}`)
+      .set("Authorization", "Bearer tt-Anna")
+      .expect(200);
   });
 
   it("returns 404 for an unknown condition", async () => {

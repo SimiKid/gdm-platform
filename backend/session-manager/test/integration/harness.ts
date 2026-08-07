@@ -32,6 +32,7 @@ export class FakeMatrixService {
   createdRooms: string[] = [];
   joins: { accessToken: string; roomId: string }[] = [];
   invites: { roomId: string; userId: string }[] = [];
+  powerLevels: { roomId: string; userId: string; level: number }[] = [];
 
   async registerUser(localpartHint: string): Promise<MatrixCreds> {
     const creds = {
@@ -54,6 +55,14 @@ export class FakeMatrixService {
 
   async joinRoom(accessToken: string, roomId: string): Promise<void> {
     this.joins.push({ accessToken, roomId });
+  }
+
+  async setUserPowerLevel(
+    roomId: string,
+    userId: string,
+    level: number,
+  ): Promise<void> {
+    this.powerLevels.push({ roomId, userId, level });
   }
 }
 
@@ -183,7 +192,11 @@ export async function fillSession(
   }
   // Room provisioning is intentionally detached from participant enrollment;
   // mirror the real waiting-room poll before tests act on the live session.
-  await waitForRunningSession(t, responses[0].session.id);
+  await waitForRunningSession(
+    t,
+    responses[0].session.id,
+    `tt-P1-${conditionId}`,
+  );
   return responses;
 }
 
@@ -191,9 +204,13 @@ export async function fillSession(
 export async function waitForRunningSession(
   t: TestApp,
   sessionId: string,
+  trackingToken: string,
 ): Promise<PublicSession> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    const current = await request(t.http).get(`/api/sessions/${sessionId}`).expect(200);
+    const current = await request(t.http)
+      .get(`/api/sessions/${sessionId}`)
+      .set("Authorization", `Bearer ${trackingToken}`)
+      .expect(200);
     if (current.body.status === "running") {
       return current.body as PublicSession;
     }

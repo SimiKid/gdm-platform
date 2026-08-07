@@ -6,7 +6,6 @@ import type {
   ProlificResumeResponse,
   PublicSession,
   RecordProlificArrivalResponse,
-  StudySettings,
   SubmitSurveyRequest,
 } from "@gdm/shared";
 
@@ -41,8 +40,6 @@ export interface SessionManagerClient {
     sessionId: string,
     participantId: string,
   ): Promise<CompleteParticipantResponse>;
-  /** Study-wide settings, e.g. the researcher-set compensation link. */
-  getStudySettings(): Promise<StudySettings>;
 }
 
 /**
@@ -52,10 +49,35 @@ export interface SessionManagerClient {
 const API_BASE =
   import.meta.env.VITE_SESSION_MANAGER_URL ?? "http://localhost:3001/api";
 
+const PARTICIPANT_TOKEN_KEY = "gdm-tracking-token";
+const REQUEST_TIMEOUT_MS = 15_000;
+
+function participantHeaders(
+  headers: Record<string, string> = {},
+): Record<string, string> {
+  let token = "";
+  try {
+    token = sessionStorage.getItem(PARTICIPANT_TOKEN_KEY) ?? "";
+  } catch {
+    /* A missing token produces a normal 401 response. */
+  }
+  return {
+    ...headers,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+function request(input: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(input, {
+    ...init,
+    signal: init.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+}
+
 /** Real implementation — enabled once the Session Manager is running. */
 export const httpSessionManager: SessionManagerClient = {
   async recordProlificArrival(prolific) {
-    const res = await fetch(`${API_BASE}/prolific/arrivals`, {
+    const res = await request(`${API_BASE}/prolific/arrivals`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prolific }),
@@ -66,7 +88,7 @@ export const httpSessionManager: SessionManagerClient = {
     return (await res.json()) as RecordProlificArrivalResponse;
   },
   async resumeProlific(prolific) {
-    const res = await fetch(`${API_BASE}/prolific/resume`, {
+    const res = await request(`${API_BASE}/prolific/resume`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prolific }),
@@ -79,7 +101,7 @@ export const httpSessionManager: SessionManagerClient = {
     return JSON.parse(body) as ProlificResumeResponse | null;
   },
   async openSession(req) {
-    const res = await fetch(`${API_BASE}/sessions`, {
+    const res = await request(`${API_BASE}/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req),
@@ -88,37 +110,35 @@ export const httpSessionManager: SessionManagerClient = {
     return (await res.json()) as OpenSessionResponse;
   },
   async getSession(id) {
-    const res = await fetch(`${API_BASE}/sessions/${id}`);
+    const res = await request(`${API_BASE}/sessions/${id}`, {
+      headers: participantHeaders(),
+    });
     if (!res.ok) throw new Error(`getSession failed: ${res.status}`);
     return (await res.json()) as PublicSession;
   },
   async submitSurvey(req) {
-    const res = await fetch(`${API_BASE}/surveys`, {
+    const res = await request(`${API_BASE}/surveys`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: participantHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(req),
     });
     if (!res.ok) throw new Error(`submitSurvey failed: ${res.status}`);
   },
   async completeSession(id) {
-    const res = await fetch(`${API_BASE}/sessions/${id}/complete`, {
+    const res = await request(`${API_BASE}/sessions/${id}/complete`, {
       method: "POST",
+      headers: participantHeaders(),
     });
     if (!res.ok) throw new Error(`completeSession failed: ${res.status}`);
   },
   async completeParticipant(sessionId, participantId) {
-    const res = await fetch(
+    const res = await request(
       `${API_BASE}/sessions/${sessionId}/participants/${participantId}/complete`,
-      { method: "POST" },
+      { method: "POST", headers: participantHeaders() },
     );
     if (!res.ok) {
       throw new Error(`completeParticipant failed: ${res.status}`);
     }
     return (await res.json()) as CompleteParticipantResponse;
-  },
-  async getStudySettings() {
-    const res = await fetch(`${API_BASE}/settings`);
-    if (!res.ok) throw new Error(`getStudySettings failed: ${res.status}`);
-    return (await res.json()) as StudySettings;
   },
 };

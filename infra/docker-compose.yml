@@ -3,6 +3,12 @@
 ## production runs `docker compose -f docker-compose.yml -f docker-compose.prod.yml`
 ## and exposes only the Caddy reverse proxy on 80/443.
 
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   # ── Matrix Synapse ────────────────────────────────────
   synapse:
@@ -10,6 +16,7 @@ services:
     # upgrade deliberately so a deploy cannot silently change Matrix behavior.
     image: matrixdotorg/synapse:v1.157.2
     restart: unless-stopped
+    logging: *default-logging
     labels:
       # Production deploy.sh injects the rendered config hash. A changed bind
       # mount alone does not make Compose recreate a container.
@@ -40,6 +47,7 @@ services:
   synapse-db:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_DB: ${SYNAPSE_DB_NAME}
       POSTGRES_USER: ${SYNAPSE_DB_USER}
@@ -57,6 +65,7 @@ services:
   research-db:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_DB: ${RESEARCH_DB_NAME}
       POSTGRES_USER: ${RESEARCH_DB_USER}
@@ -75,6 +84,7 @@ services:
       context: ..
       dockerfile: backend/session-manager/Dockerfile
     restart: unless-stopped
+    logging: *default-logging
     stop_grace_period: 45s
     environment:
       GDM_ENV: ${GDM_ENV:-development}
@@ -89,6 +99,7 @@ services:
       WAITING_TIMEOUT_MINUTES: ${WAITING_TIMEOUT_MINUTES:-30}
       PROLIFIC_STUDY_ID: ${PROLIFIC_STUDY_ID:-}
       PROLIFIC_API_TOKEN: ${PROLIFIC_API_TOKEN:-}
+      PROLIFIC_REQUIRE_VALIDATION: ${PROLIFIC_REQUIRE_VALIDATION:-false}
       MATRIX_RATE_LIMIT_RETRIES: ${MATRIX_RATE_LIMIT_RETRIES:-8}
       MATRIX_RETRY_MAX_DELAY_MS: ${MATRIX_RETRY_MAX_DELAY_MS:-30000}
       MATRIX_REQUEST_TIMEOUT_MS: ${MATRIX_REQUEST_TIMEOUT_MS:-15000}
@@ -102,7 +113,7 @@ services:
       research-db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/api/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/api/health/ready || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -114,6 +125,7 @@ services:
       context: ..
       dockerfile: backend/chat-service/Dockerfile
     restart: unless-stopped
+    logging: *default-logging
     # Lets the shutdown hook finish in-flight classifiers/checkpoints and send
     # one final monotonic snapshot before the container is killed.
     stop_grace_period: 75s
@@ -142,7 +154,7 @@ services:
       session-manager:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3002/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3002/health/ready || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -157,6 +169,7 @@ services:
         VITE_MATRIX_HOMESERVER: /
         VITE_SESSION_MANAGER_URL: /api
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       synapse:
         condition: service_healthy
@@ -174,6 +187,7 @@ services:
         # recruiting link in the dashboard.
         VITE_PARTICIPANT_URL: ${PARTICIPANT_PUBLIC_URL:-http://localhost:3000}
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       session-manager:
         condition: service_healthy

@@ -93,7 +93,7 @@ describe("Survey", () => {
     expect(survey.answers.age).toBe(30);
     expect(survey.answers.gender).toBe("female");
     expect(survey.answers.education).toBe("Master's degree");
-    expect(survey.answers.individualRanking).toHaveLength(15);
+    expect(survey.answers.individualRanking).toHaveLength(10);
     expect(survey.answers.rankingCompleted).toBe(true);
     expect(survey.answers.englishProficiency).toBe("fluent");
     expect(survey.answers.chatComfort).toBe(6);

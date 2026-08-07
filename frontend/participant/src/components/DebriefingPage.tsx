@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import StudyShell from "./StudyShell";
-import { httpSessionManager } from "../study/sessionClient";
 
 /**
  * Page 6 — Debriefing & Compensation, the final page of the study.
@@ -16,24 +15,7 @@ interface Props {
 
 export default function DebriefingPage({ completionUrl = "" }: Props) {
   const [read, setRead] = useState(false);
-  const [paymentUrl, setPaymentUrl] = useState<string>(
-    import.meta.env.VITE_PAYMENT_URL ?? "#",
-  );
-
-  useEffect(() => {
-    if (completionUrl) {
-      setPaymentUrl(completionUrl);
-      return;
-    }
-    void httpSessionManager
-      .getStudySettings()
-      .then((settings) => {
-        if (settings.compensationUrl) setPaymentUrl(settings.compensationUrl);
-      })
-      .catch(() => {
-        /* keep the build-time fallback */
-      });
-  }, [completionUrl]);
+  const paymentUrl = completionUrl || import.meta.env.VITE_PAYMENT_URL || "#";
 
   const paymentConfigured = paymentUrl !== "" && paymentUrl !== "#";
 
@@ -57,16 +39,20 @@ export default function DebriefingPage({ completionUrl = "" }: Props) {
 
         <h2>Your data</h2>
         <p>
-          All data remain pseudonymous and are used for scientific purposes
-          only. If you now prefer to withdraw your data, contact us at [study
-          contact email] within 14 days, quoting your participant code, and we
-          will delete it. This does not affect your compensation.
+          Research exports use pseudonymous participant codes. If you now
+          prefer to withdraw your data, contact the researcher through
+          Prolific Messages within 14 days and quote your Prolific participant
+          ID. The researcher will remove the linked record; this does not
+          affect your compensation.
         </p>
         <p>
           Please keep the study purpose confidential until data collection is
           complete, as other participants have not yet taken part.
         </p>
-        <p>Questions or interest in the results: [study contact email]</p>
+        <p>
+          For questions or interest in the results, contact the researcher
+          through Prolific Messages.
+        </p>
 
         <label className="consent-check">
           <input
