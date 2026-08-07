@@ -140,15 +140,22 @@ describe("SessionsService (session-manager)", () => {
     ).resolves.toBeDefined();
   });
 
-  it("accepts a short preview session ID only without API validation", async () => {
-    const preview = { ...prolific, sessionId: "pppppppppppp" };
+  it("accepts variable-length preview session IDs only without API validation", async () => {
+    const previews = [
+      { ...prolific, sessionId: "pppppppppppp" },
+      { ...prolific, sessionId: "011oegacrp0rf" },
+    ];
 
-    await expect(svc.recordProlificArrival(preview)).resolves.toBeDefined();
+    for (const preview of previews) {
+      await expect(svc.recordProlificArrival(preview)).resolves.toBeDefined();
+    }
 
     process.env.PROLIFIC_API_TOKEN = "server-only-token";
-    await expect(svc.recordProlificArrival(preview)).rejects.toThrow(
-      /invalid prolific/i,
-    );
+    for (const preview of previews) {
+      await expect(svc.recordProlificArrival(preview)).rejects.toThrow(
+        /invalid prolific/i,
+      );
+    }
   });
 
   it("verifies Prolific submission ownership when an API token is configured", async () => {
