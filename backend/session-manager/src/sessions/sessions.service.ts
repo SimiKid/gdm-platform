@@ -235,9 +235,10 @@ export class SessionsService {
     // Prolific identifiers are 24 alphanumeric characters. They are not
     // guaranteed to be hexadecimal, particularly in participant previews.
     const idPattern = /^[a-z0-9]{24}$/i;
-    // Prolific's researcher preview uses a shorter synthetic submission ID.
-    // Accept it only while API-backed submission validation is disabled.
-    const previewSessionIdPattern = /^[a-z0-9]{12}$/i;
+    // Prolific's researcher preview uses shorter synthetic submission IDs whose
+    // length can vary. Accept those only while API-backed validation is off;
+    // secure validation still requires the real 24-character submission ID.
+    const previewSessionIdPattern = /^[a-z0-9]{12,23}$/i;
     const validSessionId =
       idPattern.test(identity.sessionId) ||
       (!apiToken && previewSessionIdPattern.test(identity.sessionId));
