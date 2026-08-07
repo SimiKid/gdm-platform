@@ -88,7 +88,7 @@ describe("ExitSurvey", () => {
       ([url]) => String(url).includes("/surveys"),
     );
     const body = JSON.parse(surveyCall![1].body);
-    expect(body.survey.answers.finalRanking).toHaveLength(15);
+    expect(body.survey.answers.finalRanking).toHaveLength(10);
     expect(body.survey.answers.satisfaction).toBe(6);
     expect(body.survey.answers.fairness).toBe(5);
     expect(body.survey.answers.feltHeard).toBe(7);

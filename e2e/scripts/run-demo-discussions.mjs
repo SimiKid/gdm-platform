@@ -19,7 +19,7 @@ const PARTICIPANT = process.env.E2E_PARTICIPANT_URL ?? "http://localhost:3000";
 const ADMIN_TOKEN = process.env.E2E_ADMIN_TOKEN ?? "";
 const HEADERS = {
   "Content-Type": "application/json",
-  ...(ADMIN_TOKEN ? { "x-admin-token": ADMIN_TOKEN } : {}),
+  ...(ADMIN_TOKEN ? { Authorization: `Bearer ${ADMIN_TOKEN}` } : {}),
 };
 
 const ARMS = ["baseline", "public-llm", "private-llm"];

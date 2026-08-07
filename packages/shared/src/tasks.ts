@@ -41,7 +41,7 @@ export const MOON_SURVIVAL: RankingTask = {
  * NASA's expert ranking for the moon-survival items (1 = most important).
  * Used to score individual and group rankings for analysis: the standard
  * error score is the sum over items of |assigned rank − expert rank|
- * (0 = perfect agreement, 112 = fully reversed for 15 items).
+ * (0 = perfect agreement, 50 = fully reversed for the current 10 items).
  */
 export const MOON_SURVIVAL_EXPERT_RANKING: Record<string, number> = {
   oxygen: 1,

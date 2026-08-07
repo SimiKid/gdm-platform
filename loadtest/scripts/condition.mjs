@@ -29,7 +29,7 @@ if (!profiles[profileName]) {
 
 const headers = {
   "Content-Type": "application/json",
-  ...(adminToken ? { "x-admin-token": adminToken } : {}),
+  ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
 };
 
 if (action === "create") {

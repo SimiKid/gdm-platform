@@ -5,6 +5,7 @@ import type {
   TimelineEvent,
 } from "../matrix/matrix-bot.service";
 import type { BotRules } from "../rules/bot-rules";
+import type { ModerationClassifier } from "../classifier/moderation-classifier";
 import { DEFAULT_INTERVENTION_CONFIG } from "@gdm/shared";
 import type {
   Condition,
@@ -77,7 +78,11 @@ describe("SessionsService (chat-service)", () => {
     vi.useFakeTimers();
     ({ bot, emit } = makeBot());
     rules = { onEvent: vi.fn(), onWindowElapsed: vi.fn() };
-    svc = new SessionsService(bot, rules as unknown as BotRules);
+    const moderation = {
+      enabled: false,
+      check: vi.fn(async () => ({ flagged: false, reason: "test" })),
+    } as unknown as ModerationClassifier;
+    svc = new SessionsService(bot, rules as unknown as BotRules, moderation);
     fetchMock = vi.fn(async () => ({ ok: true }));
     vi.stubGlobal("fetch", fetchMock);
   });

@@ -5,7 +5,9 @@ const ADMIN = process.env.E2E_ADMIN_URL ?? "http://localhost:3003";
 // Required when the target stack sets ADMIN_API_TOKEN (production smoke test);
 // locally the guards are open and this stays empty.
 const ADMIN_TOKEN = process.env.E2E_ADMIN_TOKEN ?? "";
-const API_HEADERS = ADMIN_TOKEN ? { "x-admin-token": ADMIN_TOKEN } : undefined;
+const API_HEADERS = ADMIN_TOKEN
+  ? { Authorization: `Bearer ${ADMIN_TOKEN}` }
+  : undefined;
 
 /**
  * The test provisions its own condition so it never touches the study's real
@@ -19,6 +21,15 @@ const API_HEADERS = ADMIN_TOKEN ? { "x-admin-token": ADMIN_TOKEN } : undefined;
 const CONDITION_ID = `e2e-${Date.now().toString(36)}`;
 const DISCUSSION_MINUTES = 1;
 const GROUP_SIZE = 3;
+const TEST_PROLIFIC = (() => {
+  if (process.env.E2E_FAKE_PROLIFIC !== "1") return undefined;
+  const suffix = Date.now().toString(36).padStart(23, "0").slice(-23);
+  return {
+    participantId: `p${suffix}`,
+    studyId: `s${suffix}`,
+    sessionId: `r${suffix}`,
+  };
+})();
 
 const CHAT_MESSAGES = [
   "I would put the oxygen tanks first, no question.",
@@ -26,13 +37,38 @@ const CHAT_MESSAGES = [
   "Do not forget the star map, we need to navigate.",
 ];
 
+let restoreEmptyCompensationUrl = false;
+
 test.beforeAll(async ({ request }) => {
+  const settings = await request.get(`${API}/settings`, { headers: API_HEADERS });
+  expect(settings.ok()).toBe(true);
+  const current = (await settings.json()) as { compensationUrl?: string };
+  if (!current.compensationUrl) {
+    const configured = await request.put(`${API}/settings`, {
+      headers: API_HEADERS,
+      data: {
+        settings: {
+          compensationUrl:
+            "https://app.prolific.com/submissions/complete?cc=E2ETEST",
+        },
+      },
+    });
+    expect(configured.ok()).toBe(true);
+    restoreEmptyCompensationUrl = true;
+  }
   await upsertCondition(request, true);
 });
 
 test.afterAll(async ({ request }) => {
   // Keep the data for inspection but stop matchmaking from picking the arm up.
   await upsertCondition(request, false);
+  if (restoreEmptyCompensationUrl) {
+    const restored = await request.put(`${API}/settings`, {
+      headers: API_HEADERS,
+      data: { settings: { compensationUrl: "" } },
+    });
+    expect(restored.ok()).toBe(true);
+  }
 });
 
 async function upsertCondition(request: APIRequestContext, active: boolean) {
@@ -57,8 +93,16 @@ async function upsertCondition(request: APIRequestContext, active: boolean) {
 
 /** Recruiting → consent → about-you → individual ranking → group intro. */
 async function walkToWaitingRoom(page: Page, seat: number): Promise<void> {
-  await page.goto(`/?conditionId=${CONDITION_ID}`);
-  await page.getByRole("button", { name: "Start" }).click();
+  const query = new URLSearchParams({ conditionId: CONDITION_ID });
+  if (seat === 0 && TEST_PROLIFIC) {
+    query.set("PROLIFIC_PID", TEST_PROLIFIC.participantId);
+    query.set("STUDY_ID", TEST_PROLIFIC.studyId);
+    query.set("SESSION_ID", TEST_PROLIFIC.sessionId);
+  }
+  await page.goto(`/?${query.toString()}`);
+  if (!(seat === 0 && TEST_PROLIFIC)) {
+    await page.getByRole("button", { name: "Start" }).click();
+  }
 
   // Consent: all three boxes, then begin.
   await expect(
@@ -76,7 +120,7 @@ async function walkToWaitingRoom(page: Page, seat: number): Promise<void> {
   await page.locator("#about-field").fill("End-to-end testing");
   await page.getByRole("button", { name: "Continue" }).click();
 
-  // Individual ranking: add all 15 items in list order, then submit.
+  // Individual ranking: add every current task item in list order, then submit.
   await expect(
     page.getByRole("heading", { name: "Your Task: Survival on the Moon" }),
   ).toBeVisible();
@@ -217,7 +261,7 @@ test("@golden three participants run a full study session end to end", async ({
     sessionId = session!.id;
     await expect
       .poll(async () => {
-        const res = await request.get(`${API}/sessions/${sessionId}`, {
+        const res = await request.get(`${API}/admin/sessions/${sessionId}`, {
           headers: API_HEADERS,
         });
         return ((await res.json()) as { status: string }).status;
@@ -229,7 +273,11 @@ test("@golden three participants run a full study session end to end", async ({
         headers: API_HEADERS,
       })
     ).json()) as {
-      participants: { entrySurvey?: unknown; exitSurvey?: unknown }[];
+      participants: {
+        entrySurvey?: unknown;
+        exitSurvey?: unknown;
+        prolific?: typeof TEST_PROLIFIC;
+      }[];
       chat: { messages: { text: string }[] };
       rankingHistory?: unknown[];
     };
@@ -240,6 +288,11 @@ test("@golden three participants run a full study session end to end", async ({
     expect(detail.participants.filter((p) => p.exitSurvey)).toHaveLength(
       GROUP_SIZE,
     );
+    if (TEST_PROLIFIC) {
+      expect(detail.participants.some((p) =>
+        p.prolific?.sessionId === TEST_PROLIFIC.sessionId
+      )).toBe(true);
+    }
     const recordedTexts = detail.chat.messages.map((m) => m.text);
     for (const text of CHAT_MESSAGES) expect(recordedTexts).toContain(text);
     expect(detail.rankingHistory?.length ?? 0).toBeGreaterThanOrEqual(1);
@@ -257,10 +310,10 @@ test("@golden three participants run a full study session end to end", async ({
   await test.step("the researcher sees the session as completed in the dashboard", async () => {
     const adminContext = await browser.newContext();
     if (ADMIN_TOKEN) {
-      // Pre-seed the token the dashboard keeps in localStorage so the run
+      // Pre-seed the token the dashboard keeps in sessionStorage so the run
       // lands on the session table instead of the token gate.
       await adminContext.addInitScript(
-        (token) => localStorage.setItem("gdm-admin-token", token),
+        (token) => sessionStorage.setItem("gdm-admin-token", token),
         ADMIN_TOKEN,
       );
     }

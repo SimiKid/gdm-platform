@@ -174,6 +174,7 @@ describe("research reports (integration)", () => {
 
     await request(t.http)
       .post("/api/surveys")
+      .set("Authorization", "Bearer tt-P1-private-llm")
       .send({
         sessionId,
         participantId: first.participantId,
@@ -192,6 +193,7 @@ describe("research reports (integration)", () => {
       .expect(201);
     await request(t.http)
       .post("/api/surveys")
+      .set("Authorization", "Bearer tt-P1-private-llm")
       .send({
         sessionId,
         participantId: first.participantId,

@@ -38,11 +38,11 @@ export default function ConsentPage({ onBegin }: Props) {
       </p>
 
       <h2>Procedure &amp; Duration</h2>
-      <p>The session takes approximately 35–45 minutes and consists of:</p>
+      <p>The session typically takes approximately 25–35 minutes and consists of:</p>
       <ul>
         <li>A short questionnaire about you</li>
         <li>An individual decision task (max. 10 minutes)</li>
-        <li>A group discussion and decision task in a chat room (15 minutes)</li>
+        <li>A timed group discussion and decision task in a chat room</li>
         <li>A short exit survey</li>
       </ul>
       <p>
@@ -62,8 +62,8 @@ export default function ConsentPage({ onBegin }: Props) {
       <h2>Data Collection &amp; Confidentiality</h2>
       <ul>
         <li>
-          All data are collected pseudonymously; your responses cannot be
-          linked to your identity.
+          Research data are collected under pseudonymous participant codes
+          rather than names.
         </li>
         <li>
           If you were recruited through Prolific, your pseudonymous Prolific
@@ -75,10 +75,12 @@ export default function ConsentPage({ onBegin }: Props) {
           analyzed for scientific purposes.
         </li>
         <li>
-          Data are stored securely on University of Zurich servers and used
-          exclusively for research. Anonymized data may be published in
-          aggregate form; no personally identifying information will ever be
-          published.
+          Study records are stored on University of Zurich servers. In study
+          conditions that use semantic assistance, recent pseudonymous chat
+          text is sent to Anthropic's API to classify participation and create
+          assistant wording; Prolific identifiers are not included in those
+          requests. Results may be published only in aggregate or anonymized
+          form.
         </li>
       </ul>
 
@@ -86,16 +88,18 @@ export default function ConsentPage({ onBegin }: Props) {
       <p>
         There are no known risks beyond those of everyday computer use. There
         is no direct benefit to you; your participation contributes to research
-        on collaborative decision-making. (Add compensation details here if
-        applicable.)
+        on collaborative decision-making. Compensation is the amount shown in
+        the Prolific study listing and is processed after completion.
       </p>
 
       <h2>Contact</h2>
       <p>
-        For questions about the study: [study contact email]
+        For questions about the study, contact the researcher through Prolific
+        Messages.
         <br />
-        For questions about your rights as a participant: [ethics committee
-        contact]
+        For questions about your rights as a participant, use the same channel
+        and ask for the University of Zurich ethics contact responsible for
+        this study.
       </p>
 
       <section className="consent-box" aria-labelledby="consent-heading">

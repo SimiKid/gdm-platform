@@ -88,6 +88,11 @@ function createClient(
 
 const studySession = {
   roomId: ROOM_ID,
+  participants: [
+    { id: "p1", name: "Green" },
+    { id: "p2", name: "Blue" },
+    { id: "p3", name: "Red" },
+  ],
   condition: {
     name: "Test condition",
     groupSize: 3,
@@ -196,7 +201,7 @@ describe("Chat telemetry", () => {
     });
 
     expect(screen.queryByText("Loading group...")).not.toBeInTheDocument();
-    expect(screen.getByText("Green")).toBeInTheDocument();
+    expect(screen.getByText(/You are writing as Green/)).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Type a message")).toBeInTheDocument();
   });
 

@@ -3,7 +3,7 @@ import { MOON_SURVIVAL_EXPERT_RANKING } from "@gdm/shared";
 /**
  * NASA error score for a ranking: sum over items of |assigned rank − expert
  * rank|, where the assigned rank of `order[i]` is `i + 1`. 0 = perfect
- * agreement; 112 = fully reversed for the 15 moon-survival items.
+ * agreement; 50 = fully reversed for the current 10 moon-survival items.
  *
  * Returns null unless `order` is exactly a permutation of the expert key's
  * items — partial, duplicated, or unknown-id rankings are not scored (the

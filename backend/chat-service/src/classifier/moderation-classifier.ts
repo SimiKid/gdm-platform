@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 
 const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
+const REQUEST_TIMEOUT_MS = 5_000;
 
 export interface ModerationResult {
   flagged: boolean;
@@ -46,6 +47,7 @@ export class ModerationClassifier {
           "x-api-key": apiKey,
           "anthropic-version": "2023-06-01",
         },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         body: JSON.stringify({
           model,
           max_tokens: 100,

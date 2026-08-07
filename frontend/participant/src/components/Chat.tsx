@@ -456,7 +456,8 @@ export default function Chat({ client, session, onTimeUp }: Props) {
   }
 
   const room = activeRoomId ? client.getRoom(activeRoomId) : null;
-  const title = session?.condition.name ?? room?.name ?? "Group Chat";
+  // Keep experimental-arm labels blinded during the discussion.
+  const title = session ? "Group discussion" : room?.name ?? "Group Chat";
   // Turn the timer red and show "wrap up!" exactly when the bot stops nudging:
   // the wrap-up window is the condition's protected-end period (config-driven).
   const wrapUpMs = session ? protectedEndMs(session.condition.config) : 0;

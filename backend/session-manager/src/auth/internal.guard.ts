@@ -5,6 +5,7 @@ import {
   Logger,
   UnauthorizedException,
 } from "@nestjs/common";
+import { safeTokenEqual } from "./bearer-token";
 
 interface IncomingRequest {
   headers: Record<string, string | string[] | undefined>;
@@ -32,7 +33,10 @@ export class InternalGuard implements CanActivate {
       return true;
     }
     const req = context.switchToHttp().getRequest<IncomingRequest>();
-    if (req.headers["x-internal-token"] === expected) return true;
+    const provided = req.headers["x-internal-token"];
+    if (typeof provided === "string" && safeTokenEqual(provided, expected)) {
+      return true;
+    }
     throw new UnauthorizedException("Internal token required");
   }
 }

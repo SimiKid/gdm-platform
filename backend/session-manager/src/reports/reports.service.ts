@@ -420,7 +420,7 @@ export class ReportsService {
         "timestamp",
         "ranking_completed",
         "error",
-        // One numeric column per item: the rank (1..15) assigned to it.
+        // One numeric column per item: the assigned 1..N rank.
         ...itemIds,
       ],
       ...rankings.map((row) => [
@@ -598,7 +598,7 @@ interface RankingRow {
   rankingCompleted: boolean | null;
   error: number | null;
   order: string[];
-  /** item id -> assigned rank (1..15); null when the item is missing. */
+  /** item id -> assigned 1..N rank; null when the item is missing. */
   ranks: Record<string, number | null>;
 }
 
@@ -957,6 +957,13 @@ function cell(value: string | number | boolean | null | undefined): string {
 // ── codebook ───────────────────────────────────────────────────────
 
 function codebook(generatedAt: string): string {
+  const itemCount = MOON_SURVIVAL.items.length;
+  const maximumError =
+    rankingErrorScore(
+      Object.entries(MOON_SURVIVAL_EXPERT_RANKING)
+        .sort(([, a], [, b]) => b - a)
+        .map(([id]) => id),
+    ) ?? 0;
   const expertKey = MOON_SURVIVAL.items
     .map(
       (item) =>
@@ -1076,7 +1083,7 @@ solution). \`type\`:
   \`participant_pseudonym\` is the member who produced it
 - \`group-final\` — the group's final order at session end
 
-The 15 item columns hold the rank (1..15) assigned to that item in this
+The ${itemCount} item columns hold the rank (1..${itemCount}) assigned to that item in this
 row's order; compare against the expert key below.
 
 ### messages.csv — one row per chat message
@@ -1088,7 +1095,7 @@ participant-authored free text.
 ## 4. Ranking scoring
 
 NASA error score = Σ over items of |assigned rank − expert rank|
-(0 = perfect, 112 = fully reversed). Expert key:
+(0 = perfect, ${maximumError} = fully reversed). Expert key:
 
 | Item id | Label | Expert rank |
 | --- | --- | --- |

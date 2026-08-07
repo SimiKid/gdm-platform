@@ -16,7 +16,7 @@ import {
 
 const RESTART_ENABLED = process.env.E2E_ALLOW_SERVICE_RESTART === "1";
 const CHAT_HEALTH =
-  process.env.E2E_CHAT_SERVICE_URL ?? "http://localhost:3002/health";
+  process.env.E2E_CHAT_SERVICE_URL ?? "http://localhost:3002/health/ready";
 const DEFAULT_INFRA_DIR = existsSync(resolve(process.cwd(), "../infra"))
   ? resolve(process.cwd(), "../infra")
   : resolve(process.cwd(), "infra");
@@ -60,6 +60,11 @@ test("@recovery live messages, ranking and intervention state survive service re
 
   const infraDir = process.env.E2E_COMPOSE_DIR ?? DEFAULT_INFRA_DIR;
   const composeEnvFile = process.env.E2E_COMPOSE_ENV_FILE ?? ".env";
+  const composeProject = process.env.E2E_COMPOSE_PROJECT ?? "";
+  const composeFiles = (process.env.E2E_COMPOSE_FILES ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
   if (!existsSync(resolve(infraDir, composeEnvFile))) {
     throw new Error(
       `Recovery test needs ${resolve(infraDir, composeEnvFile)} and the local compose stack.`,
@@ -112,15 +117,21 @@ test("@recovery live messages, ranking and intervention state survive service re
       (message) => message.text === beforeText,
     )!.id;
 
-    compose(infraDir, composeEnvFile, [
+    compose(infraDir, composeEnvFile, composeProject, composeFiles, [
       "stop",
       "chat-service",
       "session-manager",
     ]);
     servicesStopped = true;
-    compose(infraDir, composeEnvFile, ["start", "session-manager"]);
-    await waitForHealth(`${API}/health`, 60_000);
-    compose(infraDir, composeEnvFile, ["start", "chat-service"]);
+    compose(infraDir, composeEnvFile, composeProject, composeFiles, [
+      "start",
+      "session-manager",
+    ]);
+    await waitForHealth(`${API}/health/ready`, 60_000);
+    compose(infraDir, composeEnvFile, composeProject, composeFiles, [
+      "start",
+      "chat-service",
+    ]);
     await waitForHealth(CHAT_HEALTH, 60_000);
     servicesStopped = false;
 
@@ -155,9 +166,15 @@ test("@recovery live messages, ranking and intervention state survive service re
     await expect(group.pages[0].locator(".bot-message")).toHaveCount(2);
   } finally {
     if (servicesStopped) {
-      compose(infraDir, composeEnvFile, ["start", "session-manager"]);
-      await waitForHealth(`${API}/health`, 60_000).catch(() => undefined);
-      compose(infraDir, composeEnvFile, ["start", "chat-service"]);
+      compose(infraDir, composeEnvFile, composeProject, composeFiles, [
+        "start",
+        "session-manager",
+      ]);
+      await waitForHealth(`${API}/health/ready`, 60_000).catch(() => undefined);
+      compose(infraDir, composeEnvFile, composeProject, composeFiles, [
+        "start",
+        "chat-service",
+      ]);
       await waitForHealth(CHAT_HEALTH, 60_000).catch(() => undefined);
     }
     if (group) await closeGroup(group);
@@ -165,10 +182,20 @@ test("@recovery live messages, ranking and intervention state survive service re
   }
 });
 
-function compose(infraDir: string, envFile: string, args: string[]): void {
+function compose(
+  infraDir: string,
+  envFile: string,
+  project: string,
+  files: string[],
+  args: string[],
+): void {
+  const selection = [
+    ...(project ? ["-p", project] : []),
+    ...files.flatMap((file) => ["-f", file]),
+  ];
   execFileSync(
     "docker",
-    ["compose", "--env-file", envFile, ...args],
+    ["compose", ...selection, "--env-file", envFile, ...args],
     { cwd: infraDir, stdio: "inherit", timeout: 90_000 },
   );
 }

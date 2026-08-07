@@ -5,6 +5,7 @@ import {
   Logger,
   UnauthorizedException,
 } from "@nestjs/common";
+import { timingSafeEqual } from "node:crypto";
 
 interface IncomingRequest {
   headers: Record<string, string | string[] | undefined>;
@@ -32,7 +33,16 @@ export class InternalGuard implements CanActivate {
       return true;
     }
     const req = context.switchToHttp().getRequest<IncomingRequest>();
-    if (req.headers["x-internal-token"] === expected) return true;
+    const provided = req.headers["x-internal-token"];
+    if (typeof provided === "string" && safeEqual(provided, expected)) {
+      return true;
+    }
     throw new UnauthorizedException("Internal token required");
   }
+}
+
+function safeEqual(provided: string, expected: string): boolean {
+  const left = Buffer.from(provided);
+  const right = Buffer.from(expected);
+  return left.length === right.length && timingSafeEqual(left, right);
 }

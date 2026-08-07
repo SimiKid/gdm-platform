@@ -87,7 +87,7 @@ export default function ExitSurvey({ session, participantId, groupRanking, onDon
         <h2>Part 1: Your final ranking</h2>
         <p>
           Now that the group discussion is over, please give your personal
-          ranking of the 15 items. The group's final ranking is pre-filled as a
+          ranking of the {items.length} items. The group's final ranking is pre-filled as a
           starting point. Adjust it to reflect your own view. There is no right
           answer here; we are interested in your personal view after the
           discussion.
@@ -152,7 +152,7 @@ export default function ExitSurvey({ session, participantId, groupRanking, onDon
             <p className="action-hint">
               {allRanked
                 ? "Please rate all three statements to submit."
-                : `Rank all 15 items to submit (${items.length - ranked.length} remaining).`}
+                : `Rank all ${items.length} items to submit (${items.length - ranked.length} remaining).`}
             </p>
           )}
         </div>

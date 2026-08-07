@@ -20,7 +20,9 @@ listeners:
     type: http
     x_forwarded: true
     resources:
-      - names: [client, federation]
+      # The study is local-only; exposing federation adds an unnecessary
+      # unauthenticated protocol surface and no participant functionality.
+      - names: [client]
         compress: false
 
 # ── Database ──────────────────────────────────────────
@@ -52,7 +54,7 @@ enable_registration_without_verification: true
 # ── Signing key ───────────────────────────────────────
 signing_key_path: "/data/${SYNAPSE_SERVER_NAME}.signing.key"
 
-# ── Trusted key servers (no federation partners) ──────
+# ── Trusted key servers (federation disabled above) ───
 trusted_key_servers: []
 suppress_key_server_warning: true
 

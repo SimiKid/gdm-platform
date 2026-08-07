@@ -11,15 +11,15 @@ describe("rankingErrorScore", () => {
     expect(rankingErrorScore(EXPERT_ORDER)).toBe(0);
   });
 
-  it("scores the fully reversed order as 112 (max for 15 items)", () => {
-    expect(rankingErrorScore([...EXPERT_ORDER].reverse())).toBe(112);
+  it("scores the fully reversed order as 50 (max for 10 items)", () => {
+    expect(rankingErrorScore([...EXPERT_ORDER].reverse())).toBe(50);
   });
 
   it("covers every task item exactly once", () => {
     expect(Object.keys(MOON_SURVIVAL_EXPERT_RANKING).sort()).toEqual(
       MOON_SURVIVAL.items.map((item) => item.id).sort(),
     );
-    expect(new Set(Object.values(MOON_SURVIVAL_EXPERT_RANKING)).size).toBe(15);
+    expect(new Set(Object.values(MOON_SURVIVAL_EXPERT_RANKING)).size).toBe(10);
   });
 
   it("scores a single swap by its rank distance", () => {
@@ -31,9 +31,9 @@ describe("rankingErrorScore", () => {
 
   it("returns null for missing, partial, duplicated, or unknown rankings", () => {
     expect(rankingErrorScore(undefined)).toBeNull();
-    expect(rankingErrorScore(EXPERT_ORDER.slice(0, 10))).toBeNull();
+    expect(rankingErrorScore(EXPERT_ORDER.slice(0, 9))).toBeNull();
     expect(
-      rankingErrorScore([EXPERT_ORDER[0], ...EXPERT_ORDER.slice(0, 14)]),
+      rankingErrorScore([EXPERT_ORDER[0], ...EXPERT_ORDER.slice(0, 9)]),
     ).toBeNull();
     expect(
       rankingErrorScore(["definitely-not-an-item", ...EXPERT_ORDER.slice(1)]),

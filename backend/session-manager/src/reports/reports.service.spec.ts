@@ -276,7 +276,7 @@ describe("ReportsService (in-memory store)", () => {
       interventionMode: "private",
       llmMode: "active",
       individualRankingError: 0,
-      exitRankingError: 112,
+      exitRankingError: 50,
       satisfaction: 6,
       messageCount: 1,
       wordCount: 4,
@@ -373,7 +373,7 @@ describe("ReportsService (in-memory store)", () => {
       exitSurveys: 1,
       meanGroupRankingError: 0,
       meanIndividualRankingError: 0,
-      meanExitRankingError: 112,
+      meanExitRankingError: 50,
       meanSatisfaction: 6,
       nudgesTotal: 1,
       nudgesPerSessionMean: 1,
@@ -462,20 +462,20 @@ describe("ReportsService (in-memory store)", () => {
     ]);
 
     const [entry1, exit1, entry2, edit, final] = rankings;
-    // p1 submitted the expert order: error 0, oxygen ranked 1, matches 15.
+    // p1 submitted the expert order: error 0, oxygen ranked 1, matches 10.
     expect(entry1).toMatchObject({
       participantPseudonym: pseudonymize("P", "p1"),
       rankingCompleted: true,
       error: 0,
     });
     expect(entry1.ranks.oxygen).toBe(1);
-    expect(entry1.ranks.matches).toBe(15);
+    expect(entry1.ranks.matches).toBe(10);
     // p1's exit ranking is fully reversed.
-    expect(exit1).toMatchObject({ error: 112 });
-    expect(exit1.ranks.oxygen).toBe(15);
+    expect(exit1).toMatchObject({ error: 50 });
+    expect(exit1.ranks.oxygen).toBe(10);
     // p2 timed out: raw order present, but not scored.
     expect(entry2).toMatchObject({ rankingCompleted: false, error: null });
-    expect(entry2.order).toHaveLength(15);
+    expect(entry2.order).toHaveLength(10);
     // Group history: edited by p1 (resolved to their pseudonym), expert order.
     expect(edit).toMatchObject({
       editIndex: 0,

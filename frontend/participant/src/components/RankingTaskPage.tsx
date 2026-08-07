@@ -53,7 +53,7 @@ function formatSeconds(s: number): string {
 /**
  * Page 3 — the individual ranking task ("Survival on the Moon").
  *
- * Submit unlocks once all 15 items are ranked. A 10-minute countdown runs at
+ * Submit unlocks once all task items are ranked. A 10-minute countdown runs at
  * the top; when it expires the current state is submitted as-is (any leftover
  * items are appended in their shown order and the ranking is flagged
  * incomplete). After submitting, a few short follow-up questions are asked
@@ -210,9 +210,9 @@ export default function RankingTaskPage({ onComplete }: Props) {
           dangerouslySetInnerHTML={{ __html: MOON_SURVIVAL_BRIEFING.html }}
         />
         <p>
-          Below are the 15 items that survived the landing intact. Rank them by
-          importance for reaching the rendezvous point:{" "}
-          <strong>1 = most important, 15 = least important</strong>.
+          Below are the {ITEMS.length} items that survived the landing intact.
+          Rank them by importance for reaching the rendezvous point:{" "}
+          <strong>1 = most important, {ITEMS.length} = least important</strong>.
         </p>
 
         <RankingBoard items={ITEMS} ranked={ranked} onChange={setRanked} />
@@ -244,7 +244,7 @@ export default function RankingTaskPage({ onComplete }: Props) {
           </button>
           {remaining > 0 && (
             <p className="action-hint">
-              Rank all 15 items to submit ({remaining} remaining).
+              Rank all {ITEMS.length} items to submit ({remaining} remaining).
             </p>
           )}
         </div>
