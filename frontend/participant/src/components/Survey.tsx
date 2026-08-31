@@ -69,10 +69,10 @@ export default function Survey({ onComplete }: Props) {
         <div className="study-card">
           <h1>Thank you for your interest</h1>
           <p>
-            Unfortunately, this study requires at least intermediate English
-            proficiency and we are unable to include you in this session.
+            As this study requires you to communicate properly with your team,
+            we unfortunately cannot accept participants with basic or no English
+            proficiency. This is the end of your participation.
           </p>
-          <p>Thank you for your time.</p>
         </div>
       )}
 
