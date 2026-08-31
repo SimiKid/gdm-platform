@@ -11,14 +11,16 @@ import StudyShell from "./StudyShell";
  * as fallback.
  */
 interface Props {
-  /** Returned by the participant-completion endpoint after the exit survey. */
+  /** Returned for Prolific participants after the exit survey. */
   completionUrl?: string;
+  prolificParticipant: boolean;
   sessionId: string;
   participantId: string;
 }
 
 export default function DebriefingPage({
   completionUrl = "",
+  prolificParticipant,
   sessionId,
   participantId,
 }: Props) {
@@ -26,6 +28,7 @@ export default function DebriefingPage({
   const paymentConfigured = paymentUrl !== "" && paymentUrl !== "#";
   const [feedback, setFeedback] = useState("");
   const [debriefAcknowledged, setDebriefAcknowledged] = useState(false);
+  const [directFinished, setDirectFinished] = useState(false);
 
   function handleReturn() {
     if (feedback.trim()) {
@@ -60,7 +63,7 @@ export default function DebriefingPage({
 
         <p>
           If you have further questions about the study, you can contact the
-          researchers through Prolific.
+          researchers{prolificParticipant ? " through Prolific" : ""}.
         </p>
         <p>Thank you again for contributing to this research.</p>
 
@@ -74,7 +77,21 @@ export default function DebriefingPage({
         </label>
 
         <div className="card-actions">
-          {paymentConfigured && debriefAcknowledged ? (
+          {!prolificParticipant && directFinished ? (
+            <p>Your participation is complete. You may close this tab.</p>
+          ) : !prolificParticipant ? (
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={!debriefAcknowledged}
+              onClick={() => {
+                handleReturn();
+                setDirectFinished(true);
+              }}
+            >
+              Finish study
+            </button>
+          ) : paymentConfigured && debriefAcknowledged ? (
             <a
               className="btn btn-primary"
               href={paymentUrl}
@@ -98,7 +115,10 @@ export default function DebriefingPage({
             </>
           )}
           {!debriefAcknowledged && (
-            <p className="action-hint">Please acknowledge the debriefing before returning.</p>
+            <p className="action-hint">
+              Please acknowledge the debriefing before{" "}
+              {prolificParticipant ? "returning" : "finishing"}.
+            </p>
           )}
         </div>
       </div>

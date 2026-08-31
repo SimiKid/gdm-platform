@@ -130,7 +130,8 @@ export interface SubmitSurveyRequest {
 /** Result returned only after this participant's exit survey is persisted. */
 export interface CompleteParticipantResponse {
   completedAt: string;
-  /** Prolific completion URL (or generic payment URL) configured by the researcher. */
+  recruitmentSource: "direct" | "prolific";
+  /** Present only for a verified Prolific participant. */
   compensationUrl: string;
 }
 

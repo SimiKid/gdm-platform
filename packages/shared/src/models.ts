@@ -98,11 +98,15 @@ export interface ParticipationOutcomeRecord extends ProlificArrival {
 }
 
 /** A member of a hiring committee taking part in a study session. */
+export type ParticipantRecruitmentSource = "direct" | "prolific";
+
 export interface Participant {
   id: string;
   name: string;
   /** Per-participant tracking URL token (the "individual URL" in the wireframe). */
   trackingToken: string;
+  /** Server-owned admission source; clients cannot claim Prolific status. */
+  recruitmentSource: ParticipantRecruitmentSource;
   /** Present when the participant entered through Prolific. */
   prolific?: ProlificIdentity;
   /** Individual completion, separate from the group session lifecycle. */

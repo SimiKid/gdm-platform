@@ -80,6 +80,7 @@ model ParticipantRecord {
   sessionId         String         @map("session_id")
   name              String
   trackingToken     String         @map("tracking_token")
+  recruitmentSource String         @default("direct") @map("recruitment_source")
   prolificPid       String?        @map("prolific_pid")
   prolificStudyId   String?        @map("prolific_study_id")
   prolificSessionId String?        @map("prolific_session_id")
@@ -93,6 +94,7 @@ model ParticipantRecord {
   @@unique([prolificStudyId, prolificSessionId])
   @@index([sessionId])
   @@index([trackingToken])
+  @@index([recruitmentSource])
   @@index([prolificPid])
   @@map("participants")
 }

@@ -67,9 +67,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     5,
     Number(process.env.PARTICIPANT_RECONNECT_GRACE_SECONDS ?? 30) || 30,
   );
-  /** Optional live-recruitment gate; generic/pilot links remain available when false. */
-  private readonly prolificRequired =
-    process.env.PROLIFIC_REQUIRE_VALIDATION === "true";
   /** Avoid repeating the Prolific API lookup across arrival → resume → join. */
   private readonly verifiedProlificSubmissions = new Map<string, number>();
   /** Serialize durable runtime writes per session without blocking other groups. */
@@ -131,11 +128,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     // External validation and Matrix provisioning must never occupy the global
     // seat-assignment lock. Only the short find-or-create/add-seat section is
     // serialized, preventing duplicate lobbies without queueing network I/O.
-    if (this.prolificRequired && !req.prolific) {
-      throw new BadRequestException(
-        "A verified Prolific study link is required",
-      );
-    }
     await this.validateProlificIdentity(req.prolific);
     if (req.prolific) {
       const outcome = await this.store.getParticipationOutcome(req.prolific);
@@ -246,6 +238,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       id: randomUUID(),
       name: req.participantName,
       trackingToken: req.trackingToken,
+      recruitmentSource: req.prolific ? "prolific" : "direct",
       prolific: req.prolific,
     };
     session.participants.push(participant);
@@ -771,6 +764,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
               participantId: participant.id,
               participantName: participant.name,
               trackingToken: participant.trackingToken,
+              recruitmentSource: participant.recruitmentSource,
               prolificPid: participant.prolific?.participantId ?? "",
               prolificStudyId: participant.prolific?.studyId ?? "",
               prolificSessionId: participant.prolific?.sessionId ?? "",
@@ -794,6 +788,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         "participant_id",
         "participant_name",
         "tracking_token",
+        "recruitment_source",
         "prolific_pid",
         "prolific_study_id",
         "prolific_session_id",
@@ -810,6 +805,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         s.participantId,
         s.participantName,
         s.trackingToken,
+        s.recruitmentSource,
         s.prolificPid,
         s.prolificStudyId,
         s.prolificSessionId,
@@ -944,7 +940,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const settings = await this.store.getStudySettings();
     return {
       completedAt: participant.completedAt,
-      compensationUrl: settings.compensationUrl,
+      compensationUrl: participant.prolific ? settings.compensationUrl : "",
+      recruitmentSource: participant.recruitmentSource,
     };
   }
 

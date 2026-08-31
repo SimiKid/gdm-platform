@@ -52,10 +52,11 @@ VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (fallback)
      and keep the pinned `ANTHROPIC_MODEL`. Leave `LLM_MODE` empty so each
      condition's own detection arm applies. The key is read only by
      `chat-service`.
-   - For live Prolific-only recruitment, set the draft's 24-character
+   - For API-validated Prolific recruitment, set the draft's 24-character
      `PROLIFIC_STUDY_ID`, a researcher **API token** in
-     `PROLIFIC_API_TOKEN`, and `PROLIFIC_REQUIRE_VALIDATION=true`. Leave the
-     gate false for internal pilots that deliberately use generic links.
+     `PROLIFIC_API_TOKEN`, and `PROLIFIC_REQUIRE_VALIDATION=true`. This validates
+     anyone claiming Prolific identity while still allowing direct/generic
+     participants, which are recorded separately as `recruitment_source=direct`.
    - Set `WAITING_TIMEOUT_MINUTES=5`,
      `PARTICIPANT_RECONNECT_GRACE_SECONDS=30`,
      `PARTIAL_PAYMENT_PENCE_PER_MINUTE=10`, and
@@ -102,9 +103,11 @@ VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (fallback)
    - Select Prolific's URL-parameter recording and use its standard external
      study URL (Prolific may append these parameters automatically):
      `https://gdmproject.ifi.uzh.ch/?PROLIFIC_PID={{%PROLIFIC_PID%}}&STUDY_ID={{%STUDY_ID%}}&SESSION_ID={{%SESSION_ID%}}`.
-     The backend verifies that the submission, participant, and configured
-     study match before admitting anyone when
-     `PROLIFIC_REQUIRE_VALIDATION=true`.
+     When `PROLIFIC_REQUIRE_VALIDATION=true`, the backend verifies that the
+     submission, participant, and configured study match before admitting a
+     participant as `recruitment_source=prolific`. Requests without Prolific
+     parameters remain normal direct participants; incomplete parameter sets
+     are rejected by the frontend instead of silently becoming direct.
    - Confirm the completion code in Prolific exactly matches the completion
      URL stored in Admin → Settings. Keep submission processing on manual
      review and keep `PROLIFIC_PAYMENT_AUTOMATION=false` until the exit-path
