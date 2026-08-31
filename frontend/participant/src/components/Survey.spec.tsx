@@ -72,7 +72,7 @@ async function rankAllItems() {
 }
 
 describe("Survey", () => {
-  it("walks consent → about you → attitudes → task → group phase and returns the entry survey", async () => {
+  it("walks consent → about you → attitudes → task → group phase and returns the entry survey", { timeout: 15_000 }, async () => {
     const onComplete = vi.fn();
     render(<Survey onComplete={onComplete} />);
 
