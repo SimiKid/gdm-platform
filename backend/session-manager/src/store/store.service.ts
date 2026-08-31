@@ -1631,7 +1631,7 @@ export class StoreService implements OnModuleInit {
     const now = new Date().toISOString();
     const waitingMinutes = Math.max(
       1,
-      Number(process.env.WAITING_TIMEOUT_MINUTES ?? 15) || 15,
+      Number(process.env.WAITING_TIMEOUT_MINUTES ?? 5) || 5,
     );
     const session: Session = {
       id: randomUUID(),
