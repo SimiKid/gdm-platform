@@ -220,29 +220,36 @@ test("@golden three participants run a full study session end to end", async ({
   await test.step("the discussion timer ends — all three finish the exit survey to debriefing", async () => {
     for (const page of pages) {
       await expect(
-        page.getByRole("heading", { name: "Almost done: A few final questions" }),
+        page.getByRole("heading", { name: "Almost done!" }),
       ).toBeVisible({ timeout: 90_000 });
     }
 
     await Promise.all(
       pages.map(async (page) => {
+        // Step 1: final ranking
         await rankAllItems(page);
-        for (const [question, rating] of [
-          ["How satisfied are you with the group's final ranking?", "6"],
-          ["The group reached its decision fairly.", "5"],
-          ["I felt my views were heard during the discussion.", "5"],
-        ] as const) {
-          await page
-            .getByRole("group", { name: question })
-            .getByRole("radio", { name: rating, exact: true })
-            .check();
+        await page.getByRole("button", { name: "Submit my final ranking" }).click();
+
+        // Step 2: confidence + group dynamics matrix
+        await page.getByRole("radio", { name: "Rather confident" }).check();
+        for (const radio of await page
+          .getByRole("radio", { name: /: Disagree strongly$/i })
+          .all()) {
+          await radio.check();
+        }
+        await page.getByRole("button", { name: "Continue" }).click();
+
+        // Step 3: psych safety + bot perception matrices
+        for (const radio of await page
+          .getByRole("radio", { name: /: Disagree strongly$/i })
+          .all()) {
+          await radio.check();
         }
         await page.getByRole("button", { name: "Submit" }).click();
 
         await expect(
-          page.getByRole("heading", { name: "Thank you for participating!" }),
+          page.getByRole("heading", { name: "Debrief" }),
         ).toBeVisible();
-        await page.getByRole("checkbox", { name: "I have read the debriefing." }).check();
         await expect(page.getByRole("link", { name: "Return to Prolific" })).toBeVisible();
       }),
     );

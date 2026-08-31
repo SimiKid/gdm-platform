@@ -6,7 +6,7 @@ import AboutYouPage from "./AboutYouPage";
 describe("AboutYouPage", () => {
   it("explains why an under-18 participant cannot continue", async () => {
     const user = userEvent.setup();
-    render(<AboutYouPage onContinue={vi.fn()} onScreenOut={vi.fn()} />);
+    render(<AboutYouPage onContinue={vi.fn()} />);
 
     await user.type(screen.getByLabelText("How old are you?"), "17");
 

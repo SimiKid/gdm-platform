@@ -752,6 +752,34 @@ export class StoreService implements OnModuleInit {
     return true;
   }
 
+  /** Merge additional keys into an existing exit survey's answers JSON. */
+  async patchExitSurveyAnswers(
+    sessionId: string,
+    participantId: string,
+    patch: Record<string, unknown>,
+  ): Promise<boolean> {
+    if (!this.dbEnabled) {
+      const participant = this.sessions
+        .get(sessionId)
+        ?.participants.find((candidate) => candidate.id === participantId);
+      if (!participant?.exitSurvey) return false;
+      Object.assign(participant.exitSurvey.answers, patch);
+      return true;
+    }
+
+    const existing = await this.db.surveyRecord.findUnique({
+      where: { participantId_kind: { participantId, kind: "exit" } },
+      select: { answers: true },
+    });
+    if (!existing) return false;
+    const merged = { ...(existing.answers as Record<string, unknown>), ...patch };
+    await this.db.surveyRecord.update({
+      where: { participantId_kind: { participantId, kind: "exit" } },
+      data: { answers: json(merged) },
+    });
+    return true;
+  }
+
   /** Mark one participant complete without rewriting their session. */
   async markParticipantCompleted(
     sessionId: string,

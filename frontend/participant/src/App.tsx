@@ -388,7 +388,13 @@ export default function App() {
       );
 
     case "done":
-      return <DebriefingPage completionUrl={compensationUrl} />;
+      return (
+        <DebriefingPage
+          completionUrl={compensationUrl}
+          sessionId={session?.id ?? ""}
+          participantId={participantId}
+        />
+      );
 
     default:
       return null;

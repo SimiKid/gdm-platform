@@ -940,6 +940,21 @@ export class SessionsService {
     }
   }
 
+  async submitDebriefFeedback(
+    sessionId: string,
+    participantId: string,
+    feedback: string,
+  ): Promise<void> {
+    const patched = await this.store.patchExitSurveyAnswers(
+      sessionId,
+      participantId,
+      { debriefFeedback: feedback },
+    );
+    if (!patched) {
+      throw new NotFoundException(`Unknown participant or missing exit survey`);
+    }
+  }
+
   /**
    * Least-claimed active condition that hasn't reached its goal — counted
    * within the CURRENT round, so an arm that filled its goal in an earlier

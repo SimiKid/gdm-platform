@@ -113,6 +113,26 @@ export class ReportsService {
         "satisfaction",
         "fairness",
         "felt_heard",
+        "task_confidence",
+        "group_considered",
+        "group_balanced",
+        "attention_check_1",
+        "group_dominated",
+        "felt_team",
+        "comfortable_again",
+        "safe_speak_up",
+        "raise_concerns",
+        "contradicted",
+        "attention_check_2",
+        "contribution_serious",
+        "contribution_influenced",
+        "held_back",
+        "bot_intrusive",
+        "bot_helpful",
+        "bot_appropriate",
+        "bot_observed",
+        "bot_support",
+        "debrief_feedback",
         "message_count",
         "word_count",
         "character_count",
@@ -161,6 +181,11 @@ export class ReportsService {
         cell(row.satisfaction),
         cell(row.fairness),
         cell(row.feltHeard),
+        cell(row.taskConfidence),
+        ...row.groupDynamics.map(cell),
+        ...row.psychSafety.map(cell),
+        ...row.botPerception.map(cell),
+        cell(row.debriefFeedback),
         String(row.messageCount),
         String(row.wordCount),
         String(row.characterCount),
@@ -795,6 +820,21 @@ function participantRow(session: Session, participant: Participant) {
     satisfaction: scalarAnswer(exit, "satisfaction"),
     fairness: scalarAnswer(exit, "fairness"),
     feltHeard: scalarAnswer(exit, "feltHeard"),
+    taskConfidence: scalarAnswer(exit, "taskConfidence"),
+    groupDynamics: [
+      "groupConsidered", "groupBalanced", "attentionCheck1",
+      "groupDominated", "feltTeam", "comfortableAgain",
+    ].map((key) => scalarAnswer(exit, key)),
+    psychSafety: [
+      "safeSpeakUp", "raiseConcerns", "contradicted",
+      "attentionCheck2", "contributionSerious", "contributionInfluenced",
+      "heldBack",
+    ].map((key) => scalarAnswer(exit, key)),
+    botPerception: [
+      "botIntrusive", "botHelpful", "botAppropriate",
+      "botObserved", "botSupport",
+    ].map((key) => scalarAnswer(exit, key)),
+    debriefFeedback: scalarAnswer(exit, "debriefFeedback"),
     messageCount: messages.length,
     wordCount,
     characterCount: messages.reduce(
@@ -1083,7 +1123,12 @@ exclusions. Treat it as identifying data; keep it out of analysis folders.
 | individual_ranking_seconds_used | Time spent on the individual ranking |
 | individual_ranking_error | NASA error score of the entry ranking; empty unless completed = true |
 | exit_ranking_error | NASA error score of the participant's final individual ranking (exit survey) |
-| satisfaction, fairness, felt_heard | Exit 1–7 scales |
+| satisfaction, fairness, felt_heard | Legacy exit 1–7 scales (pre-v2 only) |
+| task_confidence | Confidence in group ranking (1–5) |
+| group_considered … comfortable_again | Group dynamics items (1–5, includes attention_check_1) |
+| safe_speak_up … held_back | Psychological safety items (1–5, includes attention_check_2) |
+| bot_intrusive … bot_support | Bot perception items (1–5) |
+| debrief_feedback | Free-text feedback from the debriefing page (optional) |
 | message_count, word_count, character_count | This participant's chat activity (bot messages never count) |
 | contribution_share | Share of the session's total contribution score (messages × ${DEFAULT_INTERVENTION_CONFIG.scoreWeights.messages} + words × ${DEFAULT_INTERVENTION_CONFIG.scoreWeights.words}, weights from the condition snapshot) |
 | meaningfulness_score_mean / classified_message_count | LLM classifier aggregates (llm arms only) |

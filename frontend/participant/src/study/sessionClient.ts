@@ -33,6 +33,12 @@ export interface SessionManagerClient {
   getSession(id: string): Promise<PublicSession>;
   /** Persist an entry/exit survey. */
   submitSurvey(req: SubmitSurveyRequest): Promise<void>;
+  /** Persist optional debrief feedback into the exit survey. */
+  submitDebriefFeedback(
+    sessionId: string,
+    participantId: string,
+    feedback: string,
+  ): Promise<void>;
   /** Mark the session completed when the discussion timer ends. */
   completeSession(id: string): Promise<void>;
   /** Mark this participant complete after their exit survey was saved. */
@@ -123,6 +129,14 @@ export const httpSessionManager: SessionManagerClient = {
       body: JSON.stringify(req),
     });
     if (!res.ok) throw new Error(`submitSurvey failed: ${res.status}`);
+  },
+  async submitDebriefFeedback(sessionId: string, participantId: string, feedback: string) {
+    const res = await request(`${API_BASE}/surveys/debrief-feedback`, {
+      method: "POST",
+      headers: participantHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ sessionId, participantId, feedback }),
+    });
+    if (!res.ok) throw new Error(`submitDebriefFeedback failed: ${res.status}`);
   },
   async completeSession(id) {
     const res = await request(`${API_BASE}/sessions/${id}/complete`, {

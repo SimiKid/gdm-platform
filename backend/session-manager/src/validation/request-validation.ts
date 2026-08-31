@@ -153,6 +153,7 @@ export function validateSurveyAnswers(
     if (answers.finalRanking !== undefined) {
       exactRanking(answers.finalRanking, expectedItemIds, "finalRanking");
     }
+    // Legacy exit fields (pre-v2)
     if (answers.satisfaction !== undefined) {
       integerInRange(answers.satisfaction, "satisfaction", 1, 7);
     }
@@ -161,6 +162,26 @@ export function validateSurveyAnswers(
     }
     if (answers.feltHeard !== undefined) {
       integerInRange(answers.feltHeard, "feltHeard", 1, 7);
+    }
+    // v2 exit fields
+    if (answers.taskConfidence !== undefined) {
+      integerInRange(answers.taskConfidence, "taskConfidence", 1, 5);
+    }
+    const exitLikert5Keys = [
+      "groupConsidered", "groupBalanced", "attentionCheck1",
+      "groupDominated", "feltTeam", "comfortableAgain",
+      "safeSpeakUp", "raiseConcerns", "contradicted",
+      "attentionCheck2", "contributionSerious", "contributionInfluenced",
+      "heldBack", "botIntrusive", "botHelpful", "botAppropriate",
+      "botObserved", "botSupport",
+    ];
+    for (const key of exitLikert5Keys) {
+      if (answers[key] !== undefined) {
+        integerInRange(answers[key], key, 1, 5);
+      }
+    }
+    if (answers.debriefFeedback !== undefined) {
+      boundedString(answers.debriefFeedback, "debriefFeedback", 0, 4_000);
     }
   }
 }

@@ -13,8 +13,6 @@ export interface AboutYouAnswers {
 
 interface Props {
   onContinue: (answers: AboutYouAnswers) => void;
-  /** Called when English proficiency is too low to continue. */
-  onScreenOut: () => void;
 }
 
 const GENDER_OPTIONS = [
@@ -43,10 +41,8 @@ const ENGLISH_OPTIONS = [
   { value: "none", label: "None" },
 ];
 
-const SCREEN_OUT_LEVELS = new Set(["basic", "none"]);
-
 /** Page 2 — About You. */
-export default function AboutYouPage({ onContinue, onScreenOut }: Props) {
+export default function AboutYouPage({ onContinue }: Props) {
   const [age, setAge] = useState("");
   const [ageNa, setAgeNa] = useState(false);
   const [gender, setGender] = useState("");
@@ -64,10 +60,6 @@ export default function AboutYouPage({ onContinue, onScreenOut }: Props) {
   const ready = ageValid && genderValid && educationValid && english !== "";
 
   function submit() {
-    if (SCREEN_OUT_LEVELS.has(english)) {
-      onScreenOut();
-      return;
-    }
     const answers: AboutYouAnswers = {
       gender,
       education,

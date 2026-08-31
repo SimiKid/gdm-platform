@@ -14,11 +14,10 @@ interface Props {
   onComplete: (survey: Survey) => void;
 }
 
-type Step = "consent" | "about" | "attitudes" | "task" | "group" | "screenout";
+type Step = "consent" | "about" | "attitudes" | "task" | "group";
 const STEP_NUMBER: Record<Step, 1 | 2 | 3 | 4> = {
   consent: 1,
   about: 2,
-  screenout: 2,
   attitudes: 2,
   task: 3,
   group: 4,
@@ -67,19 +66,7 @@ export default function Survey({ onComplete }: Props) {
             setAbout(answers);
             setStep("attitudes");
           }}
-          onScreenOut={() => setStep("screenout")}
         />
-      )}
-
-      {step === "screenout" && (
-        <div className="study-card">
-          <h1>Thank you for your interest</h1>
-          <p>
-            As this study requires you to communicate properly with your team,
-            we unfortunately cannot accept participants with basic or no English
-            proficiency. This is the end of your participation.
-          </p>
-        </div>
       )}
 
       {step === "attitudes" && (

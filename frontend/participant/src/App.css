@@ -218,6 +218,20 @@ body {
   text-decoration: underline;
 }
 
+.feedback-box {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font: inherit;
+  resize: vertical;
+  background: #fafafa;
+}
+.feedback-box:focus {
+  outline: none;
+  border-color: #888;
+}
+
 .card-actions {
   margin-top: 1.75rem;
   display: flex;
