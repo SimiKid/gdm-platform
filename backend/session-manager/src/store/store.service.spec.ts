@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { afterEach, describe, it, expect, beforeEach, vi } from "vitest";
 import { shuffleRankingOrder, StoreService } from "./store.service";
 import type { Participant } from "@gdm/shared";
 
@@ -12,6 +12,10 @@ describe("StoreService", () => {
   let store: StoreService;
   beforeEach(() => {
     store = new StoreService();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("seeds the five study conditions", async () => {
@@ -132,13 +136,94 @@ describe("StoreService", () => {
   });
 
   it("stores and returns study-wide settings (compensation link)", async () => {
-    expect(await store.getStudySettings()).toEqual({ compensationUrl: "" });
+    expect(await store.getStudySettings()).toEqual({
+      compensationUrl: "",
+      noConsentUrl: "",
+      ineligibleUrl: "",
+      withdrawalUrl: "",
+      unmatchedUrl: "",
+      technicalFailureUrl: "",
+    });
     const updated = await store.updateStudySettings({
       compensationUrl: "  https://pay.example.com/done  ",
     });
     expect(updated.compensationUrl).toBe("https://pay.example.com/done");
     expect(await store.getStudySettings()).toEqual({
       compensationUrl: "https://pay.example.com/done",
+      noConsentUrl: "",
+      ineligibleUrl: "",
+      withdrawalUrl: "",
+      unmatchedUrl: "",
+      technicalFailureUrl: "",
+    });
+  });
+
+  it("keeps participation stages monotonic and terminal outcomes immutable", async () => {
+    const identity = {
+      participantId: "aaaaaaaaaaaaaaaaaaaaaaaa",
+      studyId: "bbbbbbbbbbbbbbbbbbbbbbbb",
+      sessionId: "cccccccccccccccccccccccc",
+    };
+    await store.recordParticipationStage(identity, "waiting");
+    await store.recordParticipationStage(identity, "entry");
+    expect((await store.getProlificArrival(identity))?.stage).toBe("waiting");
+
+    const first = await store.terminateProlificParticipation(
+      identity,
+      "unmatched",
+      "deadline",
+      "partial",
+      100,
+    );
+    const duplicate = await store.terminateProlificParticipation(
+      identity,
+      "technical_failure",
+      "later retry",
+      "partial",
+      500,
+    );
+    expect(duplicate).toMatchObject({
+      outcome: first.outcome,
+      compensationAmountPence: 100,
+      stage: "terminated",
+    });
+  });
+
+  it("only atomically terminates an arrival that is still stale", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime("2026-08-31T10:00:00.000Z");
+    const identity = {
+      participantId: "aaaaaaaaaaaaaaaaaaaaaaaa",
+      studyId: "bbbbbbbbbbbbbbbbbbbbbbbb",
+      sessionId: "cccccccccccccccccccccccc",
+    };
+    await store.recordParticipationStage(identity, "waiting");
+    vi.setSystemTime("2026-08-31T10:00:20.000Z");
+    await store.recordParticipationStage(identity, "waiting");
+
+    await expect(
+      store.terminateStaleProlificParticipation(
+        identity,
+        new Date("2026-08-31T10:00:10.000Z"),
+        "connection_timeout",
+        "stale",
+        "partial",
+        10,
+      ),
+    ).resolves.toBeNull();
+
+    const ended = await store.terminateStaleProlificParticipation(
+      identity,
+      new Date("2026-08-31T10:00:20.000Z"),
+      "connection_timeout",
+      "stale",
+      "partial",
+      10,
+    );
+    expect(ended).toMatchObject({
+      outcome: "connection_timeout",
+      stage: "terminated",
+      compensationAmountPence: 10,
     });
   });
 });

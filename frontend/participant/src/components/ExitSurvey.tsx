@@ -17,6 +17,7 @@ interface Props {
   groupRanking?: string[];
   /** Called once the exit survey is submitted and the session is completed. */
   onDone: (completion: CompleteParticipantResponse) => void;
+  onWithdraw?: () => void;
 }
 
 type ExitStep = "ranking" | "reflection2" | "reflection3";
@@ -76,6 +77,7 @@ export default function ExitSurvey({
   participantId,
   groupRanking,
   onDone,
+  onWithdraw,
 }: Props) {
   const items = session.rankingTask.items;
   const [step, setStep] = useState<ExitStep>("ranking");
@@ -147,7 +149,7 @@ export default function ExitSurvey({
   // ── Step 1: Final ranking ─────────────────────────────────────────────
   if (step === "ranking") {
     return (
-      <StudyShell>
+      <StudyShell onWithdraw={onWithdraw}>
         <div className="study-card">
           <h1>Almost done!</h1>
 
@@ -199,7 +201,7 @@ export default function ExitSurvey({
   // ── Step 2: Task confidence + group dynamics ──────────────────────────
   if (step === "reflection2") {
     return (
-      <StudyShell>
+      <StudyShell onWithdraw={onWithdraw}>
         <div className="study-card">
           <h1>Final Task Reflection</h1>
           <p>
@@ -248,7 +250,7 @@ export default function ExitSurvey({
 
   // ── Step 3: Psychological safety + bot perception ─────────────────────
   return (
-    <StudyShell>
+    <StudyShell onWithdraw={onWithdraw}>
       <div className="study-card">
         <h1>Final Task Reflection</h1>
         <p>

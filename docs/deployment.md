@@ -56,6 +56,13 @@ VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (fallback)
      `PROLIFIC_STUDY_ID`, a researcher **API token** in
      `PROLIFIC_API_TOKEN`, and `PROLIFIC_REQUIRE_VALIDATION=true`. Leave the
      gate false for internal pilots that deliberately use generic links.
+   - Set `WAITING_TIMEOUT_MINUTES=15`,
+     `PARTICIPANT_RECONNECT_GRACE_SECONDS=30`,
+     `PARTIAL_PAYMENT_PENCE_PER_MINUTE=10`, and
+     `PARTIAL_PAYMENT_MAX_PENCE=508` for the current study. Set
+     `PROLIFIC_AUTO_RETURN_DISCONNECTS=true` to notify Prolific when a browser
+     misses the reconnect window; keep `PROLIFIC_PAYMENT_AUTOMATION=false` so
+     every partial bonus remains a researcher-reviewed action.
 
 3. **Log in to GHCR** (needed while the packages are private; a GitHub
    personal access token with `read:packages` suffices):
@@ -86,11 +93,12 @@ VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (fallback)
    Then open https://gdmproject.ifi.uzh.ch and run one manual session against
    the [pilot checklist](pilot-checklist.md).
 
-7. **Before recruiting — set the compensation link and the study URL**:
-   - In the admin dashboard, Settings → **Compensation Link** must be set to
-     the Prolific completion URL. There is no environment-variable fallback in
-     the deployed images — without this setting, participants reach the
-     debriefing page with a dead link.
+7. **Before recruiting — set every completion/exit path and the study URL**:
+   - In the admin dashboard, Settings → **Prolific completion and exit paths**,
+     set the normal completion URL plus the consent-decline, ineligible,
+     withdrawal, unmatched, and technical-failure URLs created in Prolific.
+     There is no environment-variable fallback. Empty early-exit URLs stop
+     safely and direct the participant to contact the researcher.
    - Select Prolific's URL-parameter recording and use its standard external
      study URL (Prolific may append these parameters automatically):
      `https://gdmproject.ifi.uzh.ch/?PROLIFIC_PID={{%PROLIFIC_PID%}}&STUDY_ID={{%STUDY_ID%}}&SESSION_ID={{%SESSION_ID%}}`.
@@ -99,7 +107,12 @@ VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (fallback)
      `PROLIFIC_REQUIRE_VALIDATION=true`.
    - Confirm the completion code in Prolific exactly matches the completion
      URL stored in Admin → Settings. Keep submission processing on manual
-     review until the pilot export has been checked.
+     review and keep `PROLIFIC_PAYMENT_AUTOMATION=false` until the exit-path
+     pilot and admin compensation queue have both been checked.
+   - Verify the participant can refresh within 30 seconds, while a longer
+     disconnect records `connection_timeout`, releases/kicks the participant,
+     requests a Prolific return, and leaves any partial amount in the admin
+     queue without paying it automatically.
 
 ## Smoke test (e2e against production)
 

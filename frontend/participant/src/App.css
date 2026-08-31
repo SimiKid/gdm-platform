@@ -218,6 +218,13 @@ body {
   text-decoration: underline;
 }
 
+a.btn.disabled,
+a.btn[aria-disabled="true"] {
+  opacity: 0.55;
+  pointer-events: none;
+  cursor: not-allowed;
+}
+
 .feedback-box {
   width: 100%;
   padding: 0.75rem;
@@ -242,6 +249,11 @@ body {
 
 .study-card.centered .card-actions {
   align-items: center;
+}
+
+.withdraw-actions {
+  margin: 1rem auto 0;
+  text-align: center;
 }
 
 .action-hint {

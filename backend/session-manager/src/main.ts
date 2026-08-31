@@ -43,6 +43,14 @@ function assertProductionConfig() {
       );
     }
   }
+  if (
+    process.env.PROLIFIC_PAYMENT_AUTOMATION === "true" &&
+    !process.env.PROLIFIC_API_TOKEN
+  ) {
+    errors.push(
+      "PROLIFIC_API_TOKEN is empty while Prolific payment automation is enabled",
+    );
+  }
   const matrixPublicUrl = process.env.MATRIX_PUBLIC_URL ?? "";
   if (!matrixPublicUrl || matrixPublicUrl.includes("localhost")) {
     errors.push(

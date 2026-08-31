@@ -32,7 +32,7 @@ type SaveState = "idle" | "saving" | "saved" | "error";
  *     A between-subjects design needs identical parameters everywhere, so
  *     arms deviating from the shared values surface as a drift warning
  *     instead of being silently editable per row.
- *  3. Compensation link.
+ *  3. Prolific completion and early-exit paths.
  *
  * The 2-bot comparison toggle lives in the Testing view — it is a pilot tool
  * and must not sit next to the daily recruiting controls.
@@ -794,24 +794,66 @@ function WorkspaceCard({ rows, onSaved }: Props) {
   );
 }
 
-/* ── Compensation link ──────────────────────────────── */
+/* ── Prolific completion and exit paths ─────────────── */
 
-/**
- * Where the debriefing page's "Claim compensation" button sends participants
- * (payment / Prolific completion link). Stored study-wide on the backend.
- */
+const EMPTY_PATHS: StudySettings = {
+  compensationUrl: "",
+  noConsentUrl: "",
+  ineligibleUrl: "",
+  withdrawalUrl: "",
+  unmatchedUrl: "",
+  technicalFailureUrl: "",
+};
+
+const PROLIFIC_PATHS: Array<{
+  key: keyof StudySettings;
+  label: string;
+  help: string;
+}> = [
+  {
+    key: "compensationUrl",
+    label: "Full completion",
+    help: "Normal Prolific completion URL shown after the exit survey.",
+  },
+  {
+    key: "noConsentUrl",
+    label: "Consent declined",
+    help: "Return/no-payment path for someone who does not consent.",
+  },
+  {
+    key: "ineligibleUrl",
+    label: "Ineligible",
+    help: "Screen-out or return path for an eligibility failure.",
+  },
+  {
+    key: "withdrawalUrl",
+    label: "Voluntary withdrawal",
+    help: "Return path after the participant chooses to stop.",
+  },
+  {
+    key: "unmatchedUrl",
+    label: "Group not formed",
+    help: "Return path after the waiting-room deadline; partial payment is separate.",
+  },
+  {
+    key: "technicalFailureUrl",
+    label: "Technical/group failure",
+    help: "Return path when a started or provisioning group cannot continue.",
+  },
+];
+
 function CompensationCard() {
-  const [url, setUrl] = useState("");
+  const [paths, setPaths] = useState<StudySettings>(EMPTY_PATHS);
   const [loaded, setLoaded] = useState(false);
-  const [saved, setSaved] = useState("");
+  const [saved, setSaved] = useState<StudySettings>(EMPTY_PATHS);
   const [state, setState] = useState<SaveState>("idle");
 
   useEffect(() => {
     void apiFetch("/settings").then(async (res) => {
       if (!res.ok) return;
       const settings = (await res.json()) as StudySettings;
-      setUrl(settings.compensationUrl);
-      setSaved(settings.compensationUrl);
+      setPaths(settings);
+      setSaved(settings);
       setLoaded(true);
     });
   }, []);
@@ -822,40 +864,55 @@ function CompensationCard() {
       const res = await apiFetch("/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ settings: { compensationUrl: url.trim() } }),
+        body: JSON.stringify({
+          settings: Object.fromEntries(
+            PROLIFIC_PATHS.map(({ key }) => [key, paths[key].trim()]),
+          ),
+        }),
       });
       if (!res.ok) throw new Error(`Save failed (${res.status})`);
       const settings = (await res.json()) as StudySettings;
-      setUrl(settings.compensationUrl);
-      setSaved(settings.compensationUrl);
+      setPaths(settings);
+      setSaved(settings);
       setState("saved");
     } catch {
       setState("error");
     }
   }
 
-  const dirty = url.trim() !== saved;
+  const dirty = PROLIFIC_PATHS.some(
+    ({ key }) => paths[key].trim() !== saved[key],
+  );
 
   return (
     <section className="section">
-      <h2>Compensation Link</h2>
+      <h2>Prolific completion and exit paths</h2>
       <p className="hint">
-        Participants land on this link when they press “Claim compensation” on
-        the final debriefing page (e.g. your payment form or Prolific
-        completion URL). Leave empty to use the app's build-time default.
+        These URLs are configured in Prolific. The app records the outcome
+        first, then offers the matching return link. Empty early-exit URLs
+        intentionally stop the participant and ask them to contact the
+        researcher instead of guessing a completion code.
       </p>
-      <div className="copy-row">
-        <input
-          type="url"
-          placeholder="https://…"
-          value={url}
-          disabled={!loaded}
-          onChange={(e) => {
-            setUrl(e.target.value);
-            setState("idle");
-          }}
-          aria-label="Compensation link"
-        />
+      <div className="prolific-paths">
+        {PROLIFIC_PATHS.map((field) => (
+          <label key={field.key} htmlFor={`prolific-${field.key}`}>
+            <strong>{field.label}</strong>
+            <span className="hint">{field.help}</span>
+            <input
+              id={`prolific-${field.key}`}
+              type="url"
+              placeholder="https://…"
+              value={paths[field.key]}
+              disabled={!loaded}
+              onChange={(event) => {
+                setPaths({ ...paths, [field.key]: event.target.value });
+                setState("idle");
+              }}
+            />
+          </label>
+        ))}
+      </div>
+      <div className="param-foot">
         <button
           type="button"
           onClick={() => void save()}

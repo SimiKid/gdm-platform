@@ -184,6 +184,28 @@ export class MatrixService {
     }
   }
 
+  /** Remove a participant from an aborted live room so stale clients cannot write. */
+  async kick(roomId: string, userId: string, reason: string): Promise<void> {
+    const orch = await this.getOrchestrator();
+    const res = await this.fetchWithRateLimitRetry("kick", () =>
+      fetch(
+        `${this.internalUrl}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/kick`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${orch.accessToken}`,
+          },
+          body: JSON.stringify({ user_id: userId, reason }),
+          signal: AbortSignal.timeout(this.requestTimeoutMs),
+        },
+      ),
+    );
+    if (!res.ok) {
+      throw new Error(`kick failed (${res.status}): ${await res.text()}`);
+    }
+  }
+
   /** Set a user's power level in a room (e.g. to grant redaction rights). */
   async setUserPowerLevel(
     roomId: string,

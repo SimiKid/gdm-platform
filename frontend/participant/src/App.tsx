@@ -5,9 +5,11 @@ import WaitingRoom from "./components/WaitingRoom";
 import ExitSurvey from "./components/ExitSurvey";
 import Chat from "./components/Chat";
 import DebriefingPage from "./components/DebriefingPage";
+import StudyExitPage from "./components/StudyExitPage";
 import { createClient, ClientEvent, EventTimeline } from "matrix-js-sdk";
 import type { MatrixClient } from "matrix-js-sdk";
 import type {
+  ParticipationOutcomeResponse,
   ProlificIdentity,
   PublicSession,
   Survey as SurveyData,
@@ -20,6 +22,7 @@ import {
   TOKEN_STORAGE_KEY,
 } from "./study/progress";
 import type { StudyProgress } from "./study/progress";
+import { loadProlificIdentity } from "./study/prolific";
 import "./App.css";
 
 const HOMESERVER =
@@ -35,7 +38,8 @@ type Stage =
   | "waiting"
   | "chat"
   | "exit"
-  | "done";
+  | "done"
+  | "terminated";
 
 /** Start a Matrix client from stored credentials and wait for the first sync.
  *  After sync, backfill the room timeline so reloads never lose messages. */
@@ -89,6 +93,8 @@ export default function App() {
   const [client, setClient] = useState<MatrixClient | null>(null);
   const [groupRanking, setGroupRanking] = useState<string[]>([]);
   const [compensationUrl, setCompensationUrl] = useState("");
+  const [termination, setTermination] =
+    useState<ParticipationOutcomeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [booting, setBooting] = useState(true);
 
@@ -100,6 +106,46 @@ export default function App() {
     },
     [client],
   );
+
+  useEffect(() => {
+    if (!prolific) return;
+    const milestones: Partial<
+      Record<Stage, "consent" | "waiting" | "chat" | "exit">
+    > = {
+      survey: "consent",
+      waiting: "waiting",
+      chat: "chat",
+      exit: "exit",
+    };
+    const milestone = milestones[stage];
+    if (!milestone) return;
+    const heartbeat = async () => {
+      await httpSessionManager.recordParticipationProgress(prolific, milestone);
+      const outcome = await httpSessionManager.getParticipationOutcome(prolific);
+      if (outcome && outcome.outcome !== "completed") {
+        client?.stopClient();
+        setClient(null);
+        setError(null);
+        setTermination(outcome);
+        setStage("terminated");
+      }
+    };
+    void heartbeat().catch(() => undefined);
+    const timer = setInterval(
+      () => void heartbeat().catch(() => undefined),
+      10_000,
+    );
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void heartbeat().catch(() => undefined);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [client, prolific, stage]);
 
   async function enterStudy(
     token: string,
@@ -113,6 +159,15 @@ export default function App() {
         const resumed =
           await httpSessionManager.resumeProlific(prolificIdentity);
         if (resumed) {
+          if (resumed.stage === "terminated" && resumed.termination) {
+            setProlific(prolificIdentity);
+            setTermination(resumed.termination);
+            setStage("terminated");
+            return;
+          }
+          if (!resumed.openSession) {
+            throw new Error("The saved Prolific participation could not be resumed");
+          }
           const { openSession, stage: resumedStage } = resumed;
           const {
             session: resumedSession,
@@ -172,6 +227,12 @@ export default function App() {
       setTrackingToken(token);
       setConditionId(forcedConditionId);
       setProlific(prolificIdentity);
+      if (prolificIdentity) {
+        await httpSessionManager.recordParticipationProgress(
+          prolificIdentity,
+          "consent",
+        );
+      }
       setStage("survey");
     } catch {
       setError(
@@ -207,6 +268,18 @@ export default function App() {
    */
   async function resume(progress: StudyProgress) {
     try {
+      const storedProlific = loadProlificIdentity();
+      setProlific(storedProlific);
+      if (storedProlific) {
+        const outcome =
+          await httpSessionManager.getParticipationOutcome(storedProlific);
+        if (outcome && outcome.outcome !== "completed") {
+          setError(null);
+          setTermination(outcome);
+          setStage("terminated");
+          return;
+        }
+      }
       switch (progress.stage) {
         case "done":
           setParticipantId(progress.participantId);
@@ -292,6 +365,53 @@ export default function App() {
     }
   }
 
+  async function endParticipation(
+    outcome: "declined_consent" | "ineligible" | "voluntary_withdrawal",
+    reason?: string,
+  ) {
+    if (!prolific) {
+      setTermination({
+        outcome,
+        compensationKind: "none",
+        redirectUrl: "",
+        message: "Your withdrawal was recorded. You may close this page.",
+      });
+      client?.stopClient();
+      setClient(null);
+      setStage("terminated");
+      return;
+    }
+    try {
+      setBooting(true);
+      const result = await httpSessionManager.terminateParticipation(
+        prolific,
+        outcome,
+        reason,
+      );
+      client?.stopClient();
+      setClient(null);
+      setError(null);
+      setTermination(result);
+      setStage("terminated");
+    } catch {
+      setError(
+        "We could not record that you are leaving. Please keep this page open and contact the researcher through Prolific.",
+      );
+    } finally {
+      setBooting(false);
+    }
+  }
+
+  function withdraw() {
+    if (
+      window.confirm(
+        "Do you want to stop participating? Your progress will be recorded and the researcher will review any compensation due.",
+      )
+    ) {
+      void endParticipation("voluntary_withdrawal");
+    }
+  }
+
   if (booting) {
     return (
       <div className="loading-container">
@@ -316,6 +436,10 @@ export default function App() {
     );
   }
 
+  if (stage === "terminated" && termination) {
+    return <StudyExitPage termination={termination} />;
+  }
+
   // In the chat room: a live Matrix client + the chat stage. (Dev fast-path
   // has no session, so its timer never fires and it stays here.)
   if (client && stage === "chat") {
@@ -323,10 +447,14 @@ export default function App() {
       <Chat
         client={client}
         session={session}
+        onWithdraw={prolific ? withdraw : undefined}
         onTimeUp={(finalOrder) => {
           client.stopClient();
           setClient(null);
           setGroupRanking(finalOrder);
+          if (prolific) {
+            void httpSessionManager.recordParticipationProgress(prolific, "exit");
+          }
           updateStage("exit");
           setStage("exit");
         }}
@@ -347,8 +475,16 @@ export default function App() {
     case "survey":
       return (
         <Survey
+          onDecline={() => void endParticipation("declined_consent")}
+          onIneligible={(reason) =>
+            void endParticipation("ineligible", reason)
+          }
+          onWithdraw={withdraw}
           onComplete={(survey) => {
             setEntrySurvey(survey);
+            if (prolific) {
+              void httpSessionManager.recordParticipationProgress(prolific, "entry");
+            }
             setStage("waiting");
           }}
         />
@@ -362,10 +498,18 @@ export default function App() {
           prolific={prolific}
           conditionId={conditionId}
           entrySurvey={entrySurvey}
+          onWithdraw={prolific ? withdraw : undefined}
+          onTerminated={(outcome) => {
+            setTermination(outcome);
+            setStage("terminated");
+          }}
           onReady={(readyClient, readySession, readyParticipantId) => {
             setSession(readySession);
             setParticipantId(readyParticipantId);
             setClient(readyClient);
+            if (prolific) {
+              void httpSessionManager.recordParticipationProgress(prolific, "chat");
+            }
             updateStage("chat");
             setStage("chat");
           }}
@@ -379,6 +523,7 @@ export default function App() {
           session={session}
           participantId={participantId}
           groupRanking={groupRanking}
+          onWithdraw={withdraw}
           onDone={(completion) => {
             setCompensationUrl(completion.compensationUrl);
             updateStage("done");

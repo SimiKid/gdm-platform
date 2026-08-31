@@ -33,6 +33,7 @@ export class FakeMatrixService {
   joins: { accessToken: string; roomId: string }[] = [];
   invites: { roomId: string; userId: string }[] = [];
   powerLevels: { roomId: string; userId: string; level: number }[] = [];
+  kicks: { roomId: string; userId: string; reason: string }[] = [];
 
   async registerUser(localpartHint: string): Promise<MatrixCreds> {
     const creds = {
@@ -55,6 +56,10 @@ export class FakeMatrixService {
 
   async joinRoom(accessToken: string, roomId: string): Promise<void> {
     this.joins.push({ accessToken, roomId });
+  }
+
+  async kick(roomId: string, userId: string, reason: string): Promise<void> {
+    this.kicks.push({ roomId, userId, reason });
   }
 
   async setUserPowerLevel(
@@ -116,7 +121,7 @@ export async function resetDatabase(): Promise<void> {
   process.env.DATABASE_URL = inject("databaseUrl");
   prisma ??= new PrismaClient();
   await prisma.$executeRawUnsafe(
-    "TRUNCATE TABLE reactions, messages, surveys, ranking_history, interventions, window_evaluations, participants, sessions, conditions, study_rounds, study_settings CASCADE",
+    "TRUNCATE TABLE participation_events, prolific_compensations, prolific_arrivals, reactions, messages, surveys, ranking_history, interventions, window_evaluations, participants, sessions, conditions, study_rounds, study_settings CASCADE",
   );
   chatServiceCalls.length = 0;
 }

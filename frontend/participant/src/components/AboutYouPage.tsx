@@ -13,6 +13,7 @@ export interface AboutYouAnswers {
 
 interface Props {
   onContinue: (answers: AboutYouAnswers) => void;
+  onIneligible?: (reason: string) => void;
 }
 
 const GENDER_OPTIONS = [
@@ -42,7 +43,7 @@ const ENGLISH_OPTIONS = [
 ];
 
 /** Page 2 — About You. */
-export default function AboutYouPage({ onContinue }: Props) {
+export default function AboutYouPage({ onContinue, onIneligible }: Props) {
   const [age, setAge] = useState("");
   const [ageNa, setAgeNa] = useState(false);
   const [gender, setGender] = useState("");
@@ -102,6 +103,13 @@ export default function AboutYouPage({ onContinue }: Props) {
           value={age}
           disabled={ageNa}
           onChange={(e) => setAge(e.target.value)}
+          onBlur={() => {
+            if (!ageNa && age !== "" && ageNum < 18) {
+              onIneligible?.(
+                "The participant reported being younger than the minimum age of 18.",
+              );
+            }
+          }}
           aria-invalid={!ageNa && age !== "" && !ageValid}
           aria-describedby={
             !ageNa && age !== "" && !ageValid ? "about-age-error" : undefined
@@ -179,7 +187,14 @@ export default function AboutYouPage({ onContinue }: Props) {
         legend="What is your level of English proficiency?"
         options={ENGLISH_OPTIONS}
         value={english}
-        onChange={setEnglish}
+        onChange={(value) => {
+          setEnglish(value);
+          if (value === "none") {
+            onIneligible?.(
+              "The participant reported no English proficiency for the live group discussion.",
+            );
+          }
+        }}
       />
 
       <div className="card-actions">

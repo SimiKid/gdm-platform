@@ -59,6 +59,7 @@ model SessionRecord {
   createdAt              DateTime                 @default(now()) @map("created_at")
   startedAt              DateTime?                @map("started_at")
   completedAt            DateTime?                @map("completed_at")
+  waitingDeadlineAt      DateTime?                @map("waiting_deadline_at")
   condition              ConditionRecord          @relation(fields: [conditionId], references: [id])
   round                  StudyRoundRecord         @relation(fields: [roundId], references: [id])
   participants           ParticipantRecord[]
@@ -97,16 +98,64 @@ model ParticipantRecord {
 }
 
 model ProlificArrivalRecord {
-  id                  String   @id @default(uuid())
-  prolificPid         String   @map("prolific_pid")
-  prolificStudyId     String   @map("prolific_study_id")
-  prolificSessionId   String   @map("prolific_session_id")
-  participantRecordId String?  @map("participant_record_id")
-  arrivedAt           DateTime @default(now()) @map("arrived_at")
+  id                      String                      @id @default(uuid())
+  prolificPid             String                      @map("prolific_pid")
+  prolificStudyId         String                      @map("prolific_study_id")
+  prolificSessionId       String                      @map("prolific_session_id")
+  participantRecordId     String?                     @map("participant_record_id")
+  arrivedAt               DateTime                    @default(now()) @map("arrived_at")
+  stage                   String                      @default("arrived")
+  stageUpdatedAt          DateTime                    @default(now()) @map("stage_updated_at")
+  lastSeenAt              DateTime                    @default(now()) @map("last_seen_at")
+  outcome                 String?
+  outcomeReason           String?                     @map("outcome_reason")
+  endedAt                 DateTime?                   @map("ended_at")
+  elapsedSeconds          Int?                        @map("elapsed_seconds")
+  compensationKind        String?                     @map("compensation_kind")
+  compensationAmountPence Int?                        @map("compensation_amount_pence")
+  events                  ParticipationEventRecord[]
+  compensation            ProlificCompensationRecord?
 
   @@unique([prolificStudyId, prolificSessionId])
   @@index([prolificPid])
+  @@index([stage])
+  @@index([outcome])
+  @@index([outcome, lastSeenAt])
   @@map("prolific_arrivals")
+}
+
+model ParticipationEventRecord {
+  id                String                @id @default(uuid())
+  prolificArrivalId String                @map("prolific_arrival_id")
+  type              String
+  stage             String
+  detail            Json                  @default("{}")
+  occurredAt        DateTime              @default(now()) @map("occurred_at")
+  arrival           ProlificArrivalRecord @relation(fields: [prolificArrivalId], references: [id], onDelete: Cascade)
+
+  @@index([prolificArrivalId, occurredAt])
+  @@map("participation_events")
+}
+
+model ProlificCompensationRecord {
+  id                 String                @id @default(uuid())
+  prolificArrivalId  String                @unique @map("prolific_arrival_id")
+  kind               String
+  amountPence        Int?                  @map("amount_pence")
+  currency           String                @default("GBP")
+  status             String                @default("pending")
+  returnRequestedAt  DateTime?             @map("return_requested_at")
+  bonusBatchId       String?               @map("bonus_batch_id")
+  paymentSubmittedAt DateTime?             @map("payment_submitted_at")
+  actionError        String?               @map("action_error")
+  attemptCount       Int                   @default(0) @map("attempt_count")
+  nextAttemptAt      DateTime?             @map("next_attempt_at")
+  createdAt          DateTime              @default(now()) @map("created_at")
+  updatedAt          DateTime              @updatedAt @map("updated_at")
+  arrival            ProlificArrivalRecord @relation(fields: [prolificArrivalId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@map("prolific_compensations")
 }
 
 model SurveyRecord {

@@ -17,6 +17,8 @@ interface Props {
     session: PublicSession,
     participantId: string,
   ) => void;
+  onTerminated?: (outcome: import("@gdm/shared").ParticipationOutcomeResponse) => void;
+  onWithdraw?: () => void;
 }
 
 /**
@@ -36,17 +38,23 @@ export default function WaitingRoom({
   conditionId,
   entrySurvey,
   onReady,
+  onTerminated,
+  onWithdraw,
 }: Props) {
   const [count, setCount] = useState(0);
   const [groupSize, setGroupSize] = useState(0);
+  const [deadlineAt, setDeadlineAt] = useState<string | undefined>();
+  const [secondsRemaining, setSecondsRemaining] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Bumping this re-runs the join flow (manual retry, aborted-session rejoin).
+  // Bumping this re-runs the idempotent join flow after a transient error.
   const [attempt, setAttempt] = useState(0);
 
   const pollRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // Keep the latest onReady without making it an effect dependency.
   const onReadyRef = useRef(onReady);
   onReadyRef.current = onReady;
+  const onTerminatedRef = useRef(onTerminated);
+  onTerminatedRef.current = onTerminated;
 
   useEffect(() => {
     let cancelled = false;
@@ -65,6 +73,7 @@ export default function WaitingRoom({
 
         setCount(res.session.participants.length);
         setGroupSize(res.session.condition.groupSize);
+        setDeadlineAt(res.session.waitingDeadlineAt);
 
         // Survive a refresh: with the seat and credentials stored, F5 lands
         // back here (or straight in the chat) instead of at recruiting.
@@ -131,14 +140,28 @@ export default function WaitingRoom({
             const session = await httpSessionManager.getSession(res.session.id);
             if (cancelled || handedOff) return;
             if (session.status === "aborted") {
-              // Our forming group timed out (no-shows). Rejoin a fresh one.
-              clearTimeout(pollRef.current);
-              client.stopClient();
-              setAttempt((a) => a + 1);
-              return;
+              if (prolific) {
+                const outcome = await httpSessionManager.getParticipationOutcome(prolific);
+                if (outcome) {
+                  clearTimeout(pollRef.current);
+                  client.stopClient();
+                  if (onTerminatedRef.current) onTerminatedRef.current(outcome);
+                  else setError(outcome.message);
+                  return;
+                }
+                // The durable session abort and its participant outcomes are
+                // committed in sequence. Retry briefly if polling lands in
+                // that small window instead of showing a false hard failure.
+              } else {
+                clearTimeout(pollRef.current);
+                client.stopClient();
+                setError("This waiting session ended before a complete group formed.");
+                return;
+              }
             }
             setCount(session.participants.length);
             setGroupSize(session.condition.groupSize);
+            setDeadlineAt(session.waitingDeadlineAt);
             if (session.roomId) {
               clearTimeout(pollRef.current);
               ready(session);
@@ -167,9 +190,23 @@ export default function WaitingRoom({
     };
   }, [attempt, trackingToken, prolific, conditionId, entrySurvey]);
 
+  useEffect(() => {
+    if (!deadlineAt) {
+      setSecondsRemaining(null);
+      return;
+    }
+    const tick = () =>
+      setSecondsRemaining(
+        Math.max(0, Math.ceil((Date.parse(deadlineAt) - Date.now()) / 1_000)),
+      );
+    tick();
+    const timer = setInterval(tick, 1_000);
+    return () => clearInterval(timer);
+  }, [deadlineAt]);
+
   if (error) {
     return (
-      <StudyShell step={4}>
+      <StudyShell step={4} onWithdraw={onWithdraw}>
         <div className="study-card narrow centered">
           <h1>Waiting room</h1>
           <p className="error">{error}</p>
@@ -192,7 +229,7 @@ export default function WaitingRoom({
   }
 
   return (
-    <StudyShell step={4}>
+    <StudyShell step={4} onWithdraw={onWithdraw}>
       <div className="study-card narrow centered">
         <h1>Waiting room</h1>
         <div className="waiting-spinner" aria-hidden="true" />
@@ -201,6 +238,12 @@ export default function WaitingRoom({
           {count}
           {groupSize ? ` / ${groupSize}` : ""} people joined
         </p>
+        {secondsRemaining !== null && (
+          <p className="action-hint" role="timer">
+            If a complete group cannot be formed, waiting ends in {Math.floor(secondsRemaining / 60)}:
+            {(secondsRemaining % 60).toString().padStart(2, "0")} and partial compensation is reviewed.
+          </p>
+        )}
       </div>
     </StudyShell>
   );
