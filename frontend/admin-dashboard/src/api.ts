@@ -1,8 +1,9 @@
 /**
  * Session Manager access for the dashboard. All researcher endpoints are
  * protected by ADMIN_API_TOKEN on the backend; the token is entered once in
- * the dashboard and kept only for this browser tab. When the backend runs
- * without a token (local dev), everything works without entering one.
+ * the dashboard and kept on this browser until it is replaced or cleared.
+ * When the backend runs without a token (local dev), everything works without
+ * entering one.
  */
 
 export const API_BASE =
@@ -14,14 +15,13 @@ const TOKEN_KEY = "gdm-admin-token";
 
 export function getAdminToken(): string {
   try {
-    const current = sessionStorage.getItem(TOKEN_KEY);
+    const current = localStorage.getItem(TOKEN_KEY);
     if (current) return current;
-    // Migrate credentials saved by older releases, then remove the persistent
-    // copy so closing the browser also closes the admin session.
-    const legacy = localStorage.getItem(TOKEN_KEY) ?? "";
+    // Migrate credentials saved by releases that scoped the token to one tab.
+    const legacy = sessionStorage.getItem(TOKEN_KEY) ?? "";
     if (legacy) {
-      sessionStorage.setItem(TOKEN_KEY, legacy);
-      localStorage.removeItem(TOKEN_KEY);
+      localStorage.setItem(TOKEN_KEY, legacy);
+      sessionStorage.removeItem(TOKEN_KEY);
     }
     return legacy;
   } catch {
@@ -31,9 +31,9 @@ export function getAdminToken(): string {
 
 export function setAdminToken(token: string): void {
   try {
-    if (token) sessionStorage.setItem(TOKEN_KEY, token);
-    else sessionStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(TOKEN_KEY);
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(TOKEN_KEY);
   } catch {
     /* ignore */
   }

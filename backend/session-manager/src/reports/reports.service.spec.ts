@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_INTERVENTION_CONFIG,
   MOON_SURVIVAL_EXPERT_RANKING,
@@ -502,8 +502,14 @@ describe("ReportsService (in-memory store)", () => {
     expect(csv).not.toContain(session.id);
   });
 
-  it("bundles all research CSVs plus the codebook, without linkage", async () => {
-    const zip = await reports.bundleZip();
+  it("bundles from one session snapshot and coalesces duplicate requests", async () => {
+    const allSessions = vi.spyOn(store, "allSessions");
+    const [zip, duplicate] = await Promise.all([
+      reports.bundleZip(),
+      reports.bundleZip(),
+    ]);
+    expect(allSessions).toHaveBeenCalledTimes(1);
+    expect(duplicate).toBe(zip);
     expect(zip.subarray(0, 2).toString()).toBe("PK");
     const listing = zip.toString("latin1");
     for (const name of [
