@@ -40,6 +40,7 @@ See [docs/getting-started.md](docs/getting-started.md) for prerequisites, ports,
 | [Testing](docs/testing.md) | Test strategy: unit / integration / e2e layers, how to run them, conventions |
 | [Pilot Checklist](docs/pilot-checklist.md) | Step-by-step verification for local pilot runs |
 | [Deployment](docs/deployment.md) | Production runbook: first-time setup, updates, rollback, backups |
+| [Prolific Integration](docs/prolific-integration.md) | Full Prolific study, account/API, URL parameter, completion-path, compensation, launch, and reconciliation runbook |
 | [Load Testing](loadtest/README.md) | k6 load-test harness: profiles, run scripts, monitoring |
 
 ## Current Deferrals
