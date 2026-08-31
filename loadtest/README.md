@@ -84,6 +84,17 @@ continues collecting after ordinary SLO failures so the report contains the
 resource state at the point of degradation. A separate 25% protocol-failure
 emergency threshold still aborts a broad platform collapse.
 
+To narrow the capacity boundary between the validated 99-user stage and the
+degraded 249-user stage, run the group-aligned intermediate profile:
+
+```bash
+./loadtest/run.sh intermediate
+```
+
+It holds 150 participants and then 201 participants. The latter intentionally
+uses 201 instead of 200 so every participant can be assigned to a group of
+three and group-ready latency is not distorted by two unmatched participants.
+
 Use `step` only when intentionally testing beyond 249 participants:
 
 ```bash
@@ -103,6 +114,7 @@ Available profiles:
 |---|---|
 | `smoke` | 30 users for five minutes |
 | `diagnostic` | 30 → 99 → 249, with stable evidence plateaus and no ordinary SLO abort |
+| `intermediate` | 150 → 201, to identify the reliable boundary with complete three-person groups |
 | `step` | 30 → 99 → 249 → 498 → 798 |
 | `spike` | 30 → 798 in one minute; run only after `step` |
 | `soak` | 498 users for one hour |

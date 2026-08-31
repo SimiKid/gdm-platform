@@ -518,6 +518,7 @@ function buildObservations(stageRows, containerRows, processRows, diskRows) {
 }
 
 function renderMarkdown(data) {
+  const stableTargets = participantTargetList(data.stages);
   const lines = [
     "# GDM Platform Diagnostic Load-Test Report",
     "",
@@ -628,7 +629,7 @@ function renderMarkdown(data) {
     "## Methodology and interpretation",
     "",
     "- k6 simulates participant enrollment, surveys, Matrix sync, typing, messages, reactions, cursor telemetry and ranking edits.",
-    "- The diagnostic profile ramps to and holds 30, 99 and 249 concurrent participants. Stage summaries exclude the first 20 seconds of each hold.",
+    `- This profile ramps to and holds ${stableTargets} concurrent participants. Stage summaries exclude the first 20 seconds of each hold.`,
     "- Host and per-core CPU percentages are calculated from deltas in `/proc/stat`; I/O wait is reported separately from CPU busy time.",
     "- CPU, memory and disk I/O for application processes are calculated from `/proc` inside every running container.",
     "- Disk throughput, IOPS, utilization, queue size and await time are calculated from `/sys/block/*/stat` deltas. Device-mapper and backing-device rows can represent the same I/O path and must not be summed.",
@@ -644,6 +645,7 @@ function renderMarkdown(data) {
 }
 
 function renderHtml(data) {
+  const stableTargets = participantTargetList(data.stages);
   const observations = data.observations
     .map((item) => `<li>${escapeHtml(item)}</li>`)
     .join("");
@@ -722,7 +724,7 @@ ${tables}
 <h2>Methodology and interpretation</h2>
 <ul>
   <li>k6 simulates participant enrollment, surveys, Matrix sync, typing, chat, reactions, cursor telemetry and ranking edits.</li>
-  <li>Stable 30-, 99- and 249-participant holds are summarized after a 20-second settling interval.</li>
+  <li>Stable holds at ${escapeHtml(stableTargets)} concurrent participants are summarized after a 20-second settling interval.</li>
   <li>Host/per-core CPU and I/O wait come from <code>/proc/stat</code> counter deltas; process metrics come from <code>/proc</code> inside each container.</li>
   <li>Disk throughput, IOPS, utilization, queue and await derive from <code>/sys/block/*/stat</code>. Device-mapper and backing-device rows may describe the same I/O path and are not summed.</li>
   <li>Pressure Stall Information comes from <code>/proc/pressure</code>; PostgreSQL metrics include connections, transactions, cache hit, temporary writes and wait events.</li>
@@ -811,6 +813,12 @@ function markdownTable(headers, rows) {
     `| ${headers.map(() => "---").join(" | ")} |`,
     ...rows.map((row) => `| ${row.map((value) => String(value ?? "—")).join(" | ")} |`),
   ].join("\n");
+}
+
+function participantTargetList(stages) {
+  const targets = stages.map((stage) => format(stage.targetParticipants));
+  if (targets.length < 2) return targets[0] ?? "no configured targets";
+  return `${targets.slice(0, -1).join(", ")} and ${targets.at(-1)}`;
 }
 
 function topPerTarget(rows, field, count) {

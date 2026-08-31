@@ -1,45 +1,48 @@
 import { useState } from "react";
-import { MOON_SURVIVAL } from "@gdm/shared";
 
 interface Props {
   /** Called when the participant confirms and presses "Join chat". */
   onJoin: () => void;
 }
 
-/** Page 4 — Group phase instructions. */
+/** Page before the group chat — instructions and acknowledgment. */
 export default function GroupIntroPage({ onJoin }: Props) {
   const [ready, setReady] = useState(false);
 
   return (
     <div className="study-card">
-      <h1>Next: Discuss and decide as a group</h1>
+      <h1>You are now ready to join the group discussion!</h1>
+
       <p>
-        You will now join a chat room with the other participants in your
-        session. Together, your group will discuss the same{" "}
-        {MOON_SURVIVAL.items.length} items and agree on one shared team ranking.
+        Your group, consisting of <strong>five participants</strong>, will be{" "}
+        <strong>randomly assigned</strong>. All of you will participate{" "}
+        <strong>fully anonymously</strong> — please refrain from sharing any
+        private information.
       </p>
-      <ul>
-        <li>
-          Reach your decisions by consensus: the group ranking should reflect
-          an agreement all members can support, not a simple vote or averaging
-          of individual answers.
-        </li>
-        <li>
-          Everyone's perspective matters; explain your reasoning to each other.
-        </li>
-        <li>
-          A study assistant (bot) is present in the chat room to support the
-          session organizationally.
-        </li>
-        <li>
-          The discussion timer is shown in the chat. The team ranking is
-          submitted through the shared ranking panel.
-        </li>
-        <li>
-          Please keep the discussion within the chat room and do not use
-          external resources.
-        </li>
-      </ul>
+
+      <p>
+        Together with your four team members,{" "}
+        <strong>
+          your goal is to reach consensus over the NASA task you previously did
+          by yourself.
+        </strong>
+      </p>
+
+      <p>
+        A chatbot will be present in the chat. It will, however, not take an
+        active role in the decision-making process of the group. It will rather
+        take an organizational role.
+      </p>
+
+      <p>
+        You have <strong>12 minutes for the task</strong> — a timer will provide
+        orientation; there will also be notifications during this time.
+      </p>
+
+      <p>
+        Please focus on discussions with your team members and do not use
+        external resources for the decision at hand.
+      </p>
 
       <label className="consent-check">
         <input
@@ -48,8 +51,8 @@ export default function GroupIntroPage({ onJoin }: Props) {
           onChange={(e) => setReady(e.target.checked)}
         />
         <span>
-          I understand the instructions and am ready to join the group
-          discussion.
+          I understand and accept the instructions and am ready to join the
+          group.
         </span>
       </label>
 

@@ -102,6 +102,21 @@ export class SessionsController {
     return { ok: true };
   }
 
+  @Post("surveys/debrief-feedback")
+  @UseGuards(ParticipantGuard)
+  async submitDebriefFeedback(
+    @Body() body: { sessionId: string; participantId: string; feedback: string },
+  ): Promise<{ ok: true }> {
+    const feedback =
+      typeof body.feedback === "string" ? body.feedback.slice(0, 4_000) : "";
+    await this.sessions.submitDebriefFeedback(
+      body.sessionId,
+      body.participantId,
+      feedback,
+    );
+    return { ok: true };
+  }
+
   /** Mark the discussion finished (called when the timer runs out). */
   @Post("sessions/:id/complete")
   @UseGuards(ParticipantGuard)

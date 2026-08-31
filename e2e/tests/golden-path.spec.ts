@@ -104,44 +104,51 @@ async function walkToWaitingRoom(page: Page, seat: number): Promise<void> {
     await page.getByRole("button", { name: "Start" }).click();
   }
 
-  // Consent: all three boxes, then begin.
+  // Intro screen, then consent: all three boxes, then begin.
   await expect(
-    page.getByRole("heading", { name: "Welcome to the Group Decision-Making Study" }),
+    page.getByRole("heading", { name: "Welcome to the Study" }),
   ).toBeVisible();
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: /continue to the consent form/i }).click();
   for (const box of await page.getByRole("checkbox").all()) await box.check();
   await page.getByRole("button", { name: "Begin study" }).click();
 
   // About you.
   await page.locator("#about-age").fill(String(24 + seat));
-  await page.getByRole("radio", { name: "Prefer not to say" }).check();
+  await page.getByRole("radio", { name: "Man" }).check();
+  await page.getByRole("radio", { name: "Bachelor's degree" }).check();
+  await page.getByRole("radio", { name: "Fluent (advanced)" }).check();
+  await page.getByRole("button", { name: "Continue" }).click();
+
+  // Attitudes & personality page: fill all matrix radios + single items.
+  // AI attitudes — click first scale option for each row.
+  for (const radio of await page.getByRole("radio", { name: /: Disagree strongly$/i }).all()) {
+    await radio.check();
+  }
   await page
-    .locator("#about-education")
-    .selectOption({ label: "Master's degree" });
-  await page.locator("#about-field").fill("End-to-end testing");
+    .getByRole("group", { name: /work in teams/ })
+    .getByRole("radio", { name: "Sometimes" })
+    .check();
+  await page
+    .getByRole("group", { name: /communicating via text chat/ })
+    .getByRole("radio", { name: "Rather comfortable" })
+    .check();
+  await page
+    .getByRole("group", { name: /spaceflight-related/ })
+    .getByRole("radio", { name: "Rather unfamiliar" })
+    .check();
+  await page
+    .getByRole("group", { name: /wilderness.*survival/i })
+    .getByRole("radio", { name: "Rather unfamiliar" })
+    .check();
   await page.getByRole("button", { name: "Continue" }).click();
 
   // Individual ranking: add every current task item in list order, then submit.
   await expect(
-    page.getByRole("heading", { name: "Your Task: Survival on the Moon" }),
+    page.getByRole("heading", { name: "Task: Survival on the Moon" }),
   ).toBeVisible();
   await rankAllItems(page);
   await page.getByRole("button", { name: "Submit my ranking" }).click();
-
-  // Follow-up questions.
-  await page.getByRole("radio", { name: "Fluent" }).check();
-  await page
-    .getByRole("group", { name: "How often do you work on tasks in teams?" })
-    .getByRole("radio", { name: "Sometimes" })
-    .check();
-  await page
-    .getByRole("group", { name: "How comfortable are you communicating via text chat?" })
-    .getByRole("radio", { name: "5", exact: true })
-    .check();
-  await page
-    .getByRole("group", { name: "How familiar are you with spaceflight or survival-related topics?" })
-    .getByRole("radio", { name: "4", exact: true })
-    .check();
-  await page.getByRole("button", { name: "Continue" }).click();
 
   // Group intro → waiting room.
   await page.getByRole("checkbox").check();
@@ -213,29 +220,36 @@ test("@golden three participants run a full study session end to end", async ({
   await test.step("the discussion timer ends — all three finish the exit survey to debriefing", async () => {
     for (const page of pages) {
       await expect(
-        page.getByRole("heading", { name: "Almost done: A few final questions" }),
+        page.getByRole("heading", { name: "Almost done!" }),
       ).toBeVisible({ timeout: 90_000 });
     }
 
     await Promise.all(
       pages.map(async (page) => {
+        // Step 1: final ranking
         await rankAllItems(page);
-        for (const [question, rating] of [
-          ["How satisfied are you with the group's final ranking?", "6"],
-          ["The group reached its decision fairly.", "5"],
-          ["I felt my views were heard during the discussion.", "5"],
-        ] as const) {
-          await page
-            .getByRole("group", { name: question })
-            .getByRole("radio", { name: rating, exact: true })
-            .check();
+        await page.getByRole("button", { name: "Submit my final ranking" }).click();
+
+        // Step 2: confidence + group dynamics matrix
+        await page.getByRole("radio", { name: "Rather confident" }).check();
+        for (const radio of await page
+          .getByRole("radio", { name: /: Disagree strongly$/i })
+          .all()) {
+          await radio.check();
+        }
+        await page.getByRole("button", { name: "Continue" }).click();
+
+        // Step 3: psych safety + bot perception matrices
+        for (const radio of await page
+          .getByRole("radio", { name: /: Disagree strongly$/i })
+          .all()) {
+          await radio.check();
         }
         await page.getByRole("button", { name: "Submit" }).click();
 
         await expect(
-          page.getByRole("heading", { name: "Thank you for participating!" }),
+          page.getByRole("heading", { name: "Debrief" }),
         ).toBeVisible();
-        await page.getByRole("checkbox", { name: "I have read the debriefing." }).check();
         await expect(page.getByRole("link", { name: "Return to Prolific" })).toBeVisible();
       }),
     );

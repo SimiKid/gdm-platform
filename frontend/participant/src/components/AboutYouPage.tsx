@@ -2,10 +2,13 @@ import { useState } from "react";
 import Likert from "./Likert";
 
 export interface AboutYouAnswers {
-  age: number;
+  age?: number;
+  agePreferNotToSay?: boolean;
   gender: string;
+  genderCustom?: string;
   education: string;
-  fieldOfStudy: string;
+  educationOther?: string;
+  englishProficiency: string;
 }
 
 interface Props {
@@ -13,44 +16,81 @@ interface Props {
 }
 
 const GENDER_OPTIONS = [
-  { value: "female", label: "Female" },
-  { value: "male", label: "Male" },
-  { value: "nonbinary", label: "Non-binary" },
+  { value: "woman", label: "Woman" },
+  { value: "man", label: "Man" },
+  { value: "nonbinary", label: "Non-Binary" },
+  { value: "self-describe", label: "Prefer to self-describe" },
   { value: "na", label: "Prefer not to say" },
 ];
 
 const EDUCATION_OPTIONS = [
-  "Compulsory schooling",
-  "Secondary school (e.g. Matura / high-school diploma)",
-  "Vocational training / apprenticeship",
-  "Bachelor's degree",
-  "Master's degree",
-  "Doctorate",
-  "Other",
+  { value: "high_school_or_less", label: "High school or less" },
+  { value: "some_college", label: "Some college/university (no degree)" },
+  { value: "vocational", label: "Vocational / trade certificate" },
+  { value: "bachelors", label: "Bachelor's degree" },
+  { value: "masters_or_higher", label: "Master's degree or higher" },
+  { value: "other", label: "Other" },
+  { value: "na", label: "Prefer not to say" },
+];
+
+const ENGLISH_OPTIONS = [
+  { value: "native_bilingual", label: "Native / Bilingual" },
+  { value: "fluent", label: "Fluent (advanced)" },
+  { value: "intermediate", label: "Intermediate" },
+  { value: "basic", label: "Basic" },
+  { value: "none", label: "None" },
 ];
 
 /** Page 2 — About You. */
 export default function AboutYouPage({ onContinue }: Props) {
   const [age, setAge] = useState("");
+  const [ageNa, setAgeNa] = useState(false);
   const [gender, setGender] = useState("");
+  const [genderCustom, setGenderCustom] = useState("");
   const [education, setEducation] = useState("");
-  const [fieldOfStudy, setFieldOfStudy] = useState("");
+  const [educationOther, setEducationOther] = useState("");
+  const [english, setEnglish] = useState("");
 
   const ageNum = Number(age);
-  const ageValid = age !== "" && ageNum >= 18 && ageNum <= 120;
-  const ready = ageValid && gender && education && fieldOfStudy.trim();
+  const ageValid = ageNa || (age !== "" && ageNum >= 18 && ageNum <= 120);
+  const genderValid =
+    gender !== "" && (gender !== "self-describe" || genderCustom.trim() !== "");
+  const educationValid =
+    education !== "" && (education !== "other" || educationOther.trim() !== "");
+  const ready = ageValid && genderValid && educationValid && english !== "";
+
+  function submit() {
+    const answers: AboutYouAnswers = {
+      gender,
+      education,
+      englishProficiency: english,
+    };
+    if (ageNa) {
+      answers.agePreferNotToSay = true;
+    } else {
+      answers.age = ageNum;
+    }
+    if (gender === "self-describe") {
+      answers.genderCustom = genderCustom.trim();
+    }
+    if (education === "other") {
+      answers.educationOther = educationOther.trim();
+    }
+    onContinue(answers);
+  }
 
   return (
     <div className="study-card">
-      <h1>A few questions about you</h1>
+      <h1>About You</h1>
       <p>
-        These questions help us describe our participant sample. Your answers
-        cannot be linked to your identity.
+        Before starting with the task, we ask you to answer some questions on the
+        next two pages. Note that there are no right or wrong answers. Please
+        respond as accurately and honestly as applies to you.
       </p>
 
       <div className="q-block">
         <label className="q-label" htmlFor="about-age">
-          Age
+          How old are you?
         </label>
         <input
           id="about-age"
@@ -60,77 +100,101 @@ export default function AboutYouPage({ onContinue }: Props) {
           min={18}
           max={120}
           value={age}
+          disabled={ageNa}
           onChange={(e) => setAge(e.target.value)}
-          aria-invalid={age !== "" && !ageValid}
-          aria-describedby={age !== "" && !ageValid ? "about-age-error" : undefined}
+          aria-invalid={!ageNa && age !== "" && !ageValid}
+          aria-describedby={
+            !ageNa && age !== "" && !ageValid ? "about-age-error" : undefined
+          }
         />
-        {age !== "" && !ageValid && (
+        {!ageNa && age !== "" && ageNum < 18 && (
           <p id="about-age-error" className="error" role="alert">
-            {ageNum < 18
-              ? "You must be at least 18 years old to participate."
-              : "Please enter a valid age between 18 and 120."}
+            You must be at least 18 years old to participate.
           </p>
         )}
+        {!ageNa && age !== "" && ageNum > 120 && (
+          <p id="about-age-error" className="error" role="alert">
+            Please enter a valid age between 18 and 120.
+          </p>
+        )}
+        <label className="consent-check" style={{ marginTop: "0.5rem" }}>
+          <input
+            type="checkbox"
+            checked={ageNa}
+            onChange={() => {
+              setAgeNa((v) => !v);
+              setAge("");
+            }}
+          />
+          <span>Prefer not to say</span>
+        </label>
       </div>
 
       <Likert
         name="gender"
-        legend="Gender"
+        legend="What is your gender?"
         options={GENDER_OPTIONS}
         value={gender}
         onChange={setGender}
       />
+      {gender === "self-describe" && (
+        <div className="q-block" style={{ marginTop: "0.75rem" }}>
+          <label className="q-label" htmlFor="about-gender-custom">
+            Please describe
+          </label>
+          <input
+            id="about-gender-custom"
+            className="text-input"
+            type="text"
+            value={genderCustom}
+            onChange={(e) => setGenderCustom(e.target.value)}
+          />
+        </div>
+      )}
 
-      <div className="q-block">
-        <label className="q-label" htmlFor="about-education">
-          Highest level of education
-        </label>
-        <select
-          id="about-education"
-          className="text-input"
-          value={education}
-          onChange={(e) => setEducation(e.target.value)}
-        >
-          <option value="">Please choose…</option>
-          {EDUCATION_OPTIONS.map((opt) => (
-            <option key={opt} value={opt}>
-              {opt}
-            </option>
-          ))}
-        </select>
-      </div>
+      <Likert
+        name="education"
+        legend="What is the highest level of education you have completed?"
+        options={EDUCATION_OPTIONS}
+        value={education}
+        onChange={setEducation}
+      />
+      {education === "other" && (
+        <div className="q-block" style={{ marginTop: "0.75rem" }}>
+          <label className="q-label" htmlFor="about-education-other">
+            Please specify
+          </label>
+          <input
+            id="about-education-other"
+            className="text-input"
+            type="text"
+            value={educationOther}
+            onChange={(e) => setEducationOther(e.target.value)}
+          />
+        </div>
+      )}
 
-      <div className="q-block">
-        <label className="q-label" htmlFor="about-field">
-          Field of study or occupation
-        </label>
-        <input
-          id="about-field"
-          className="text-input"
-          type="text"
-          value={fieldOfStudy}
-          onChange={(e) => setFieldOfStudy(e.target.value)}
-        />
-      </div>
+      <Likert
+        name="english"
+        legend="What is your level of English proficiency?"
+        options={ENGLISH_OPTIONS}
+        value={english}
+        onChange={setEnglish}
+      />
 
       <div className="card-actions">
         <button
           type="button"
           className="btn btn-primary"
           disabled={!ready}
-          onClick={() =>
-            onContinue({
-              age: ageNum,
-              gender,
-              education,
-              fieldOfStudy: fieldOfStudy.trim(),
-            })
-          }
+          onClick={submit}
         >
           Continue
         </button>
         {!ready && (
-          <p className="action-hint">Please answer all questions to continue.</p>
+          <p className="action-hint">
+            Please answer all questions to continue.
+          </p>
         )}
       </div>
     </div>
