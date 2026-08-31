@@ -1126,6 +1126,7 @@ export class StoreService implements OnModuleInit {
         sessionId,
         name: participant.name,
         trackingToken: participant.trackingToken,
+        recruitmentSource: participant.recruitmentSource,
         prolificPid: participant.prolific?.participantId,
         prolificStudyId: participant.prolific?.studyId,
         prolificSessionId: participant.prolific?.sessionId,
@@ -1798,6 +1799,7 @@ export class StoreService implements OnModuleInit {
           sessionId: session.id,
           name: participant.name,
           trackingToken: participant.trackingToken,
+          recruitmentSource: participant.recruitmentSource,
           prolificPid: participant.prolific?.participantId,
           prolificStudyId: participant.prolific?.studyId,
           prolificSessionId: participant.prolific?.sessionId,
@@ -1807,6 +1809,7 @@ export class StoreService implements OnModuleInit {
           sessionId: session.id,
           name: participant.name,
           trackingToken: participant.trackingToken,
+          recruitmentSource: participant.recruitmentSource,
           prolificPid: participant.prolific?.participantId,
           prolificStudyId: participant.prolific?.studyId,
           prolificSessionId: participant.prolific?.sessionId,
@@ -2655,6 +2658,7 @@ function participantFromRow(
     id: row.id,
     name: row.name,
     trackingToken: row.trackingToken,
+    recruitmentSource: row.recruitmentSource as Participant["recruitmentSource"],
     prolific:
       row.prolificPid && row.prolificStudyId && row.prolificSessionId
         ? {

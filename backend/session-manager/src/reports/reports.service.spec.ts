@@ -28,6 +28,7 @@ function condition(id: string, overrides: Partial<Condition["config"]> = {}): Co
       ...DEFAULT_INTERVENTION_CONFIG,
       interventionMode: "private",
       llmMode: "active",
+      recruitmentSource: "direct",
       ...overrides,
     },
   };
@@ -85,6 +86,7 @@ async function seedSession(
       id: "p1",
       name: "P One",
       trackingToken: "PROLIFIC-1",
+      recruitmentSource: "direct",
       matrixUserId: U1,
       entrySurvey: entrySurvey(),
       exitSurvey: exitSurvey(),
@@ -93,6 +95,7 @@ async function seedSession(
       id: "p2",
       name: "P Two",
       trackingToken: "PROLIFIC-2",
+      recruitmentSource: "direct",
       matrixUserId: U2,
       entrySurvey: entrySurvey({ rankingCompleted: false }),
       // no exit survey (dropped out before the end)
@@ -312,6 +315,8 @@ describe("ReportsService (in-memory store)", () => {
     expect(csv).not.toContain(session.id);
     expect(csv).not.toContain("p1,"); // raw internal id never a cell
     expect(csv).toContain(pseudonymize("P", "p1"));
+    expect(csv).toContain("recruitment_source");
+    expect(csv).toContain("direct");
     expect(csv).toContain("'=cmd()"); // formula-injection guard
   });
 

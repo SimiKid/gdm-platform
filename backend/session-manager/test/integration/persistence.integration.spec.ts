@@ -136,6 +136,20 @@ describe("persistence & exports (integration)", () => {
       "P2-baseline",
       "P3-baseline",
     ]);
+    const storedParticipants = await t.app
+      .get(PrismaService)
+      .participantRecord.findMany({ where: { sessionId } });
+    expect(storedParticipants).toHaveLength(3);
+    expect(storedParticipants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          recruitmentSource: "direct",
+          prolificPid: null,
+          prolificStudyId: null,
+          prolificSessionId: null,
+        }),
+      ]),
+    );
 
     // Summary list and per-condition progress are computed from the DB.
     const summaries = (await request(t.http).get("/api/sessions").expect(200)).body;
@@ -554,6 +568,7 @@ describe("persistence & exports (integration)", () => {
       await request(t.http).get("/api/export/sessions").expect(200)
     ).body.sessions[0].participants[0];
     expect(detailed.prolific).toEqual(prolific);
+    expect(detailed.recruitmentSource).toBe("prolific");
     expect(detailed.completedAt).toBe(completion.completedAt);
     const outcomes = (
       await request(t.http).get("/api/export/prolific-outcomes").expect(200)

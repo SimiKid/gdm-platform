@@ -92,6 +92,10 @@ describe("SessionsService (session-manager)", () => {
     expect(res.matrix.accessToken).toMatch(/^tok/);
     expect(res.session.status).toBe("waiting"); // 1 of 3
     expect(res.matrix.roomId).toBe(""); // not provisioned yet
+    expect((await svc.getSession(res.session.id)).participants[0]).toMatchObject({
+      recruitmentSource: "direct",
+      prolific: undefined,
+    });
   });
 
   it("openSession can force a condition for pilot testing", async () => {
@@ -125,9 +129,29 @@ describe("SessionsService (session-manager)", () => {
     expect((await svc.getSession(first.session.id)).participants[0].prolific).toEqual(
       prolific,
     );
+    expect(
+      (await svc.getSession(first.session.id)).participants[0].recruitmentSource,
+    ).toBe("prolific");
     await expect(svc.resumeProlific(prolific)).resolves.toMatchObject({
       stage: "waiting",
       openSession: { participantId: first.participantId },
+    });
+    await svc.submitSurvey({
+      sessionId: first.session.id,
+      participantId: first.participantId,
+      kind: "exit",
+      survey: { answers: { satisfaction: 7 }, submittedAt: "now" },
+    });
+    await store.updateStudySettings({
+      compensationUrl:
+        "https://app.prolific.com/submissions/complete?cc=TEST1234",
+    });
+    await expect(
+      svc.completeParticipant(first.session.id, first.participantId),
+    ).resolves.toMatchObject({
+      recruitmentSource: "prolific",
+      compensationUrl:
+        "https://app.prolific.com/submissions/complete?cc=TEST1234",
     });
   });
 
@@ -333,16 +357,18 @@ describe("SessionsService (session-manager)", () => {
     });
   });
 
-  it("can require verified Prolific admission without disabling generic pilots by default", async () => {
+  it("keeps direct admission enabled while Prolific validation is configured", async () => {
     process.env.PROLIFIC_REQUIRE_VALIDATION = "true";
     const guarded = new SessionsService(
       store,
       matrix,
       new ProlificActionsService(store),
     );
-    await expect(guarded.openSession(open())).rejects.toThrow(
-      "verified Prolific study link is required",
-    );
+    const result = await guarded.openSession(open());
+    expect((await guarded.getSession(result.session.id)).participants[0]).toMatchObject({
+      recruitmentSource: "direct",
+      prolific: undefined,
+    });
   });
 
   it("rejects malformed or unexpected Prolific identifiers", async () => {
@@ -780,7 +806,10 @@ describe("SessionsService (session-manager)", () => {
       res.participantId,
     );
     expect(second.completedAt).toBe(first.completedAt);
-    expect(first.compensationUrl).toContain("app.prolific.com");
+    expect(first).toMatchObject({
+      recruitmentSource: "direct",
+      compensationUrl: "",
+    });
     expect(
       (await svc.getSession(res.session.id)).participants[0].completedAt,
     ).toBe(first.completedAt);

@@ -6,6 +6,7 @@ const participant = (id: string): Participant => ({
   id,
   name: "",
   trackingToken: "t",
+  recruitmentSource: "direct",
 });
 
 describe("StoreService", () => {

@@ -34,12 +34,12 @@ function assertProductionConfig() {
   if (process.env.PROLIFIC_REQUIRE_VALIDATION === "true") {
     if (!process.env.PROLIFIC_STUDY_ID) {
       errors.push(
-        "PROLIFIC_STUDY_ID is empty while Prolific-only admission is enabled",
+        "PROLIFIC_STUDY_ID is empty while Prolific validation is enabled",
       );
     }
     if (!process.env.PROLIFIC_API_TOKEN) {
       errors.push(
-        "PROLIFIC_API_TOKEN is empty while Prolific-only admission is enabled",
+        "PROLIFIC_API_TOKEN is empty while Prolific validation is enabled",
       );
     }
   }
