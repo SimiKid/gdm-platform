@@ -81,6 +81,18 @@ export function validateSurveyAnswers(
     if (answers.fieldOfStudy !== undefined) {
       boundedString(answers.fieldOfStudy, "fieldOfStudy", 1, 200);
     }
+    if (answers.genderCustom !== undefined) {
+      boundedString(answers.genderCustom, "genderCustom", 1, 200);
+    }
+    if (answers.educationOther !== undefined) {
+      boundedString(answers.educationOther, "educationOther", 1, 200);
+    }
+    if (
+      answers.agePreferNotToSay !== undefined &&
+      typeof answers.agePreferNotToSay !== "boolean"
+    ) {
+      bad("agePreferNotToSay must be a boolean");
+    }
     if (answers.individualRanking !== undefined) {
       exactRanking(answers.individualRanking, expectedItemIds, "individualRanking");
     }

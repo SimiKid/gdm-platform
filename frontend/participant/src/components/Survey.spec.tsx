@@ -17,15 +17,13 @@ async function completeConsent() {
 }
 
 async function completeAboutYou() {
-  await userEvent.type(screen.getByLabelText("Age"), "30");
-  await userEvent.click(screen.getByRole("radio", { name: "Female" }));
-  await userEvent.selectOptions(
-    screen.getByLabelText("Highest level of education"),
-    "Master's degree",
+  await userEvent.type(screen.getByLabelText("How old are you?"), "30");
+  await userEvent.click(screen.getByRole("radio", { name: "Woman" }));
+  await userEvent.click(
+    screen.getByRole("radio", { name: "Bachelor's degree" }),
   );
-  await userEvent.type(
-    screen.getByLabelText("Field of study or occupation"),
-    "Computer science",
+  await userEvent.click(
+    screen.getByRole("radio", { name: "Fluent (advanced)" }),
   );
   await userEvent.click(screen.getByRole("button", { name: "Continue" }));
 }
@@ -42,7 +40,6 @@ async function rankAllItems() {
 }
 
 async function answerFollowUps() {
-  await userEvent.click(screen.getByRole("radio", { name: "Fluent" }));
   await userEvent.click(screen.getByRole("radio", { name: "Sometimes" }));
   const comfort = screen.getByRole("group", {
     name: /communicating via text chat/,
@@ -65,7 +62,7 @@ describe("Survey", () => {
     await completeConsent();
 
     // Page 2 — about you
-    expect(screen.getByText(/A few questions about you/)).toBeInTheDocument();
+    expect(screen.getByText(/About You/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
     await completeAboutYou();
 
@@ -94,11 +91,11 @@ describe("Survey", () => {
     const survey = onComplete.mock.calls[0][0];
     expect(survey.answers.consentParticipation).toBe(true);
     expect(survey.answers.age).toBe(30);
-    expect(survey.answers.gender).toBe("female");
-    expect(survey.answers.education).toBe("Master's degree");
+    expect(survey.answers.gender).toBe("woman");
+    expect(survey.answers.education).toBe("bachelors");
+    expect(survey.answers.englishProficiency).toBe("fluent");
     expect(survey.answers.individualRanking).toHaveLength(10);
     expect(survey.answers.rankingCompleted).toBe(true);
-    expect(survey.answers.englishProficiency).toBe("fluent");
     expect(survey.answers.chatComfort).toBe(6);
     expect(survey.answers.topicFamiliarity).toBe(2);
   });

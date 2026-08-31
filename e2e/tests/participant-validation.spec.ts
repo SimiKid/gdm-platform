@@ -44,11 +44,9 @@ test("@validation participant forms explain and block incomplete answers", async
 
     await age.fill("18");
     await page.getByRole("radio", { name: "Prefer not to say" }).check();
-    await page.locator("#about-education").selectOption({
-      label: "Master's degree",
-    });
+    await page.getByRole("radio", { name: "Bachelor's degree" }).check();
     await expect(continueButton).toBeDisabled();
-    await page.locator("#about-field").fill("End-to-end testing");
+    await page.getByRole("radio", { name: "Fluent (advanced)" }).check();
     await expect(continueButton).toBeEnabled();
     await continueButton.click();
   });

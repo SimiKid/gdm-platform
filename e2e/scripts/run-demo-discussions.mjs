@@ -67,9 +67,9 @@ async function walkToWaitingRoom(page, arm, seat) {
   await page.getByRole("button", { name: "Begin study" }).click();
 
   await page.locator("#about-age").fill(String(21 + seat * 3 + ARMS.indexOf(arm)));
-  await page.getByRole("radio", { name: "Prefer not to say" }).check();
-  await page.locator("#about-education").selectOption({ index: 1 + (seat % 3) });
-  await page.locator("#about-field").fill(["Psychology", "Computer science", "Economics"][seat]);
+  await page.getByRole("radio", { name: "Man" }).check();
+  await page.getByRole("radio", { name: "Bachelor's degree" }).check();
+  await page.getByRole("radio", { name: "Fluent (advanced)" }).check();
   await page.getByRole("button", { name: "Continue" }).click();
 
   // Individual ranking: each seat adds items in a different order so the

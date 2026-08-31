@@ -41,10 +41,10 @@ function entrySurvey(overrides: Record<string, unknown> = {}): Survey {
       consentInformed: true,
       consentParticipation: true,
       age: 29,
-      gender: "prefer not to say",
-      education: "MSc",
-      fieldOfStudy: "=cmd()", // hostile on purpose: formula-injection guard
-      englishProficiency: 6,
+      gender: "na",
+      education: "masters_or_higher",
+      fieldOfStudy: "=cmd()", // hostile on purpose: formula-injection guard (legacy field)
+      englishProficiency: "fluent",
       teamworkFrequency: 5,
       chatComfort: 7,
       topicFamiliarity: 2,

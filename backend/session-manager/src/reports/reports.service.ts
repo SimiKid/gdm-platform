@@ -73,8 +73,11 @@ export class ReportsService {
         "started_at",
         "entry_submitted",
         "age",
+        "age_prefer_not_to_say",
         "gender",
+        "gender_custom",
         "education",
+        "education_other",
         "field_of_study",
         "english_proficiency",
         "teamwork_frequency",
@@ -114,8 +117,11 @@ export class ReportsService {
         row.startedAt ?? "",
         cell(row.entrySubmitted),
         cell(row.age),
+        cell(row.agePreferNotToSay),
         cell(row.gender),
+        cell(row.genderCustom),
         cell(row.education),
+        cell(row.educationOther),
         cell(row.fieldOfStudy),
         cell(row.englishProficiency),
         cell(row.teamworkFrequency),
@@ -732,8 +738,11 @@ function participantRow(session: Session, participant: Participant) {
     startedAt: session.startedAt ?? null,
     entrySubmitted: entry ? true : null,
     age: scalarAnswer(entry, "age"),
+    agePreferNotToSay: scalarAnswer(entry, "agePreferNotToSay"),
     gender: scalarAnswer(entry, "gender"),
+    genderCustom: scalarAnswer(entry, "genderCustom"),
     education: scalarAnswer(entry, "education"),
+    educationOther: scalarAnswer(entry, "educationOther"),
     fieldOfStudy: scalarAnswer(entry, "fieldOfStudy"),
     englishProficiency: scalarAnswer(entry, "englishProficiency"),
     teamworkFrequency: scalarAnswer(entry, "teamworkFrequency"),
@@ -1024,8 +1033,12 @@ exclusions. Treat it as identifying data; keep it out of analysis folders.
 | session_status | waiting / running / completed / aborted — filter on \`completed\` for analysis |
 | group_size / started_at | Session context |
 | entry_submitted / exit_submitted | \`true\` or empty (survey missing) |
-| age, gender, education, field_of_study | Entry demographics (free text where the form allows) |
-| english_proficiency, teamwork_frequency, chat_comfort, topic_familiarity | Entry 1–7 scales |
+| age, age_prefer_not_to_say | Participant age or \`true\` if they declined to answer |
+| gender, gender_custom | Gender identity; gender_custom filled when "self-describe" selected |
+| education, education_other | Highest education level; education_other filled when "other" selected |
+| field_of_study | Legacy field (pre-v2 forms only, empty for newer submissions) |
+| english_proficiency | English proficiency level (native_bilingual / fluent / intermediate) |
+| teamwork_frequency, chat_comfort, topic_familiarity | Entry scales |
 | individual_ranking_completed | \`false\` = the entry ranking timed out and was auto-completed in shown order |
 | individual_ranking_seconds_used | Time spent on the individual ranking |
 | individual_ranking_error | NASA error score of the entry ranking; empty unless completed = true |

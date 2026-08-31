@@ -12,10 +12,11 @@ interface Props {
   onComplete: (survey: Survey) => void;
 }
 
-type Step = "consent" | "about" | "task" | "group";
+type Step = "consent" | "about" | "task" | "group" | "screenout";
 const STEP_NUMBER: Record<Step, 1 | 2 | 3 | 4> = {
   consent: 1,
   about: 2,
+  screenout: 2,
   task: 3,
   group: 4,
 };
@@ -60,7 +61,19 @@ export default function Survey({ onComplete }: Props) {
             setAbout(answers);
             setStep("task");
           }}
+          onScreenOut={() => setStep("screenout")}
         />
+      )}
+
+      {step === "screenout" && (
+        <div className="study-card">
+          <h1>Thank you for your interest</h1>
+          <p>
+            Unfortunately, this study requires at least intermediate English
+            proficiency and we are unable to include you in this session.
+          </p>
+          <p>Thank you for your time.</p>
+        </div>
       )}
 
       {step === "task" && (

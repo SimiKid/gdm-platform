@@ -115,11 +115,9 @@ async function walkToWaitingRoom(page: Page, seat: number): Promise<void> {
 
   // About you.
   await page.locator("#about-age").fill(String(24 + seat));
-  await page.getByRole("radio", { name: "Prefer not to say" }).check();
-  await page
-    .locator("#about-education")
-    .selectOption({ label: "Master's degree" });
-  await page.locator("#about-field").fill("End-to-end testing");
+  await page.getByRole("radio", { name: "Man" }).check();
+  await page.getByRole("radio", { name: "Bachelor's degree" }).check();
+  await page.getByRole("radio", { name: "Fluent (advanced)" }).check();
   await page.getByRole("button", { name: "Continue" }).click();
 
   // Individual ranking: add every current task item in list order, then submit.

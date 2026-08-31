@@ -17,7 +17,6 @@ export interface RankingTaskAnswers {
   /** False when the 10-minute timer expired before every item was ranked. */
   rankingCompleted: boolean;
   rankingSecondsUsed: number;
-  englishProficiency: string;
   teamworkFrequency: string;
   chatComfort: number;
   topicFamiliarity: number;
@@ -29,13 +28,6 @@ interface Props {
 
 const TASK_SECONDS = 10 * 60;
 const ITEMS = MOON_SURVIVAL.items;
-
-const ENGLISH_OPTIONS = [
-  { value: "native", label: "Native" },
-  { value: "fluent", label: "Fluent" },
-  { value: "intermediate", label: "Intermediate" },
-  { value: "basic", label: "Basic" },
-];
 
 const TEAMWORK_OPTIONS = [
   { value: "never", label: "Never" },
@@ -73,7 +65,6 @@ export default function RankingTaskPage({ onComplete }: Props) {
     secondsUsed: number;
   } | null>(null);
 
-  const [english, setEnglish] = useState("");
   const [teamwork, setTeamwork] = useState("");
   const [chatComfort, setChatComfort] = useState("");
   const [familiarity, setFamiliarity] = useState("");
@@ -119,7 +110,7 @@ export default function RankingTaskPage({ onComplete }: Props) {
     });
   }
 
-  const questionsReady = english && teamwork && chatComfort && familiarity;
+  const questionsReady = teamwork && chatComfort && familiarity;
   const timerLow = secondsLeft <= 2 * 60;
 
   // ── Sub-step 2: follow-up questions (no time pressure) ────────────────
@@ -128,14 +119,6 @@ export default function RankingTaskPage({ onComplete }: Props) {
       <div className="study-card">
         <h1>A few more questions</h1>
         <p>Your ranking has been saved. Please answer these before the group phase.</p>
-
-        <Likert
-          name="english"
-          legend="English proficiency"
-          options={ENGLISH_OPTIONS}
-          value={english}
-          onChange={setEnglish}
-        />
 
         <Likert
           name="teamwork"
@@ -173,7 +156,6 @@ export default function RankingTaskPage({ onComplete }: Props) {
                 individualRanking: result.order,
                 rankingCompleted: result.completed,
                 rankingSecondsUsed: result.secondsUsed,
-                englishProficiency: english,
                 teamworkFrequency: teamwork,
                 chatComfort: Number(chatComfort),
                 topicFamiliarity: Number(familiarity),
