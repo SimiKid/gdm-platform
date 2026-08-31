@@ -42,6 +42,10 @@ study so a link from another study cannot claim a seat.
 - The frontend captures `PROLIFIC_PID`, `STUDY_ID`, and `SESSION_ID`.
 - Incomplete Prolific parameter sets are rejected instead of becoming generic
   participants.
+- Requests with no Prolific parameters remain valid direct participants. The
+  server records every participant as `recruitment_source=direct` or
+  `recruitment_source=prolific`; only the latter can enter the Prolific
+  lifecycle and compensation flows.
 - The IDs are removed from the address bar immediately after capture.
 - An arrival is persisted before the consent/task flow, so early departures
   remain reconcilable.
@@ -71,6 +75,9 @@ study so a link from another study cannot claim a seat.
 - Individual completion is idempotent and separate from group completion.
 - Prolific IDs and individual completion timestamps are included in the
   detailed JSON and survey exports.
+- `participants.csv`, `linkage.csv`, and raw survey/session exports include the
+  server-owned recruitment source for clean separation of pilot/direct data
+  from Prolific data.
 - `/api/export/prolific-arrivals` lists arrivals including people who did not
   reach the waiting room.
 - `/api/export/prolific-outcomes` and the admin dashboard's **Prolific** tab

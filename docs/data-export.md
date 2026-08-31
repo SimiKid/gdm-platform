@@ -19,7 +19,7 @@ Every endpoint accepts `?conditionIds=a,b,c` to restrict the export to specific 
 
 | File | Level | Typical question |
 |---|---|---|
-| `participants.csv` | Individual | Felt heard? Ranking accuracy? How much did each person speak, how many nudges did they get? (mixed model, `session_pseudonym` as grouping factor) |
+| `participants.csv` | Individual | Felt heard? Ranking accuracy? How much did each person speak, how many nudges did they get? Includes `recruitment_source` (`direct` or `prolific`) for recruitment-channel filtering. |
 | `sessions_analysis.csv` | Group | Did the bot equalize participation (`share_std_dev`, `share_gini`)? Better group ranking (`group_ranking_error`)? |
 | `windows.csv` | Time | Dominance dynamics per contribution window across all arms — baseline included via `baseline-suppressed` counterfactual rows |
 | `rankings.csv` | Item | Raw ranking orders (entry/exit individual, every group edit, group final) — item-level misplacement and convergence analyses |

@@ -70,6 +70,7 @@ export class ReportsService {
         "llm_mode",
         "session_status",
         "group_size",
+        "recruitment_source",
         "started_at",
         "entry_submitted",
         "age",
@@ -156,6 +157,7 @@ export class ReportsService {
         row.llmMode,
         row.sessionStatus,
         String(row.groupSize),
+        row.recruitmentSource,
         row.startedAt ?? "",
         cell(row.entrySubmitted),
         cell(row.age),
@@ -507,6 +509,7 @@ export class ReportsService {
         "participant_id",
         "session_id",
         "tracking_token",
+        "recruitment_source",
         "matrix_user_id",
       ],
       ...sessions.flatMap((session) =>
@@ -517,6 +520,7 @@ export class ReportsService {
           participant.id,
           session.id,
           participant.trackingToken,
+          participant.recruitmentSource,
           participant.matrixUserId ?? "",
         ]),
       ),
@@ -786,6 +790,7 @@ function participantRow(session: Session, participant: Participant) {
     llmMode: llmModeOf(session),
     sessionStatus: session.status,
     groupSize: session.condition.groupSize,
+    recruitmentSource: participant.recruitmentSource,
     startedAt: session.startedAt ?? null,
     entrySubmitted: entry ? true : null,
     age: scalarAnswer(entry, "age"),
@@ -1106,6 +1111,7 @@ exclusions. Treat it as identifying data; keep it out of analysis folders.
 | condition_id / condition_name / intervention_mode / llm_mode | Arm, from the session's frozen condition snapshot |
 | session_status | waiting / running / completed / aborted — filter on \`completed\` for analysis |
 | group_size / started_at | Session context |
+| recruitment_source | Server-recorded admission source: direct or prolific |
 | entry_submitted / exit_submitted | \`true\` or empty (survey missing) |
 | age, age_prefer_not_to_say | Participant age or \`true\` if they declined to answer |
 | gender, gender_custom | Gender identity; gender_custom filled when "self-describe" selected |

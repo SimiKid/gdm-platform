@@ -541,6 +541,7 @@ export default function App() {
       return (
         <DebriefingPage
           completionUrl={compensationUrl}
+          prolificParticipant={Boolean(prolific)}
           sessionId={session?.id ?? ""}
           participantId={participantId}
         />
