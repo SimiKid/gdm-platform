@@ -8,21 +8,21 @@ import type { Briefing, RankingTask } from "./models.js";
  */
 
 export const MOON_SURVIVAL_BRIEFING: Briefing = {
-  title: "Survival on the Moon",
+  title: "Task: Survival on the Moon",
   html:
-    "<p>Imagine you are part of a space crew scheduled to rendezvous with a " +
-    "mother ship on the lighted surface of the moon. Due to mechanical " +
-    "problems, your ship was forced to crash-land about 200 miles (320 km) " +
-    "from the rendezvous point. Much of the onboard equipment was damaged. " +
-    "Your survival depends on reaching the mother ship, so you must choose " +
-    "the most critical items for the journey.</p>",
+    "<p>As part of a space crew, you are ready to land on the lighted surface " +
+    "of the moon where you planned to meet up with the mothership. Due to " +
+    "mechanical problems, your ship was forced to crash-land about 200 miles " +
+    "(320 km) from the calculated location. Much of the onboard equipment " +
+    "was damaged. Your survival depends on reaching the mothership, so you " +
+    "must choose the most critical items for the journey.</p>",
 };
 
 export const MOON_SURVIVAL: RankingTask = {
   id: "moon-survival",
   title:
-    "Rank the 10 items by importance for reaching the rendezvous point: " +
-    "1 = most important, 10 = least important.",
+    "Rank the items below by importance for reaching the mothership. " +
+    "Most important item = 1, least important item = 10.",
   items: [
     { id: "matches", label: "Box of matches" },
     { id: "food", label: "Food concentrate" },
