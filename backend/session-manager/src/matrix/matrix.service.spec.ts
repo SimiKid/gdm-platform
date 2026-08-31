@@ -119,4 +119,23 @@ describe("MatrixService", () => {
     );
     await expect(svc.joinRoom("tok", "!r:localhost")).rejects.toThrow(/join failed/);
   });
+
+  it("kicks a participant from an aborted room as the orchestrator", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ user_id: "@orc:localhost", access_token: "o" }),
+      })
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await svc.kick("!room:localhost", "@participant:localhost", "group ended");
+
+    expect(fetchMock.mock.calls[1][0]).toContain("/kick");
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({
+      user_id: "@participant:localhost",
+      reason: "group ended",
+    });
+  });
 });

@@ -3,6 +3,7 @@ import { useState } from "react";
 interface Props {
   /** Called once all consent boxes are ticked and "Continue" is pressed. */
   onBegin: () => void;
+  onDecline?: () => void;
 }
 
 const CONSENT_ITEMS = [
@@ -12,7 +13,7 @@ const CONSENT_ITEMS = [
 ];
 
 /** Page 1 — Study Introduction & Informed Consent (two internal steps). */
-export default function ConsentPage({ onBegin }: Props) {
+export default function ConsentPage({ onBegin, onDecline }: Props) {
   const [showConsent, setShowConsent] = useState(false);
   const [introAcknowledged, setIntroAcknowledged] = useState(false);
   const [checked, setChecked] = useState<boolean[]>(
@@ -38,8 +39,8 @@ export default function ConsentPage({ onBegin }: Props) {
           <strong>
             The study will take approximately 25–35 minutes to complete.
           </strong>{" "}
-          The main task is a timed group decision with five fully anonymized
-          participants, who are randomly assigned to groups.
+          The main task is a timed group decision with three fully anonymized
+          participants in total, who are randomly assigned to groups.
         </p>
 
         <h2>Please Note</h2>
@@ -152,6 +153,11 @@ export default function ConsentPage({ onBegin }: Props) {
         >
           Begin study
         </button>
+        {onDecline && (
+          <button type="button" className="btn-link" onClick={onDecline}>
+            I do not consent
+          </button>
+        )}
       </div>
     </div>
   );

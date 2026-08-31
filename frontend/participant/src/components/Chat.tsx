@@ -38,6 +38,7 @@ interface Props {
   session: PublicSession | null;
   /** Fired once when the discussion timer reaches zero, with the final group ranking order. */
   onTimeUp?: (groupOrder: string[]) => void;
+  onWithdraw?: () => void;
 }
 
 const PANEL_WIDTH_KEY = "gdm-panel-width";
@@ -79,7 +80,7 @@ function formatClock(ts: number): string {
   return `${d.getHours()}:${d.getMinutes().toString().padStart(2, "0")}`;
 }
 
-export default function Chat({ client, session, onTimeUp }: Props) {
+export default function Chat({ client, session, onTimeUp, onWithdraw }: Props) {
   const [activeRoomId, setActiveRoomId] = useState<string | null>(
     session?.roomId ?? null,
   );
@@ -544,6 +545,11 @@ export default function Chat({ client, session, onTimeUp }: Props) {
       <main className="chat-main">
         <div className="chat-header">
           <h2>{title}</h2>
+          {onWithdraw && (
+            <button type="button" className="btn-link" onClick={onWithdraw}>
+              Withdraw
+            </button>
+          )}
           {groupReady && (
             <span className="chat-user">
               <span className="user-dot" style={{ background: me.color }} />

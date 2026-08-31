@@ -2,6 +2,8 @@ import type {
   CompleteParticipantResponse,
   OpenSessionRequest,
   OpenSessionResponse,
+  ParticipationOutcomeResponse,
+  ParticipationStage,
   ProlificIdentity,
   ProlificResumeResponse,
   PublicSession,
@@ -12,11 +14,8 @@ import type {
 /**
  * Client for the Session Manager backend.
  *
- * The Session Manager isn't built yet (research-DB persistence is the pending
- * infra), so the participant app codes against this interface and uses the
- * mock below. Swap in a `fetch`-based implementation once the service is up —
- * no call sites change. Matrix itself is NOT mocked: the mock returns creds
- * for the real local Synapse.
+ * Keeping the HTTP boundary behind this interface makes participant-flow tests
+ * deterministic while production uses the fetch implementation below.
  */
 export interface SessionManagerClient {
   /** Persist Prolific identity as soon as the external study opens. */
@@ -46,6 +45,18 @@ export interface SessionManagerClient {
     sessionId: string,
     participantId: string,
   ): Promise<CompleteParticipantResponse>;
+  recordParticipationProgress(
+    prolific: ProlificIdentity,
+    stage: Exclude<ParticipationStage, "done" | "terminated">,
+  ): Promise<void>;
+  terminateParticipation(
+    prolific: ProlificIdentity,
+    outcome: "declined_consent" | "ineligible" | "voluntary_withdrawal",
+    reason?: string,
+  ): Promise<ParticipationOutcomeResponse>;
+  getParticipationOutcome(
+    prolific: ProlificIdentity,
+  ): Promise<ParticipationOutcomeResponse | null>;
 }
 
 /**
@@ -105,6 +116,33 @@ export const httpSessionManager: SessionManagerClient = {
     const body = await res.text();
     if (!body.trim()) return null;
     return JSON.parse(body) as ProlificResumeResponse | null;
+  },
+  async recordParticipationProgress(prolific, stage) {
+    const res = await request(`${API_BASE}/prolific/progress`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prolific, stage }),
+    });
+    if (!res.ok) throw new Error(`recordParticipationProgress failed: ${res.status}`);
+  },
+  async terminateParticipation(prolific, outcome, reason) {
+    const res = await request(`${API_BASE}/prolific/terminate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prolific, outcome, reason }),
+    });
+    if (!res.ok) throw new Error(`terminateParticipation failed: ${res.status}`);
+    return (await res.json()) as ParticipationOutcomeResponse;
+  },
+  async getParticipationOutcome(prolific) {
+    const res = await request(`${API_BASE}/prolific/outcome`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prolific }),
+    });
+    if (!res.ok) throw new Error(`getParticipationOutcome failed: ${res.status}`);
+    const body = await res.text();
+    return body.trim() ? (JSON.parse(body) as ParticipationOutcomeResponse | null) : null;
   },
   async openSession(req) {
     const res = await request(`${API_BASE}/sessions`, {

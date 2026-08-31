@@ -4,6 +4,8 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleDestroy,
+  OnModuleInit,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
@@ -18,6 +20,10 @@ import type {
   OpenSessionRequest,
   OpenSessionResponse,
   Participant,
+  ParticipationOutcome,
+  ParticipationOutcomeRecord,
+  ParticipationOutcomeResponse,
+  ParticipationStage,
   ProlificArrival,
   ProlificIdentity,
   ProlificResumeResponse,
@@ -26,6 +32,7 @@ import type {
   SessionSummary,
   StartRoundResponse,
   StartSessionNotification,
+  StudySettings,
   SubmitSurveyRequest,
 } from "@gdm/shared";
 import { MatrixService, type MatrixCreds } from "../matrix/matrix.service";
@@ -36,9 +43,10 @@ import {
   type ResearchFilter,
 } from "../reports/filter";
 import { validateSurveyAnswers } from "../validation/request-validation";
+import { ProlificActionsService } from "../prolific/prolific-actions.service";
 
 @Injectable()
-export class SessionsService {
+export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private readonly log = new Logger(SessionsService.name);
   /** URL the browser uses to reach Synapse (returned to the client). */
   private readonly publicUrl =
@@ -48,11 +56,16 @@ export class SessionsService {
     process.env.CHAT_SERVICE_URL ?? "http://localhost:3002";
   /**
    * Waiting sessions older than this are considered abandoned (no-shows) and
-   * are aborted so they stop counting against the condition goal. Participants
-   * still actively polling an aborted session rejoin automatically.
+   * are aborted so they stop counting against the condition goal. Prolific
+   * participants receive a terminal unmatched outcome and are never requeued.
    */
   private readonly waitingTimeoutMinutes = Number(
-    process.env.WAITING_TIMEOUT_MINUTES ?? 30,
+    process.env.WAITING_TIMEOUT_MINUTES ?? 15,
+  );
+  /** A closed or disconnected participant may resume until this grace expires. */
+  private readonly reconnectGraceSeconds = Math.max(
+    5,
+    Number(process.env.PARTICIPANT_RECONNECT_GRACE_SECONDS ?? 30) || 30,
   );
   /** Optional live-recruitment gate; generic/pilot links remain available when false. */
   private readonly prolificRequired =
@@ -68,6 +81,8 @@ export class SessionsService {
   >();
   /** At most one room-provisioning attempt per forming session. */
   private readonly provisionChains = new Map<string, Promise<Session>>();
+  private lifecycleSweepTimer?: ReturnType<typeof setInterval>;
+  private lifecycleSweepRunning = false;
 
   /**
    * Joins must not interleave: find-or-create of the forming session races
@@ -79,7 +94,33 @@ export class SessionsService {
   constructor(
     private readonly store: StoreService,
     private readonly matrix: MatrixService,
+    private readonly prolificActions: ProlificActionsService,
   ) {}
+
+  onModuleInit(): void {
+    this.lifecycleSweepTimer = setInterval(
+      () => void this.runLifecycleSweep(),
+      5_000,
+    );
+    this.lifecycleSweepTimer.unref?.();
+  }
+
+  onModuleDestroy(): void {
+    if (this.lifecycleSweepTimer) clearInterval(this.lifecycleSweepTimer);
+  }
+
+  private async runLifecycleSweep(): Promise<void> {
+    if (this.lifecycleSweepRunning) return;
+    this.lifecycleSweepRunning = true;
+    try {
+      await this.sweepExpiredWaitingRooms();
+      await this.sweepDisconnectedParticipants();
+    } catch (error) {
+      this.log.error(`participant lifecycle sweep failed: ${String(error)}`);
+    } finally {
+      this.lifecycleSweepRunning = false;
+    }
+  }
 
   /**
    * Waiting-Room entry: place the participant into a forming group, register
@@ -96,7 +137,13 @@ export class SessionsService {
       );
     }
     await this.validateProlificIdentity(req.prolific);
-    if (req.prolific) await this.store.recordProlificArrival(req.prolific);
+    if (req.prolific) {
+      const outcome = await this.store.getParticipationOutcome(req.prolific);
+      if (outcome?.outcome) {
+        throw new ConflictException("This Prolific participation has ended");
+      }
+      await this.store.recordParticipationStage(req.prolific, "waiting");
+    }
 
     const seat = await this.queueMatchmaking(() => this.reserveSeat(req));
     const creds = await this.ensureParticipantAccess(
@@ -139,9 +186,16 @@ export class SessionsService {
 
   private async doStartRound(label: string): Promise<StartRoundResponse> {
     // Abort leftover lobbies so no group mixes participants across rounds.
-    // Participants still polling an aborted session rejoin automatically —
-    // into the new round. Running sessions finish in their round.
+    // Prolific participants in those lobbies receive a terminal group-aborted
+    // outcome. Running sessions finish in their original round.
     const waiting = await this.store.abortWaitingSessions();
+    for (const lobby of waiting) {
+      await this.terminateSessionParticipants(
+        lobby.id,
+        "group_aborted",
+        "The waiting lobby closed when the researcher started a new round.",
+      );
+    }
     const round = await this.store.startNewRound(label);
     this.log.log(
       `started round ${round.id} ("${round.label}"), aborted ${waiting.length} waiting lobbies`,
@@ -173,32 +227,7 @@ export class SessionsService {
       : await this.findByTrackingToken(req.trackingToken);
     if (existing) {
       if (existing.session.status === "aborted" && req.prolific) {
-        const nextSession =
-          (await this.findForming(req.conditionId)) ??
-          (await this.store.createForming(
-            await this.assignCondition(req.conditionId),
-          ));
-        await this.store.moveParticipant(
-          existing.participant.id,
-          existing.session.id,
-          nextSession.id,
-        );
-        nextSession.participants.push(existing.participant);
-        if (req.prolific) {
-          await this.store.linkProlificArrival(
-            req.prolific,
-            existing.participant.id,
-          );
-        }
-        this.log.log(
-          `requeued Prolific participant ${existing.participant.id} from ` +
-            `aborted session ${existing.session.id} to ${nextSession.id}`,
-        );
-        return {
-          session: nextSession,
-          participant: existing.participant,
-          existing: true,
-        };
+        throw new ConflictException("This waiting attempt has ended");
       }
       if (req.prolific) {
         await this.store.linkProlificArrival(
@@ -230,9 +259,16 @@ export class SessionsService {
 
   /** Mark abandoned waiting groups aborted so they free their condition slot. */
   private async abortStaleWaiting(): Promise<void> {
-    const cutoff = new Date(Date.now() - this.waitingTimeoutMinutes * 60_000);
-    const stale = await this.store.abortWaitingSessions(cutoff);
+    const stale = await this.store.abortExpiredWaitingSessions();
     for (const session of stale) {
+      const provisioningFailed = session.priorStatus === "provisioning";
+      await this.terminateSessionParticipants(
+        session.id,
+        provisioningFailed ? "technical_failure" : "unmatched",
+        provisioningFailed
+          ? "The complete group could not enter the chat because room provisioning did not finish before the deadline."
+          : "The required live group did not form before the waiting deadline.",
+      );
       this.log.log(
         `aborted stale waiting session ${session.id} ` +
           `(${session.participantCount} participant(s) after ${this.waitingTimeoutMinutes}min)`,
@@ -266,6 +302,7 @@ export class SessionsService {
   /** Validate URL identifiers and, when configured, their Prolific submission. */
   private async validateProlificIdentity(
     identity?: ProlificIdentity,
+    allowEnded = false,
   ): Promise<void> {
     if (!identity) return;
     const apiToken = process.env.PROLIFIC_API_TOKEN?.trim();
@@ -289,6 +326,13 @@ export class SessionsService {
     const expectedStudyId = process.env.PROLIFIC_STUDY_ID?.trim();
     if (expectedStudyId && identity.studyId !== expectedStudyId) {
       throw new BadRequestException("Unexpected Prolific study");
+    }
+
+    const recorded = await this.store.getProlificArrival(identity);
+    if (recorded && recorded.participantId !== identity.participantId) {
+      throw new ConflictException(
+        "This Prolific submission belongs to a different participant",
+      );
     }
 
     if (!apiToken) return;
@@ -350,12 +394,16 @@ export class SessionsService {
       ?.trim()
       .toUpperCase()
       .replace(/[\s-]+/g, "_");
-    if (
-      submissionStatus &&
-      !["RESERVED", "ACTIVE", "AWAITING_REVIEW", "APPROVED"].includes(
-        submissionStatus,
-      )
-    ) {
+    const allowedStatuses = [
+      "RESERVED",
+      "ACTIVE",
+      "AWAITING_REVIEW",
+      "APPROVED",
+      ...(allowEnded
+        ? ["RETURNED", "TIMED_OUT", "SCREENED_OUT", "REJECTED"]
+        : []),
+    ];
+    if (submissionStatus && !allowedStatuses.includes(submissionStatus)) {
       throw new BadRequestException(
         `Prolific submission is ${submissionStatus.toLowerCase()}`,
       );
@@ -386,22 +434,82 @@ export class SessionsService {
     return this.store.recordProlificArrival(identity);
   }
 
+  async recordParticipationProgress(
+    identity: ProlificIdentity,
+    stage: Exclude<ParticipationStage, "done" | "terminated">,
+  ): Promise<ProlificArrival> {
+    await this.validateProlificIdentity(identity);
+    return this.store.recordParticipationStage(identity, stage);
+  }
+
+  async terminateParticipation(
+    identity: ProlificIdentity,
+    outcome: "declined_consent" | "ineligible" | "voluntary_withdrawal",
+    reason = "",
+  ): Promise<ParticipationOutcomeResponse> {
+    await this.validateProlificIdentity(identity);
+    return this.queueMatchmaking(async () => {
+      const arrival = await this.store.recordProlificArrival(identity);
+      const existing = await this.findByProlificSession(identity);
+      const kind =
+        outcome === "voluntary_withdrawal" &&
+        ["entry", "waiting", "chat", "exit"].includes(arrival.stage)
+          ? "manual_review"
+          : "none";
+      const record = await this.store.terminateProlificParticipation(
+        identity,
+        outcome,
+        reason || defaultOutcomeReason(outcome),
+        kind,
+      );
+
+      if (existing?.session.status === "waiting") {
+        await this.store.removeParticipantFromWaitingSession(
+          existing.session.id,
+          existing.participant.id,
+        );
+      } else if (
+        existing &&
+        ["provisioning", "running"].includes(existing.session.status)
+      ) {
+        await this.store.updateSessionLifecycle(existing.session.id, {
+          status: "aborted",
+        });
+        await this.terminateSessionParticipants(
+          existing.session.id,
+          "participant_dropout",
+          "The live group could not continue after a participant left.",
+        );
+      }
+
+      return this.outcomeResponse(record);
+    });
+  }
+
+  async getParticipationOutcome(
+    identity: ProlificIdentity,
+  ): Promise<ParticipationOutcomeResponse | null> {
+    await this.validateProlificIdentity(identity, true);
+    const record = await this.store.getParticipationOutcome(identity);
+    return record?.outcome ? this.outcomeResponse(record) : null;
+  }
+
   /** Restore a Prolific submission after the original browser tab was closed. */
   async resumeProlific(
     identity: ProlificIdentity,
   ): Promise<ProlificResumeResponse | null> {
-    await this.validateProlificIdentity(identity);
+    await this.validateProlificIdentity(identity, true);
+    const terminal = await this.store.getParticipationOutcome(identity);
+    if (terminal?.outcome && terminal.outcome !== "completed") {
+      return {
+        stage: "terminated",
+        termination: await this.outcomeResponse(terminal),
+      };
+    }
     const existing = await this.findByProlificSession(identity);
     if (!existing) return null;
 
-    if (existing.session.status === "aborted") {
-      const openSession = await this.openSession({
-        trackingToken: existing.participant.trackingToken,
-        participantName: existing.participant.name,
-        prolific: identity,
-      });
-      return { stage: "waiting", openSession };
-    }
+    if (existing.session.status === "aborted") return null;
 
     const openSession = await this.rejoinResponse(
       existing.session,
@@ -810,6 +918,14 @@ export class SessionsService {
         "The exit survey must be submitted before completion",
       );
     }
+    if (participant.prolific) {
+      const outcome = await this.store.getParticipationOutcome(
+        participant.prolific,
+      );
+      if (outcome?.outcome && outcome.outcome !== "completed") {
+        throw new ConflictException("This participation has already ended");
+      }
+    }
     if (!participant.completedAt) {
       const completedAt = new Date().toISOString();
       await this.store.markParticipantCompleted(
@@ -822,10 +938,179 @@ export class SessionsService {
         `participant ${participant.id} completed session ${session.id}`,
       );
     }
+    if (participant.prolific) {
+      await this.store.completeProlificParticipation(participant.prolific);
+    }
     const settings = await this.store.getStudySettings();
     return {
       completedAt: participant.completedAt,
       compensationUrl: settings.compensationUrl,
+    };
+  }
+
+  /** Public for deterministic tests; the timer invokes the same idempotent path. */
+  async sweepExpiredWaitingRooms(): Promise<number> {
+    const expired = await this.store.abortExpiredWaitingSessions();
+    for (const lobby of expired) {
+      const provisioningFailed = lobby.priorStatus === "provisioning";
+      await this.terminateSessionParticipants(
+        lobby.id,
+        provisioningFailed ? "technical_failure" : "unmatched",
+        provisioningFailed
+          ? "The complete group could not enter the chat because room provisioning did not finish before the deadline."
+          : "The required live group did not form before the waiting deadline.",
+      );
+      this.log.log(
+        `terminated ${provisioningFailed ? "failed provisioning" : "unmatched"} lobby ` +
+          `${lobby.id} (${lobby.participantCount} participant(s))`,
+      );
+    }
+    return expired.length;
+  }
+
+  /**
+   * Terminalize participants who stopped heartbeating, release their seat (or
+   * abort their live group), and optionally tell Prolific to request a return.
+   * The store rechecks the cutoff atomically so a reconnect wins any scan race.
+   */
+  async sweepDisconnectedParticipants(): Promise<number> {
+    const cutoff = new Date(Date.now() - this.reconnectGraceSeconds * 1_000);
+    const terminated = await this.queueMatchmaking(async () => {
+      const claimed: ParticipationOutcomeRecord[] = [];
+      for (const arrival of await this.store.listStaleProlificArrivals(cutoff)) {
+        const compensationKind = ["waiting", "chat", "exit"].includes(
+          arrival.stage,
+        )
+          ? "partial"
+          : arrival.stage === "entry"
+            ? "manual_review"
+            : "none";
+        const amountPence =
+          compensationKind === "partial"
+            ? this.partialPaymentPence(arrival.arrivedAt)
+            : undefined;
+        const record = await this.store.terminateStaleProlificParticipation(
+          arrival,
+          cutoff,
+          "connection_timeout",
+          `No participant heartbeat was received for ${this.reconnectGraceSeconds} seconds.`,
+          compensationKind,
+          amountPence,
+        );
+        if (!record) continue;
+
+        const existing = await this.findByProlificSession(arrival);
+        if (existing?.session.status === "waiting") {
+          await this.store.removeParticipantFromWaitingSession(
+            existing.session.id,
+            existing.participant.id,
+          );
+        } else if (
+          existing &&
+          ["provisioning", "running"].includes(existing.session.status)
+        ) {
+          await this.store.updateSessionLifecycle(existing.session.id, {
+            status: "aborted",
+          });
+          await this.terminateSessionParticipants(
+            existing.session.id,
+            "participant_dropout",
+            "The live group could not continue after a participant disconnected.",
+          );
+          if (existing.session.roomId) {
+            for (const participant of existing.session.participants) {
+              if (!participant.matrixUserId) continue;
+              try {
+                await this.matrix.kick(
+                  existing.session.roomId,
+                  participant.matrixUserId,
+                  "The study group ended after a participant disconnected.",
+                );
+              } catch (error) {
+                this.log.error(
+                  `could not remove ${participant.matrixUserId} from aborted room: ${String(error)}`,
+                );
+              }
+            }
+          }
+        }
+        claimed.push(record);
+        this.log.log(
+          `terminated disconnected Prolific submission ${record.sessionId} after ` +
+            `${this.reconnectGraceSeconds}s grace`,
+        );
+      }
+      return claimed;
+    });
+
+    if (process.env.PROLIFIC_AUTO_RETURN_DISCONNECTS === "true") {
+      for (const record of terminated) {
+        try {
+          await this.prolificActions.requestReturnAndRecordFailureById(record.id);
+        } catch (error) {
+          this.log.warn(
+            `could not request Prolific return for ${record.sessionId}: ${String(error)}`,
+          );
+        }
+      }
+    }
+    return terminated.length;
+  }
+
+  private async terminateSessionParticipants(
+    sessionId: string,
+    outcome: "unmatched" | "technical_failure" | "participant_dropout" | "group_aborted",
+    reason: string,
+  ): Promise<void> {
+    const session = await this.getSession(sessionId);
+    for (const participant of session.participants) {
+      if (!participant.prolific) continue;
+      const arrival = await this.store.getProlificArrival(participant.prolific);
+      if (arrival?.outcome) continue;
+      const amountPence = this.partialPaymentPence(
+        arrival?.arrivedAt ?? session.createdAt,
+      );
+      await this.store.terminateProlificParticipation(
+        participant.prolific,
+        outcome,
+        reason,
+        "partial",
+        amountPence,
+      );
+    }
+  }
+
+  private partialPaymentPence(startedAt: string): number {
+    const elapsedSeconds = Math.max(
+      1,
+      Math.floor((Date.now() - Date.parse(startedAt)) / 1_000),
+    );
+    const pencePerMinute = Math.max(
+      10,
+      Number(process.env.PARTIAL_PAYMENT_PENCE_PER_MINUTE ?? 10) || 10,
+    );
+    const maximumPence = Math.max(
+      10,
+      Number(process.env.PARTIAL_PAYMENT_MAX_PENCE ?? 508) || 508,
+    );
+    return Math.min(
+      maximumPence,
+      Math.max(10, Math.ceil(elapsedSeconds / 60) * pencePerMinute),
+    );
+  }
+
+  private async outcomeResponse(
+    record: ParticipationOutcomeRecord,
+  ): Promise<ParticipationOutcomeResponse> {
+    const settings = await this.store.getStudySettings();
+    const outcome = record.outcome!;
+    const redirectUrl = outcomeUrl(settings, outcome);
+    return {
+      outcome,
+      compensationKind: record.compensationKind,
+      compensationAmountPence: record.compensationAmountPence,
+      redirectUrl,
+      message: outcomeMessage(record),
     };
   }
 
@@ -1255,6 +1540,73 @@ export class SessionsService {
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) throw new Error(`chat service start failed (${res.status})`);
+  }
+}
+
+function defaultOutcomeReason(outcome: ParticipationOutcome): string {
+  switch (outcome) {
+    case "declined_consent":
+      return "The participant did not consent to take part.";
+    case "ineligible":
+      return "The participant did not meet the study eligibility requirements.";
+    case "voluntary_withdrawal":
+      return "The participant chose to withdraw from the study.";
+    case "connection_timeout":
+      return "The participant did not reconnect within the allowed grace period.";
+    default:
+      return "The participation ended before full completion.";
+  }
+}
+
+function outcomeUrl(
+  settings: StudySettings,
+  outcome: ParticipationOutcome,
+): string {
+  switch (outcome) {
+    case "declined_consent":
+      return settings.noConsentUrl;
+    case "ineligible":
+      return settings.ineligibleUrl;
+    case "voluntary_withdrawal":
+      return settings.withdrawalUrl;
+    case "connection_timeout":
+      return settings.technicalFailureUrl || settings.withdrawalUrl;
+    case "unmatched":
+      return settings.unmatchedUrl;
+    case "technical_failure":
+    case "participant_dropout":
+    case "group_aborted":
+      return settings.technicalFailureUrl || settings.unmatchedUrl;
+    case "completed":
+      return settings.compensationUrl;
+  }
+}
+
+function outcomeMessage(record: ParticipationOutcomeRecord): string {
+  switch (record.outcome) {
+    case "declined_consent":
+      return "You have not entered the study. Please return your submission on Prolific.";
+    case "ineligible":
+      return "You cannot continue with this study. Please follow the return instructions.";
+    case "voluntary_withdrawal":
+      return record.compensationKind === "manual_review"
+        ? "Your withdrawal was recorded. The researcher will review the time you spent."
+        : "Your withdrawal was recorded. Please return your submission on Prolific.";
+    case "connection_timeout":
+      return record.compensationKind === "partial"
+        ? "Your connection was lost and the reconnect window expired. Your partial payment has been queued for review."
+        : "Your connection was lost and the reconnect window expired. Please follow the Prolific return instructions.";
+    case "unmatched":
+      return "A complete group could not be formed. Your partial payment has been queued for review.";
+    case "technical_failure":
+    case "group_aborted":
+      return "The study could not continue. Your partial payment has been queued for review.";
+    case "participant_dropout":
+      return "Your participation ended before the group task finished. The researcher will review compensation.";
+    case "completed":
+      return "Your participation is complete.";
+    default:
+      return "Your participation has ended.";
   }
 }
 

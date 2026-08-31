@@ -50,7 +50,7 @@ The participant frontend's nginx reverse-proxies `/api/` to the session manager 
 
 ### 1. Open the admin dashboard
 
-Go to http://localhost:3003. The dashboard has four tabs: **Overview** (progress, session list, study link), **Results** (descriptives and research exports), **Settings** (recruiting, study rounds, shared parameters, compensation link), and **Testing** (pilot links, 2-bot comparison). Confirm that all five conditions (baseline + the 2x2 delivery x detection arms) are listed in Settings → Recruiting and at least one is **active** (the toggle lives there, not on Overview). The default group size is **3**. The Overview also shows the current **study round** — pilot sessions are stamped into whatever round is open (Round 1 on a fresh stack).
+Go to http://localhost:3003. The dashboard has five tabs: **Prolific** (participant outcomes and compensation actions), **Overview** (progress, session list, study link), **Results** (descriptives and research exports), **Settings** (recruiting, study rounds, shared parameters, completion/exit paths), and **Testing** (pilot links, 2-bot comparison). Confirm that all five conditions (baseline + the 2x2 delivery x detection arms) are listed in Settings → Recruiting and at least one is **active** (the toggle lives there, not on Overview). The default group size is **3**. The Overview also shows the current **study round** — pilot sessions are stamped into whatever round is open (Round 1 on a fresh stack).
 
 ### 2. Open participant links
 
@@ -163,7 +163,12 @@ All environment variables live in `infra/.env`. Key settings:
 | `MATRIX_SERVICE_PASSWORD` | Password of the stable `gdm_orchestrator` Matrix account; **required** in production (Session Manager exits without it) |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | Enable the LLM classifier for the Rule+LLM arms; without a key those arms silently degrade to rule-based |
 | `LLM_MODE` | Optional global override: `off` kill switch, `active` forces every arm to Rule+LLM; leave empty normally |
-| `WAITING_TIMEOUT_MINUTES` | How long a waiting lobby lives before being cleaned up |
+| `WAITING_TIMEOUT_MINUTES` | Shared waiting-lobby deadline, starting with the first participant (default `15`) |
+| `PARTICIPANT_RECONNECT_GRACE_SECONDS` | Maximum missing-heartbeat window before a Prolific participant is terminally disconnected (default `30`) |
+| `PARTIAL_PAYMENT_PENCE_PER_MINUTE` | Rounded-up partial-compensation rate (minimum/default `10`) |
+| `PARTIAL_PAYMENT_MAX_PENCE` | Hard cap for a queued partial payment (current/default `508`) |
+| `PROLIFIC_AUTO_RETURN_DISCONNECTS` | When `true`, ask Prolific to request a submission return after a connection timeout; does not pay bonuses |
+| `PROLIFIC_PAYMENT_AUTOMATION` | When `true`, processes return and bonus actions automatically; keep `false` for researcher review |
 | `SYNAPSE_SERVER_NAME`, `PUBLIC_HOST`, `ACME_EMAIL` | Production identity/TLS settings — see [deployment.md](deployment.md) |
 
 The Synapse `homeserver.yaml` at `infra/synapse/homeserver.yaml` has its own DB credentials that must match the `.env` values (Synapse reads static YAML, not environment variables). Production uses `homeserver.prod.yaml` instead, rendered from a template by `infra/render-homeserver.sh`.

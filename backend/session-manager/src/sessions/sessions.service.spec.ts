@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { afterEach, describe, it, expect, beforeEach, vi } from "vitest";
 import { SessionsService } from "./sessions.service";
 import { StoreService } from "../store/store.service";
 import type { MatrixService } from "../matrix/matrix.service";
+import { ProlificActionsService } from "../prolific/prolific-actions.service";
 import type { Ranking, Session, SessionStatus } from "@gdm/shared";
 
 function fakeMatrix(): MatrixService {
@@ -14,6 +15,7 @@ function fakeMatrix(): MatrixService {
     createRoom: vi.fn(async () => "!room:localhost"),
     joinRoom: vi.fn(async () => undefined),
     invite: vi.fn(async () => undefined),
+    kick: vi.fn(async () => undefined),
     setUserPowerLevel: vi.fn(async () => undefined),
   } as unknown as MatrixService;
 }
@@ -53,9 +55,13 @@ describe("SessionsService (session-manager)", () => {
     delete process.env.PROLIFIC_STUDY_ID;
     delete process.env.PROLIFIC_API_TOKEN;
     delete process.env.PROLIFIC_REQUIRE_VALIDATION;
+    delete process.env.PARTIAL_PAYMENT_PENCE_PER_MINUTE;
+    delete process.env.PARTIAL_PAYMENT_MAX_PENCE;
+    delete process.env.PARTICIPANT_RECONNECT_GRACE_SECONDS;
+    delete process.env.PROLIFIC_AUTO_RETURN_DISCONNECTS;
     store = new StoreService();
     matrix = fakeMatrix();
-    svc = new SessionsService(store, matrix);
+    svc = new SessionsService(store, matrix, new ProlificActionsService(store));
     // chat-service notify/bot-lookup + any other network is stubbed.
     vi.stubGlobal(
       "fetch",
@@ -73,6 +79,10 @@ describe("SessionsService (session-manager)", () => {
             : {},
       })),
     );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("openSession registers a Matrix user and assigns the least-completed condition", async () => {
@@ -121,27 +131,215 @@ describe("SessionsService (session-manager)", () => {
     });
   });
 
-  it("moves an aborted Prolific seat into a fresh lobby without losing identity", async () => {
+  it("records a no-consent exit without compensation and resumes to that outcome", async () => {
+    await store.updateStudySettings({
+      noConsentUrl: "https://app.prolific.com/submissions/complete?cc=NOCONSENT",
+    });
+    await svc.recordProlificArrival(prolific);
+    const ended = await svc.terminateParticipation(
+      prolific,
+      "declined_consent",
+    );
+
+    expect(ended).toMatchObject({
+      outcome: "declined_consent",
+      compensationKind: "none",
+      redirectUrl:
+        "https://app.prolific.com/submissions/complete?cc=NOCONSENT",
+    });
+    await expect(svc.resumeProlific(prolific)).resolves.toMatchObject({
+      stage: "terminated",
+      termination: { outcome: "declined_consent" },
+    });
+  });
+
+  it("releases a waiting-room seat when its participant withdraws", async () => {
+    const first = await svc.openSession({
+      trackingToken: "prolific-withdrawal",
+      participantName: "",
+      prolific,
+    });
+    await svc.terminateParticipation(prolific, "voluntary_withdrawal");
+
+    expect((await svc.getSession(first.session.id)).status).toBe("aborted");
+    expect((await svc.getSession(first.session.id)).participants).toHaveLength(0);
+    const next = await svc.openSession(open());
+    expect(next.session.id).not.toBe(first.session.id);
+  });
+
+  it("aborts a live group and records partial review for peers after a dropout", async () => {
+    const condition = (await store.listConditions())[0];
+    await store.upsertCondition({ ...condition, groupSize: 2 });
+    const other = {
+      participantId: "dddddddddddddddddddddddd",
+      studyId: prolific.studyId,
+      sessionId: "eeeeeeeeeeeeeeeeeeeeeeee",
+    };
+    const first = await svc.openSession({
+      trackingToken: "live-prolific-one",
+      participantName: "",
+      prolific,
+    });
+    await svc.openSession({
+      trackingToken: "live-prolific-two",
+      participantName: "",
+      prolific: other,
+    });
+    await waitForStatus(svc, first.session.id, "running");
+    await svc.recordParticipationProgress(prolific, "chat");
+    await svc.recordParticipationProgress(other, "chat");
+
+    const withdrawing = await svc.terminateParticipation(
+      prolific,
+      "voluntary_withdrawal",
+    );
+    expect(withdrawing.compensationKind).toBe("manual_review");
+    expect((await svc.getSession(first.session.id)).status).toBe("aborted");
+    await expect(svc.getParticipationOutcome(other)).resolves.toMatchObject({
+      outcome: "participant_dropout",
+      compensationKind: "partial",
+    });
+  });
+
+  it("does not requeue an unmatched Prolific submission after its lobby ends", async () => {
     const first = await svc.openSession({
       trackingToken: `prolific:${prolific.studyId}:${prolific.sessionId}`,
       participantName: "",
       prolific,
     });
-    await store.abortWaitingSessions();
+    const lobby = await svc.getSession(first.session.id);
+    lobby.waitingDeadlineAt = new Date(Date.now() - 1_000).toISOString();
+    await store.saveSession(lobby);
+    await svc.sweepExpiredWaitingRooms();
 
-    const requeued = await svc.openSession({
-      trackingToken: `prolific:${prolific.studyId}:${prolific.sessionId}`,
+    await expect(
+      svc.openSession({
+        trackingToken: `prolific:${prolific.studyId}:${prolific.sessionId}`,
+        participantName: "",
+        prolific,
+      }),
+    ).rejects.toThrow(/participation has ended/i);
+    await expect(svc.resumeProlific(prolific)).resolves.toMatchObject({
+      stage: "terminated",
+      termination: {
+        outcome: "unmatched",
+        compensationKind: "partial",
+      },
+    });
+  });
+
+  it("allows reconnect heartbeats during the grace period and kicks after 30 seconds", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime("2026-08-31T10:00:00.000Z");
+    const localStore = new StoreService();
+    const localMatrix = fakeMatrix();
+    const actions = new ProlificActionsService(localStore);
+    const localService = new SessionsService(localStore, localMatrix, actions);
+    const joined = await localService.openSession({
+      trackingToken: "reconnect-grace",
       participantName: "",
       prolific,
     });
-    expect(requeued.session.id).not.toBe(first.session.id);
-    expect(requeued.participantId).toBe(first.participantId);
-    expect(requeued.session.status).toBe("waiting");
+
+    vi.setSystemTime("2026-08-31T10:00:29.000Z");
+    expect(await localService.sweepDisconnectedParticipants()).toBe(0);
+    await localService.recordParticipationProgress(prolific, "waiting");
+    vi.setSystemTime("2026-08-31T10:00:58.000Z");
+    expect(await localService.sweepDisconnectedParticipants()).toBe(0);
+
+    vi.setSystemTime("2026-08-31T10:00:59.001Z");
+    expect(await localService.sweepDisconnectedParticipants()).toBe(1);
+    expect((await localService.getSession(joined.session.id)).participants).toHaveLength(0);
+    await expect(localService.resumeProlific(prolific)).resolves.toMatchObject({
+      stage: "terminated",
+      termination: {
+        outcome: "connection_timeout",
+        compensationKind: "partial",
+      },
+    });
+  });
+
+  it("caps partial compensation and requests a Prolific return after disconnect", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime("2026-08-31T10:00:00.000Z");
+    process.env.PARTIAL_PAYMENT_PENCE_PER_MINUTE = "100";
+    process.env.PARTIAL_PAYMENT_MAX_PENCE = "508";
+    process.env.PROLIFIC_AUTO_RETURN_DISCONNECTS = "true";
+    const localStore = new StoreService();
+    const localMatrix = fakeMatrix();
+    const requestReturn = vi.fn(async () =>
+      localStore.getParticipationOutcome(prolific),
+    );
+    const actions = {
+      requestReturnAndRecordFailureById: requestReturn,
+    } as unknown as ProlificActionsService;
+    const localService = new SessionsService(localStore, localMatrix, actions);
+    await localService.openSession({
+      trackingToken: "disconnect-cap",
+      participantName: "",
+      prolific,
+    });
+
+    vi.setSystemTime("2026-08-31T10:10:00.000Z");
+    expect(await localService.sweepDisconnectedParticipants()).toBe(1);
+    expect(await localService.getParticipationOutcome(prolific)).toMatchObject({
+      outcome: "connection_timeout",
+      compensationKind: "partial",
+      compensationAmountPence: 508,
+    });
+    expect(requestReturn).toHaveBeenCalledOnce();
+  });
+
+  it("aborts the group and removes every Matrix member after a live disconnect", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime("2026-08-31T10:00:00.000Z");
+    const localStore = new StoreService();
+    const condition = (await localStore.listConditions())[0];
+    await localStore.upsertCondition({ ...condition, groupSize: 2 });
+    const localMatrix = fakeMatrix();
+    const localService = new SessionsService(
+      localStore,
+      localMatrix,
+      new ProlificActionsService(localStore),
+    );
+    const peer = {
+      participantId: "dddddddddddddddddddddddd",
+      studyId: prolific.studyId,
+      sessionId: "eeeeeeeeeeeeeeeeeeeeeeee",
+    };
+    const first = await localService.openSession({
+      trackingToken: "live-disconnect-one",
+      participantName: "",
+      prolific,
+    });
+    await localService.openSession({
+      trackingToken: "live-disconnect-two",
+      participantName: "",
+      prolific: peer,
+    });
+    await waitForStatus(localService, first.session.id, "running");
+    vi.setSystemTime("2026-08-31T10:00:20.000Z");
+    await localService.recordParticipationProgress(peer, "chat");
+    vi.setSystemTime("2026-08-31T10:00:31.000Z");
+
+    expect(await localService.sweepDisconnectedParticipants()).toBe(1);
+    expect((await localService.getSession(first.session.id)).status).toBe("aborted");
+    expect(localMatrix.kick).toHaveBeenCalledTimes(2);
+    await expect(localService.getParticipationOutcome(prolific)).resolves.toMatchObject({
+      outcome: "connection_timeout",
+    });
+    await expect(localService.getParticipationOutcome(peer)).resolves.toMatchObject({
+      outcome: "participant_dropout",
+    });
   });
 
   it("can require verified Prolific admission without disabling generic pilots by default", async () => {
     process.env.PROLIFIC_REQUIRE_VALIDATION = "true";
-    const guarded = new SessionsService(store, matrix);
+    const guarded = new SessionsService(
+      store,
+      matrix,
+      new ProlificActionsService(store),
+    );
     await expect(guarded.openSession(open())).rejects.toThrow(
       "verified Prolific study link is required",
     );
@@ -155,6 +353,19 @@ describe("SessionsService (session-manager)", () => {
     process.env.PROLIFIC_STUDY_ID = "dddddddddddddddddddddddd";
     await expect(svc.recordProlificArrival(prolific)).rejects.toThrow(
       /unexpected prolific study/i,
+    );
+  });
+
+  it("never lets a second participant overwrite a submission identity", async () => {
+    await svc.recordProlificArrival(prolific);
+    await expect(
+      svc.recordProlificArrival({
+        ...prolific,
+        participantId: "dddddddddddddddddddddddd",
+      }),
+    ).rejects.toThrow(/different participant/i);
+    expect((await store.getProlificArrival(prolific))?.participantId).toBe(
+      prolific.participantId,
     );
   });
 
@@ -696,7 +907,7 @@ describe("SessionsService (session-manager)", () => {
     const ghost = await svc.openSession(open());
     // Age the forming session past the waiting timeout.
     const stale = await svc.getSession(ghost.session.id);
-    stale.createdAt = new Date(Date.now() - 31 * 60_000).toISOString();
+    stale.waitingDeadlineAt = new Date(Date.now() - 1_000).toISOString();
     await store.saveSession(stale);
 
     const next = await svc.openSession(open());

@@ -4,6 +4,7 @@ interface Props {
   /** Highlights the active step (1–4); omit to hide the progress indicator. */
   step?: 1 | 2 | 3 | 4;
   children: ReactNode;
+  onWithdraw?: () => void;
 }
 
 const STEP_LABELS = ["Consent", "About you", "Individual task", "Group phase"];
@@ -13,7 +14,7 @@ const STEP_LABELS = ["Consent", "About you", "Individual task", "Group phase"];
  * centered ~680px column, and the step 1–4 progress indicator on top.
  * Pages render their own `.study-card` sections inside.
  */
-export default function StudyShell({ step, children }: Props) {
+export default function StudyShell({ step, children, onWithdraw }: Props) {
   return (
     <div className="study-page">
       <div className="study-column">
@@ -38,6 +39,13 @@ export default function StudyShell({ step, children }: Props) {
           </nav>
         )}
         {children}
+        {onWithdraw && (
+          <div className="withdraw-actions">
+            <button type="button" className="btn-link" onClick={onWithdraw}>
+              Withdraw from this study
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

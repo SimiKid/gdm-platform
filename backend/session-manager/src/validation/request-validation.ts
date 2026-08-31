@@ -2,8 +2,10 @@ import { BadRequestException } from "@nestjs/common";
 import type {
   Condition,
   OpenSessionRequest,
+  RecordParticipationProgressRequest,
   RecordProlificArrivalRequest,
   SubmitSurveyRequest,
+  TerminateParticipationRequest,
 } from "@gdm/shared";
 
 const SAFE_ID = /^[A-Za-z0-9._:@-]+$/;
@@ -29,6 +31,31 @@ export function validateProlificArrivalRequest(
 ): asserts value is RecordProlificArrivalRequest {
   const request = record(value, "Invalid Prolific request");
   validateProlificShape(request.prolific);
+}
+
+export function validateParticipationProgressRequest(
+  value: unknown,
+): asserts value is RecordParticipationProgressRequest {
+  const request = record(value, "Invalid participation progress");
+  validateProlificShape(request.prolific);
+  if (!['arrived', 'consent', 'entry', 'waiting', 'chat', 'exit'].includes(String(request.stage))) {
+    bad("Invalid participation stage");
+  }
+}
+
+export function validateTerminateParticipationRequest(
+  value: unknown,
+): asserts value is TerminateParticipationRequest {
+  const request = record(value, "Invalid participation termination");
+  validateProlificShape(request.prolific);
+  if (
+    !["declined_consent", "ineligible", "voluntary_withdrawal"].includes(
+      String(request.outcome),
+    )
+  ) {
+    bad("Invalid participant-selectable outcome");
+  }
+  if (request.reason !== undefined) boundedString(request.reason, "reason", 0, 500);
 }
 
 export function validateSurveyRequest(
@@ -191,20 +218,23 @@ export function validateRoundLabel(value: unknown): string {
   return boundedString(value, "label", 0, 120).trim();
 }
 
-export function validateCompensationUrl(value: unknown): string {
-  const url = boundedString(value, "compensationUrl", 0, 2_000).trim();
+export function validateCompensationUrl(
+  value: unknown,
+  field = "compensationUrl",
+): string {
+  const url = boundedString(value, field, 0, 2_000).trim();
   if (!url) return "";
   let parsed: URL;
   try {
     parsed = new URL(url);
   } catch {
-    return bad("compensationUrl must be a valid URL");
+    return bad(`${field} must be a valid URL`);
   }
   const localHttp =
     parsed.protocol === "http:" &&
     ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname);
   if (parsed.protocol !== "https:" && !localHttp) {
-    bad("compensationUrl must use HTTPS");
+    bad(`${field} must use HTTPS`);
   }
   return parsed.toString();
 }

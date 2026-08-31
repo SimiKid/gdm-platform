@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -17,12 +18,14 @@ import type {
   RecoverSessionsRequest,
   OpenSessionRequest,
   OpenSessionResponse,
+  RecordParticipationProgressRequest,
   PublicSession,
   RecordProlificArrivalRequest,
   Session,
   SessionSummary,
   StudySettings,
   SubmitSurveyRequest,
+  TerminateParticipationRequest,
   UpdateStudySettingsRequest,
   UpsertConditionRequest,
 } from "@gdm/shared";
@@ -31,13 +34,16 @@ import { StoreService } from "../store/store.service";
 import { AdminGuard } from "../auth/admin.guard";
 import { InternalGuard } from "../auth/internal.guard";
 import { ParticipantGuard } from "../auth/participant.guard";
+import { ProlificActionsService } from "../prolific/prolific-actions.service";
 import { parseConditionIds, parseRoundIds } from "../reports/filter";
 import {
   validateCompensationUrl,
   validateCondition,
   validateOpenSessionRequest,
+  validateParticipationProgressRequest,
   validateProlificArrivalRequest,
   validateSurveyRequest,
+  validateTerminateParticipationRequest,
 } from "../validation/request-validation";
 
 @Controller()
@@ -45,6 +51,7 @@ export class SessionsController {
   constructor(
     private readonly sessions: SessionsService,
     private readonly store: StoreService,
+    private readonly prolificActions: ProlificActionsService,
   ) {}
 
   @Post("sessions")
@@ -68,6 +75,31 @@ export class SessionsController {
   resumeProlific(@Body() body: RecordProlificArrivalRequest) {
     validateProlificArrivalRequest(body);
     return this.sessions.resumeProlific(body.prolific);
+  }
+
+  @Post("prolific/progress")
+  @Throttle({ default: { limit: 600, ttl: 60_000 } })
+  participationProgress(@Body() body: RecordParticipationProgressRequest) {
+    validateParticipationProgressRequest(body);
+    return this.sessions.recordParticipationProgress(body.prolific, body.stage);
+  }
+
+  @Post("prolific/terminate")
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  terminateParticipation(@Body() body: TerminateParticipationRequest) {
+    validateTerminateParticipationRequest(body);
+    return this.sessions.terminateParticipation(
+      body.prolific,
+      body.outcome,
+      body.reason,
+    );
+  }
+
+  @Post("prolific/outcome")
+  @Throttle({ default: { limit: 300, ttl: 60_000 } })
+  participationOutcome(@Body() body: RecordProlificArrivalRequest) {
+    validateProlificArrivalRequest(body);
+    return this.sessions.getParticipationOutcome(body.prolific);
   }
 
   /** Admin: list all sessions. */
@@ -215,10 +247,54 @@ export class SessionsController {
   updateSettings(
     @Body() body: UpdateStudySettingsRequest,
   ): Promise<StudySettings> {
-    const compensationUrl = validateCompensationUrl(
-      body?.settings?.compensationUrl ?? "",
+    const settings = body?.settings ?? {};
+    const allowedKeys = new Set<keyof StudySettings>([
+      "compensationUrl",
+      "noConsentUrl",
+      "ineligibleUrl",
+      "withdrawalUrl",
+      "unmatchedUrl",
+      "technicalFailureUrl",
+    ]);
+    for (const key of Object.keys(settings)) {
+      if (!allowedKeys.has(key as keyof StudySettings)) {
+        throw new BadRequestException(`Unknown study setting: ${key}`);
+      }
+    }
+    return this.store.updateStudySettings(
+      Object.fromEntries(
+        Object.entries(settings).map(([key, value]) => [
+          key,
+          validateCompensationUrl(value ?? "", key),
+        ]),
+      ),
     );
-    return this.store.updateStudySettings({ compensationUrl });
+  }
+
+  @Get("admin/prolific/outcomes")
+  @UseGuards(AdminGuard)
+  async participationOutcomes() {
+    return { outcomes: await this.store.listParticipationOutcomes() };
+  }
+
+  @Post("admin/prolific/outcomes/:id/actions/:action")
+  @UseGuards(AdminGuard)
+  processParticipationOutcome(
+    @Param("id") id: string,
+    @Param("action") action: string,
+  ) {
+    switch (action) {
+      case "request-return":
+        return this.prolificActions.requestReturnById(id);
+      case "prepare-bonus":
+        return this.prolificActions.prepareBonusById(id);
+      case "pay-bonus":
+        return this.prolificActions.payBonusById(id);
+      case "resolve-manually":
+        return this.prolificActions.resolveManuallyById(id);
+      default:
+        throw new BadRequestException("Unknown Prolific action");
+    }
   }
 
   /** Admin/debug: newest interventions across all sessions. */
@@ -322,6 +398,12 @@ export class SessionsController {
   @UseGuards(AdminGuard)
   exportProlificArrivals() {
     return this.store.listProlificArrivals();
+  }
+
+  @Get("export/prolific-outcomes")
+  @UseGuards(AdminGuard)
+  async exportProlificOutcomes() {
+    return { outcomes: await this.store.listParticipationOutcomes() };
   }
 
   /** Behavioral events and per-participant aggregate contribution measures. */
