@@ -155,7 +155,11 @@ export default function App() {
     try {
       if (prolificIdentity) {
         setBooting(true);
-        await httpSessionManager.recordProlificArrival(prolificIdentity);
+        // Resume first: a participant may reopen after accepting Prolific's
+        // return request. The resume endpoint deliberately accepts ended
+        // submission statuses so an already-recorded terminal outcome can
+        // still show its debrief. A genuinely new visit is persisted below
+        // and continues to use active-submission validation.
         const resumed =
           await httpSessionManager.resumeProlific(prolificIdentity);
         if (resumed) {
@@ -223,6 +227,7 @@ export default function App() {
           }
           return;
         }
+        await httpSessionManager.recordProlificArrival(prolificIdentity);
       }
       setTrackingToken(token);
       setConditionId(forcedConditionId);
