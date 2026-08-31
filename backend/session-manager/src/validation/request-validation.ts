@@ -107,7 +107,7 @@ export function validateSurveyAnswers(
         answers.rankingSecondsUsed,
         "rankingSecondsUsed",
         0,
-        600,
+        300,
       );
     }
     if (answers.englishProficiency !== undefined) {

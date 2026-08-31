@@ -97,7 +97,7 @@ async function walkToWaitingRoom(page, arm, seat) {
   // Individual ranking: each seat adds items in a different order so the
   // NASA error scores vary between participants.
   await page
-    .getByRole("heading", { name: "Your Task: Survival on the Moon" })
+    .getByRole("heading", { name: "Task: Survival on the Moon" })
     .waitFor({ timeout: 20_000 });
   const addButtons = page.getByRole("button", { name: /^Add .* to the ranking$/ });
   while ((await addButtons.count()) > 0) {

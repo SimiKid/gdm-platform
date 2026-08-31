@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { MOON_SURVIVAL, MOON_SURVIVAL_BRIEFING } from "@gdm/shared";
+import { MOON_SURVIVAL } from "@gdm/shared";
 import RankingBoard from "./RankingBoard";
 
 export interface RankingTaskAnswers {
@@ -14,7 +14,7 @@ interface Props {
   onComplete: (answers: RankingTaskAnswers) => void;
 }
 
-const TASK_SECONDS = 10 * 60;
+const TASK_SECONDS = 5 * 60;
 const ITEMS = MOON_SURVIVAL.items;
 
 function formatSeconds(s: number): string {
@@ -98,18 +98,48 @@ export default function RankingTaskPage({ onComplete }: Props) {
       </div>
 
       <div className="study-card">
-        <h1>Your Task: Survival on the Moon</h1>
-        <div
-          className="task-briefing"
-          // The briefing is a static HTML blob authored in shared/src/tasks.
-          // eslint-disable-next-line react/no-danger
-          dangerouslySetInnerHTML={{ __html: MOON_SURVIVAL_BRIEFING }}
-        />
+        <p>
+          Before you meet the group to solve the task together, we ask you to
+          solve it individually. Once you are done, you will be directed to enter
+          the group chat environment where you have time to discuss the task in
+          your group of five.
+        </p>
+
+        <h1>Task: Survival on the Moon</h1>
+        <p>
+          As part of a space crew, you are ready to land on the lighted surface
+          of the moon where you planned to meet up with the mothership. Due to
+          mechanical problems, your ship was forced to crash-land about 200 miles
+          (320 km) from the calculated location. Much of the onboard equipment
+          was damaged. Your survival depends on reaching the mothership, so you
+          must choose the most critical items for the journey.
+        </p>
 
         <h2>
-          Rank all {ITEMS.length} items to submit ({remaining} remaining).
+          Rank the items below by importance for reaching the mothership. Most
+          important item = 1, least important item = {ITEMS.length} ({remaining}{" "}
+          remaining).
         </h2>
+
         <RankingBoard items={ITEMS} ranked={ranked} onChange={setRanked} />
+
+        <p>
+          <strong>Please Note:</strong>
+        </p>
+        <p>
+          We are interested in your personal judgment.{" "}
+          <strong>
+            Please work on your own and rely only on your own reasoning: do not
+            search the internet or use other aids.
+          </strong>{" "}
+          Outside information would make your data unusable for this research.
+        </p>
+        <p>
+          <strong>
+            You have 5 minutes to complete your personal ranking.
+          </strong>{" "}
+          You may submit earlier once every item is ranked.
+        </p>
 
         <div className="card-actions">
           <button
