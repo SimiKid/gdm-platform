@@ -60,7 +60,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * participants receive a terminal unmatched outcome and are never requeued.
    */
   private readonly waitingTimeoutMinutes = Number(
-    process.env.WAITING_TIMEOUT_MINUTES ?? 15,
+    process.env.WAITING_TIMEOUT_MINUTES ?? 5,
   );
   /** A closed or disconnected participant may resume until this grace expires. */
   private readonly reconnectGraceSeconds = Math.max(

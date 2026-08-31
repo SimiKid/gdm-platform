@@ -56,7 +56,7 @@ VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (fallback)
      `PROLIFIC_STUDY_ID`, a researcher **API token** in
      `PROLIFIC_API_TOKEN`, and `PROLIFIC_REQUIRE_VALIDATION=true`. Leave the
      gate false for internal pilots that deliberately use generic links.
-   - Set `WAITING_TIMEOUT_MINUTES=15`,
+   - Set `WAITING_TIMEOUT_MINUTES=5`,
      `PARTICIPANT_RECONNECT_GRACE_SECONDS=30`,
      `PARTIAL_PAYMENT_PENCE_PER_MINUTE=10`, and
      `PARTIAL_PAYMENT_MAX_PENCE=508` for the current study. Set

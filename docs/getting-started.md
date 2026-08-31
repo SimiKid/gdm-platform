@@ -163,7 +163,7 @@ All environment variables live in `infra/.env`. Key settings:
 | `MATRIX_SERVICE_PASSWORD` | Password of the stable `gdm_orchestrator` Matrix account; **required** in production (Session Manager exits without it) |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | Enable the LLM classifier for the Rule+LLM arms; without a key those arms silently degrade to rule-based |
 | `LLM_MODE` | Optional global override: `off` kill switch, `active` forces every arm to Rule+LLM; leave empty normally |
-| `WAITING_TIMEOUT_MINUTES` | Shared waiting-lobby deadline, starting with the first participant (default `15`) |
+| `WAITING_TIMEOUT_MINUTES` | Shared waiting-lobby deadline, starting with the first participant (default `5`) |
 | `PARTICIPANT_RECONNECT_GRACE_SECONDS` | Maximum missing-heartbeat window before a Prolific participant is terminally disconnected (default `30`) |
 | `PARTIAL_PAYMENT_PENCE_PER_MINUTE` | Rounded-up partial-compensation rate (minimum/default `10`) |
 | `PARTIAL_PAYMENT_MAX_PENCE` | Hard cap for a queued partial payment (current/default `508`) |
