@@ -104,10 +104,12 @@ async function walkToWaitingRoom(page: Page, seat: number): Promise<void> {
     await page.getByRole("button", { name: "Start" }).click();
   }
 
-  // Consent: all three boxes, then begin.
+  // Intro screen, then consent: all three boxes, then begin.
   await expect(
-    page.getByRole("heading", { name: "Welcome to the Group Decision-Making Study" }),
+    page.getByRole("heading", { name: "Welcome to the Study" }),
   ).toBeVisible();
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: /continue to the consent form/i }).click();
   for (const box of await page.getByRole("checkbox").all()) await box.check();
   await page.getByRole("button", { name: "Begin study" }).click();
 

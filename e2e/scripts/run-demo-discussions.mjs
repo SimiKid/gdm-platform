@@ -59,8 +59,10 @@ async function walkToWaitingRoom(page, arm, seat) {
   await page.getByRole("button", { name: "Start" }).click();
 
   await page
-    .getByRole("heading", { name: "Welcome to the Group Decision-Making Study" })
+    .getByRole("heading", { name: "Welcome to the Study" })
     .waitFor({ timeout: 20_000 });
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: /continue to the consent form/i }).click();
   for (const box of await page.getByRole("checkbox").all()) await box.check();
   await page.getByRole("button", { name: "Begin study" }).click();
 

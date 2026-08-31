@@ -4,6 +4,12 @@ import userEvent from "@testing-library/user-event";
 import Survey from "./Survey";
 
 async function completeConsent() {
+  // Step 1: intro screen — tick acknowledgment, then continue to consent form
+  await userEvent.click(screen.getByRole("checkbox"));
+  await userEvent.click(
+    screen.getByRole("button", { name: /continue to the consent form/i }),
+  );
+  // Step 2: consent form — tick all boxes and begin
   for (const box of screen.getAllByRole("checkbox")) {
     await userEvent.click(box);
   }
@@ -54,11 +60,8 @@ describe("Survey", () => {
     const onComplete = vi.fn();
     render(<Survey onComplete={onComplete} />);
 
-    // Page 1 — consent: Begin study only enables once all boxes are ticked.
-    expect(
-      screen.getByText(/Welcome to the Group Decision-Making Study/),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Begin study" })).toBeDisabled();
+    // Page 1 — intro then consent: Begin study only enables once all boxes are ticked.
+    expect(screen.getByText(/Welcome to the Study/)).toBeInTheDocument();
     await completeConsent();
 
     // Page 2 — about you
@@ -102,6 +105,11 @@ describe("Survey", () => {
 
   it("keeps Begin study disabled until every consent box is ticked", async () => {
     render(<Survey onComplete={vi.fn()} />);
+    // Advance past the intro screen to reach the consent form.
+    await userEvent.click(screen.getByRole("checkbox"));
+    await userEvent.click(
+      screen.getByRole("button", { name: /continue to the consent form/i }),
+    );
     const boxes = screen.getAllByRole("checkbox");
     expect(boxes).toHaveLength(3);
     await userEvent.click(boxes[0]);
