@@ -1,4 +1,9 @@
-import { useState, type AnchorHTMLAttributes, type MouseEvent } from "react";
+import {
+  useRef,
+  useState,
+  type AnchorHTMLAttributes,
+  type MouseEvent,
+} from "react";
 import { apiFetch, exportPath, exportUrl } from "../api";
 
 interface Props
@@ -20,9 +25,14 @@ export default function AuthenticatedDownloadLink({
   ...anchorProps
 }: Props) {
   const [error, setError] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const downloadInFlight = useRef(false);
 
   async function download(event: MouseEvent<HTMLAnchorElement>) {
     event.preventDefault();
+    if (downloadInFlight.current) return;
+    downloadInFlight.current = true;
+    setDownloading(true);
     setError(false);
     try {
       const response = await apiFetch(exportPath(path, query));
@@ -37,6 +47,9 @@ export default function AuthenticatedDownloadLink({
       setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
     } catch {
       setError(true);
+    } finally {
+      downloadInFlight.current = false;
+      setDownloading(false);
     }
   }
 
@@ -46,9 +59,11 @@ export default function AuthenticatedDownloadLink({
         {...anchorProps}
         href={exportUrl(path, query)}
         download={filename}
+        aria-disabled={downloading}
+        aria-busy={downloading}
         onClick={(event) => void download(event)}
       >
-        {children}
+        {downloading ? "Preparing download…" : children}
       </a>
       {error && (
         <span className="bad" role="alert">

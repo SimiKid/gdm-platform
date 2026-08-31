@@ -38,6 +38,9 @@ import { rankingErrorScore } from "./scoring";
  */
 @Injectable()
 export class ReportsService {
+  private readonly bundleInFlight = new Map<string, Promise<Buffer>>();
+  private bundleQueue: Promise<void> = Promise.resolve();
+
   constructor(private readonly store: StoreService) {}
 
   private async sessions(filter: ResearchFilter): Promise<Session[]> {
@@ -46,10 +49,13 @@ export class ReportsService {
 
   // ── participants ─────────────────────────────────────────────────
 
-  async exportParticipants(filter: ResearchFilter = {}) {
+  async exportParticipants(
+    filter: ResearchFilter = {},
+    snapshot?: Session[],
+  ) {
     return {
       generatedAt: new Date().toISOString(),
-      participants: (await this.sessions(filter)).flatMap((session) =>
+      participants: (snapshot ?? (await this.sessions(filter))).flatMap((session) =>
         session.participants.map((participant) =>
           participantRow(session, participant),
         ),
@@ -57,8 +63,11 @@ export class ReportsService {
     };
   }
 
-  async exportParticipantsCsv(filter: ResearchFilter = {}): Promise<string> {
-    const { participants } = await this.exportParticipants(filter);
+  async exportParticipantsCsv(
+    filter: ResearchFilter = {},
+    snapshot?: Session[],
+  ): Promise<string> {
+    const { participants } = await this.exportParticipants(filter, snapshot);
     return toCsv([
       [
         "participant_pseudonym",
@@ -206,15 +215,21 @@ export class ReportsService {
 
   // ── sessions (analysis) ──────────────────────────────────────────
 
-  async exportSessionsAnalysis(filter: ResearchFilter = {}) {
+  async exportSessionsAnalysis(
+    filter: ResearchFilter = {},
+    snapshot?: Session[],
+  ) {
     return {
       generatedAt: new Date().toISOString(),
-      sessions: (await this.sessions(filter)).map(sessionRow),
+      sessions: (snapshot ?? (await this.sessions(filter))).map(sessionRow),
     };
   }
 
-  async exportSessionsAnalysisCsv(filter: ResearchFilter = {}): Promise<string> {
-    const { sessions } = await this.exportSessionsAnalysis(filter);
+  async exportSessionsAnalysisCsv(
+    filter: ResearchFilter = {},
+    snapshot?: Session[],
+  ): Promise<string> {
+    const { sessions } = await this.exportSessionsAnalysis(filter, snapshot);
     return toCsv([
       [
         "session_pseudonym",
@@ -339,8 +354,11 @@ export class ReportsService {
    * too few participants) emit one row with the participant columns empty so
    * every evaluated boundary stays visible.
    */
-  async exportWindowsCsv(filter: ResearchFilter = {}): Promise<string> {
-    const sessions = await this.sessions(filter);
+  async exportWindowsCsv(
+    filter: ResearchFilter = {},
+    snapshot?: Session[],
+  ): Promise<string> {
+    const sessions = snapshot ?? (await this.sessions(filter));
     const rows: string[][] = [];
     for (const session of sessions) {
       for (const evaluation of session.windowEvaluations ?? []) {
@@ -416,8 +434,11 @@ export class ReportsService {
 
   // ── messages (pseudonymized research variant, bundle only) ──────
 
-  async exportResearchMessagesCsv(filter: ResearchFilter = {}): Promise<string> {
-    const sessions = await this.sessions(filter);
+  async exportResearchMessagesCsv(
+    filter: ResearchFilter = {},
+    snapshot?: Session[],
+  ): Promise<string> {
+    const sessions = snapshot ?? (await this.sessions(filter));
     return toCsv([
       [
         "session_pseudonym",
@@ -458,15 +479,21 @@ export class ReportsService {
    * analyses (which items are systematically misplaced, convergence toward
    * the expert solution) that the error scores alone cannot support.
    */
-  async exportRankings(filter: ResearchFilter = {}) {
+  async exportRankings(
+    filter: ResearchFilter = {},
+    snapshot?: Session[],
+  ) {
     return {
       generatedAt: new Date().toISOString(),
-      rankings: (await this.sessions(filter)).flatMap(rankingRows),
+      rankings: (snapshot ?? (await this.sessions(filter))).flatMap(rankingRows),
     };
   }
 
-  async exportRankingsCsv(filter: ResearchFilter = {}): Promise<string> {
-    const { rankings } = await this.exportRankings(filter);
+  async exportRankingsCsv(
+    filter: ResearchFilter = {},
+    snapshot?: Session[],
+  ): Promise<string> {
+    const { rankings } = await this.exportRankings(filter, snapshot);
     const itemIds = MOON_SURVIVAL.items.map((item) => item.id);
     return toCsv([
       [
@@ -567,16 +594,48 @@ export class ReportsService {
   // ── bundle ───────────────────────────────────────────────────────
 
   /** All research CSVs + the codebook, zipped. Excludes linkage.csv. */
-  async bundleZip(filter: ResearchFilter = {}): Promise<Buffer> {
+  bundleZip(filter: ResearchFilter = {}): Promise<Buffer> {
+    const key = bundleFilterKey(filter);
+    const current = this.bundleInFlight.get(key);
+    if (current) return current;
+
+    const queued = this.enqueueBundle(filter);
+    this.bundleInFlight.set(key, queued);
+    void queued
+      .finally(() => {
+        if (this.bundleInFlight.get(key) === queued) {
+          this.bundleInFlight.delete(key);
+        }
+      })
+      .catch(() => undefined);
+    return queued;
+  }
+
+  private enqueueBundle(filter: ResearchFilter): Promise<Buffer> {
+    const previous = this.bundleQueue;
+    let release!: () => void;
+    this.bundleQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return previous
+      .then(() => this.buildBundle(filter))
+      .finally(() => release());
+  }
+
+  private async buildBundle(filter: ResearchFilter): Promise<Buffer> {
+    // Hydrating a session includes all related research records. Reuse one
+    // filtered snapshot instead of issuing five large relation queries at
+    // once, which can exhaust Prisma's connection pool on real study data.
+    const snapshot = await this.sessions(filter);
     const [participants, sessionsAnalysis, windows, rankings, messages] =
       await Promise.all([
-        this.exportParticipantsCsv(filter),
-        this.exportSessionsAnalysisCsv(filter),
-        this.exportWindowsCsv(filter),
-        this.exportRankingsCsv(filter),
-        this.exportResearchMessagesCsv(filter),
+        this.exportParticipantsCsv(filter, snapshot),
+        this.exportSessionsAnalysisCsv(filter, snapshot),
+        this.exportWindowsCsv(filter, snapshot),
+        this.exportRankingsCsv(filter, snapshot),
+        this.exportResearchMessagesCsv(filter, snapshot),
       ]);
-    const archive = archiver("zip", { zlib: { level: 9 } });
+    const archive = archiver("zip", { zlib: { level: 6 } });
     const chunks: Buffer[] = [];
     archive.on("data", (chunk: Buffer) => chunks.push(chunk));
     const finished = new Promise<void>((resolve, reject) => {
@@ -593,6 +652,13 @@ export class ReportsService {
     await finished;
     return Buffer.concat(chunks);
   }
+}
+
+function bundleFilterKey(filter: ResearchFilter): string {
+  return JSON.stringify({
+    conditionIds: [...(filter.conditionIds ?? [])].sort(),
+    roundIds: [...(filter.roundIds ?? [])].sort((a, b) => a - b),
+  });
 }
 
 // ── row builders ───────────────────────────────────────────────────
