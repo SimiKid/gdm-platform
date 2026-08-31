@@ -40,6 +40,61 @@ export interface ProlificArrival extends ProlificIdentity {
   arrivedAt: string;
   /** Set once the submission claims a seat in a study session. */
   participantRecordId?: string;
+  /** Last durable participant-journey milestone acknowledged by the backend. */
+  stage: ParticipationStage;
+  stageUpdatedAt: string;
+  lastSeenAt: string;
+  /** Set exactly once when the participant leaves or completes the study. */
+  outcome?: ParticipationOutcome;
+  outcomeReason?: string;
+  endedAt?: string;
+  elapsedSeconds?: number;
+  compensationKind?: CompensationKind;
+  compensationAmountPence?: number;
+  prolificActionStatus?: ProlificActionStatus;
+}
+
+export type ParticipationStage =
+  | "arrived"
+  | "consent"
+  | "entry"
+  | "waiting"
+  | "chat"
+  | "exit"
+  | "done"
+  | "terminated";
+
+export type ParticipationOutcome =
+  | "completed"
+  | "declined_consent"
+  | "ineligible"
+  | "voluntary_withdrawal"
+  | "connection_timeout"
+  | "unmatched"
+  | "technical_failure"
+  | "participant_dropout"
+  | "group_aborted";
+
+export type CompensationKind = "none" | "partial" | "full" | "manual_review";
+
+export type ProlificActionStatus =
+  | "not_required"
+  | "pending"
+  | "return_requested"
+  | "bonus_prepared"
+  | "payment_in_progress"
+  | "payment_uncertain"
+  | "payment_submitted"
+  | "resolved_manually"
+  | "failed";
+
+/** Admin-facing lifecycle/payment view; identifiers remain outside research exports. */
+export interface ParticipationOutcomeRecord extends ProlificArrival {
+  id: string;
+  returnRequestedAt?: string;
+  bonusBatchId?: string;
+  paymentSubmittedAt?: string;
+  actionError?: string;
 }
 
 /** A member of a hiring committee taking part in a study session. */
@@ -248,6 +303,12 @@ export interface StudySettings {
    * participant app falls back to its build-time default.
    */
   compensationUrl: string;
+  /** Prolific paths used for non-happy terminal outcomes. */
+  noConsentUrl: string;
+  ineligibleUrl: string;
+  withdrawalUrl: string;
+  unmatchedUrl: string;
+  technicalFailureUrl: string;
 }
 
 /** Which nudge behavior the bot runs for a session. */
@@ -312,6 +373,8 @@ export interface Session {
   durationMinutes: number;
   /** Matrix room id backing this session, once provisioned. */
   roomId?: string;
+  /** Durable server deadline after which an incomplete group is terminated. */
+  waitingDeadlineAt?: string;
   createdAt: string; // ISO 8601
   startedAt?: string; // ISO 8601 — chat room opened; timer start
   completedAt?: string; // ISO 8601

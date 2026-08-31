@@ -12,6 +12,9 @@ import GroupIntroPage from "./GroupIntroPage";
 interface Props {
   /** Called with the assembled entry survey (incl. the individual ranking). */
   onComplete: (survey: Survey) => void;
+  onDecline?: () => void;
+  onIneligible?: (reason: string) => void;
+  onWithdraw?: () => void;
 }
 
 type Step = "consent" | "about" | "attitudes" | "task" | "group";
@@ -30,7 +33,12 @@ const STEP_NUMBER: Record<Step, 1 | 2 | 3 | 4> = {
  * "Join chat" hands the assembled entry survey up to App, which moves
  * on to the waiting room.
  */
-export default function Survey({ onComplete }: Props) {
+export default function Survey({
+  onComplete,
+  onDecline,
+  onIneligible,
+  onWithdraw,
+}: Props) {
   const [step, setStep] = useState<Step>("consent");
   const [about, setAbout] = useState<AboutYouAnswers | null>(null);
   const [attitudes, setAttitudes] = useState<AttitudesAnswers | null>(null);
@@ -57,11 +65,14 @@ export default function Survey({ onComplete }: Props) {
   }
 
   return (
-    <StudyShell step={STEP_NUMBER[step]}>
-      {step === "consent" && <ConsentPage onBegin={() => setStep("about")} />}
+    <StudyShell step={STEP_NUMBER[step]} onWithdraw={step === "consent" ? undefined : onWithdraw}>
+      {step === "consent" && (
+        <ConsentPage onBegin={() => setStep("about")} onDecline={onDecline} />
+      )}
 
       {step === "about" && (
         <AboutYouPage
+          onIneligible={onIneligible}
           onContinue={(answers) => {
             setAbout(answers);
             setStep("attitudes");

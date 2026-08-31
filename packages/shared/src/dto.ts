@@ -24,6 +24,9 @@ import type {
   Message,
   ProlificArrival,
   ProlificIdentity,
+  ParticipationOutcome,
+  ParticipationOutcomeRecord,
+  ParticipationStage,
   Ranking,
   RecordedReaction,
   Session,
@@ -50,6 +53,26 @@ export interface RecordProlificArrivalRequest {
 }
 
 export type RecordProlificArrivalResponse = ProlificArrival;
+
+export interface RecordParticipationProgressRequest {
+  prolific: ProlificIdentity;
+  stage: Exclude<ParticipationStage, "done" | "terminated">;
+}
+
+export interface TerminateParticipationRequest {
+  prolific: ProlificIdentity;
+  /** Client-selectable exits only; unmatched/technical outcomes are server-owned. */
+  outcome: "declined_consent" | "ineligible" | "voluntary_withdrawal";
+  reason?: string;
+}
+
+export interface ParticipationOutcomeResponse {
+  outcome: ParticipationOutcome;
+  compensationKind: ParticipationOutcomeRecord["compensationKind"];
+  compensationAmountPence?: number;
+  redirectUrl: string;
+  message: string;
+}
 
 /**
  * A participant as exposed to *other* participants: identity only, never the
@@ -92,8 +115,9 @@ export interface OpenSessionResponse {
 }
 
 export interface ProlificResumeResponse {
-  stage: "waiting" | "chat" | "exit" | "done";
-  openSession: OpenSessionResponse;
+  stage: "waiting" | "chat" | "exit" | "done" | "terminated";
+  openSession?: OpenSessionResponse;
+  termination?: ParticipationOutcomeResponse;
 }
 
 export interface SubmitSurveyRequest {
@@ -168,6 +192,10 @@ export interface UpdateStudySettingsRequest {
   settings: Partial<StudySettings>;
 }
 
+export interface ParticipationOutcomesResponse {
+  outcomes: ParticipationOutcomeRecord[];
+}
+
 export interface SessionSummary {
   id: string;
   status: SessionStatus;
@@ -183,6 +211,7 @@ export interface SessionSummary {
   startedAt?: string;
   completedAt?: string;
   roomId?: string;
+  waitingDeadlineAt?: string;
 }
 
 export interface InterventionSummary {

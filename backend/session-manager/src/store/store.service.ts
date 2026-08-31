@@ -19,6 +19,9 @@ import type {
   InterventionMode,
   Message,
   Participant,
+  ParticipationOutcome,
+  ParticipationOutcomeRecord,
+  ParticipationStage,
   Poll,
   ProlificArrival,
   ProlificIdentity,
@@ -38,6 +41,26 @@ import { PrismaService } from "../prisma/prisma.service";
 
 const BRIEFING = MOON_SURVIVAL_BRIEFING;
 const RANKING_TASK = MOON_SURVIVAL;
+
+const EMPTY_STUDY_SETTINGS: StudySettings = {
+  compensationUrl: "",
+  noConsentUrl: "",
+  ineligibleUrl: "",
+  withdrawalUrl: "",
+  unmatchedUrl: "",
+  technicalFailureUrl: "",
+};
+
+const STAGE_ORDER: ParticipationStage[] = [
+  "arrived",
+  "consent",
+  "entry",
+  "waiting",
+  "chat",
+  "exit",
+  "done",
+  "terminated",
+];
 
 const SESSION_INCLUDE = {
   participants: {
@@ -84,8 +107,18 @@ export class StoreService implements OnModuleInit {
   private readonly conditions: Condition[] = [];
   private readonly sessions = new Map<string, Session>();
   private readonly prolificArrivals = new Map<string, ProlificArrival>();
+  private readonly memoryProlificActions = new Map<
+    string,
+    Pick<
+      ParticipationOutcomeRecord,
+      | "returnRequestedAt"
+      | "bonusBatchId"
+      | "paymentSubmittedAt"
+      | "actionError"
+    > & { nextAttemptAt?: string }
+  >();
   private readonly memoryCreds = new Map<string, MatrixCreds>();
-  private readonly memorySettings: StudySettings = { compensationUrl: "" };
+  private readonly memorySettings: StudySettings = { ...EMPTY_STUDY_SETTINGS };
   private readonly memoryRounds: RoundState[] = [];
   private seedPromise?: Promise<void>;
 
@@ -128,7 +161,9 @@ export class StoreService implements OnModuleInit {
     await this.ensureSeeded();
     const rows = await this.db.studySettingRecord.findMany();
     const byKey = new Map(rows.map((row) => [row.key, row.value]));
-    return { compensationUrl: byKey.get("compensationUrl") ?? "" };
+    return Object.fromEntries(
+      Object.keys(EMPTY_STUDY_SETTINGS).map((key) => [key, byKey.get(key) ?? ""]),
+    ) as unknown as StudySettings;
   }
 
   async updateStudySettings(
@@ -167,6 +202,9 @@ export class StoreService implements OnModuleInit {
       const arrival = {
         ...identity,
         arrivedAt: new Date().toISOString(),
+        stage: "arrived" as const,
+        stageUpdatedAt: new Date().toISOString(),
+        lastSeenAt: new Date().toISOString(),
       };
       this.prolificArrivals.set(key, arrival);
       return arrival;
@@ -185,9 +223,507 @@ export class StoreService implements OnModuleInit {
         prolificStudyId: identity.studyId,
         prolificSessionId: identity.sessionId,
       },
-      update: { prolificPid: identity.participantId },
+      // A submission's participant identity is immutable. The service checks
+      // a mismatching PID and returns a conflict instead of letting a second
+      // request overwrite the original linkage.
+      update: {},
     });
     return prolificArrivalFromRow(row);
+  }
+
+  async getProlificArrival(
+    identity: ProlificIdentity,
+  ): Promise<ProlificArrival | undefined> {
+    const key = arrivalKey(identity);
+    if (!this.dbEnabled) return this.prolificArrivals.get(key);
+    const row = await this.db.prolificArrivalRecord.findUnique({
+      where: {
+        prolificStudyId_prolificSessionId: {
+          prolificStudyId: identity.studyId,
+          prolificSessionId: identity.sessionId,
+        },
+      },
+    });
+    return row ? prolificArrivalFromRow(row) : undefined;
+  }
+
+  /** Active Prolific arrivals whose browser has stopped sending heartbeats. */
+  async listStaleProlificArrivals(
+    cutoff: Date,
+    limit = 100,
+  ): Promise<ProlificArrival[]> {
+    const activeStages: ParticipationStage[] = [
+      "arrived",
+      "consent",
+      "entry",
+      "waiting",
+      "chat",
+      "exit",
+    ];
+    if (!this.dbEnabled) {
+      return [...this.prolificArrivals.values()]
+        .filter(
+          (arrival) =>
+            !arrival.outcome &&
+            activeStages.includes(arrival.stage) &&
+            Date.parse(arrival.lastSeenAt) <= cutoff.getTime(),
+        )
+        .sort((a, b) => a.lastSeenAt.localeCompare(b.lastSeenAt))
+        .slice(0, limit);
+    }
+    const rows = await this.db.prolificArrivalRecord.findMany({
+      where: {
+        outcome: null,
+        stage: { in: activeStages },
+        lastSeenAt: { lte: cutoff },
+      },
+      orderBy: { lastSeenAt: "asc" },
+      take: limit,
+    });
+    return rows.map(prolificArrivalFromRow);
+  }
+
+  /** Advance a server-validated journey milestone; terminal outcomes are immutable. */
+  async recordParticipationStage(
+    identity: ProlificIdentity,
+    stage: Exclude<ParticipationStage, "done" | "terminated">,
+  ): Promise<ProlificArrival> {
+    const arrival = await this.recordProlificArrival(identity);
+    const now = new Date();
+    if (!this.dbEnabled) {
+      if (arrival.outcome) return arrival;
+      arrival.lastSeenAt = now.toISOString();
+      if (
+        !arrival.outcome &&
+        STAGE_ORDER.indexOf(stage) >= STAGE_ORDER.indexOf(arrival.stage)
+      ) {
+        arrival.stage = stage;
+        arrival.stageUpdatedAt = now.toISOString();
+      }
+      return arrival;
+    }
+
+    if (arrival.outcome) return arrival;
+    const earlierStages = STAGE_ORDER.slice(0, STAGE_ORDER.indexOf(stage));
+    const row = await this.db.$transaction(async (tx) => {
+      const advanced = await tx.prolificArrivalRecord.updateMany({
+        where: {
+          prolificStudyId: identity.studyId,
+          prolificSessionId: identity.sessionId,
+          outcome: null,
+          stage: { in: earlierStages },
+        },
+        data: { stage, stageUpdatedAt: now, lastSeenAt: now },
+      });
+      if (advanced.count > 0) {
+        const current = await tx.prolificArrivalRecord.findUniqueOrThrow({
+          where: {
+            prolificStudyId_prolificSessionId: {
+              prolificStudyId: identity.studyId,
+              prolificSessionId: identity.sessionId,
+            },
+          },
+        });
+        await tx.participationEventRecord.create({
+          data: {
+            prolificArrivalId: current.id,
+            type: "stage",
+            stage,
+          },
+        });
+        return current;
+      }
+      // Same/later-stage heartbeat. The outcome predicate ensures a timeout
+      // that won the race cannot be overwritten or revived.
+      await tx.prolificArrivalRecord.updateMany({
+        where: {
+          prolificStudyId: identity.studyId,
+          prolificSessionId: identity.sessionId,
+          outcome: null,
+        },
+        data: { lastSeenAt: now },
+      });
+      return tx.prolificArrivalRecord.findUniqueOrThrow({
+        where: {
+          prolificStudyId_prolificSessionId: {
+            prolificStudyId: identity.studyId,
+            prolificSessionId: identity.sessionId,
+          },
+        },
+      });
+    });
+    return prolificArrivalFromRow(row);
+  }
+
+  /** Atomically persist one terminal outcome and its idempotent Prolific action. */
+  async terminateProlificParticipation(
+    identity: ProlificIdentity,
+    outcome: Exclude<ParticipationOutcome, "completed">,
+    reason: string,
+    compensationKind: "none" | "partial" | "manual_review",
+    compensationAmountPence?: number,
+  ): Promise<ParticipationOutcomeRecord> {
+    const arrival = await this.recordProlificArrival(identity);
+    if (arrival.outcome) {
+      return this.getParticipationOutcome(identity) as Promise<ParticipationOutcomeRecord>;
+    }
+    const now = new Date();
+    const elapsedSeconds = Math.max(
+      0,
+      Math.floor((now.getTime() - Date.parse(arrival.arrivedAt)) / 1_000),
+    );
+    if (!this.dbEnabled) {
+      Object.assign(arrival, {
+        stage: "terminated",
+        stageUpdatedAt: now.toISOString(),
+        lastSeenAt: now.toISOString(),
+        outcome,
+        outcomeReason: reason,
+        endedAt: now.toISOString(),
+        elapsedSeconds,
+        compensationKind,
+        compensationAmountPence,
+        prolificActionStatus: "pending",
+      });
+      return { id: arrivalKey(identity), ...arrival };
+    }
+
+    const result = await this.db.$transaction(async (tx) => {
+      const current = await tx.prolificArrivalRecord.findUniqueOrThrow({
+        where: {
+          prolificStudyId_prolificSessionId: {
+            prolificStudyId: identity.studyId,
+            prolificSessionId: identity.sessionId,
+          },
+        },
+        include: { compensation: true },
+      });
+      if (current.outcome) return current;
+      return tx.prolificArrivalRecord.update({
+        where: { id: current.id },
+        data: {
+          stage: "terminated",
+          stageUpdatedAt: now,
+          lastSeenAt: now,
+          outcome,
+          outcomeReason: reason.slice(0, 500),
+          endedAt: now,
+          elapsedSeconds,
+          compensationKind,
+          compensationAmountPence,
+          events: {
+            create: {
+              type: "terminated",
+              stage: "terminated",
+              detail: json({ outcome, reason: reason.slice(0, 500) }),
+            },
+          },
+          compensation: {
+            upsert: {
+              create: {
+                kind: compensationKind,
+                amountPence: compensationAmountPence,
+                status: "pending",
+                nextAttemptAt: now,
+              },
+              update: {},
+            },
+          },
+        },
+        include: { compensation: true },
+      });
+    });
+    return participationOutcomeFromRow(result);
+  }
+
+  /**
+   * Claim a stale heartbeat atomically. A heartbeat that lands after the stale
+   * scan but before this write wins, so an active participant is never kicked
+   * on an outdated read.
+   */
+  async terminateStaleProlificParticipation(
+    identity: ProlificIdentity,
+    cutoff: Date,
+    outcome: Exclude<ParticipationOutcome, "completed">,
+    reason: string,
+    compensationKind: "none" | "partial" | "manual_review",
+    compensationAmountPence?: number,
+  ): Promise<ParticipationOutcomeRecord | null> {
+    const now = new Date();
+    if (!this.dbEnabled) {
+      const arrival = this.prolificArrivals.get(arrivalKey(identity));
+      if (
+        !arrival ||
+        arrival.outcome ||
+        Date.parse(arrival.lastSeenAt) > cutoff.getTime()
+      ) {
+        return null;
+      }
+      const elapsedSeconds = Math.max(
+        0,
+        Math.floor((now.getTime() - Date.parse(arrival.arrivedAt)) / 1_000),
+      );
+      Object.assign(arrival, {
+        stage: "terminated",
+        stageUpdatedAt: now.toISOString(),
+        lastSeenAt: now.toISOString(),
+        outcome,
+        outcomeReason: reason,
+        endedAt: now.toISOString(),
+        elapsedSeconds,
+        compensationKind,
+        compensationAmountPence,
+        prolificActionStatus: "pending",
+      });
+      return { id: arrivalKey(identity), ...arrival };
+    }
+
+    const result = await this.db.$transaction(async (tx) => {
+      const current = await tx.prolificArrivalRecord.findUnique({
+        where: {
+          prolificStudyId_prolificSessionId: {
+            prolificStudyId: identity.studyId,
+            prolificSessionId: identity.sessionId,
+          },
+        },
+      });
+      if (current && !current.outcome && current.lastSeenAt <= cutoff) {
+        const elapsedSeconds = Math.max(
+          0,
+          Math.floor((now.getTime() - current.arrivedAt.getTime()) / 1_000),
+        );
+        const claimed = await tx.prolificArrivalRecord.updateMany({
+          where: {
+            id: current.id,
+            outcome: null,
+            lastSeenAt: { lte: cutoff },
+          },
+          data: {
+            stage: "terminated",
+            stageUpdatedAt: now,
+            lastSeenAt: now,
+            outcome,
+            outcomeReason: reason.slice(0, 500),
+            endedAt: now,
+            elapsedSeconds,
+            compensationKind,
+            compensationAmountPence,
+          },
+        });
+        if (claimed.count === 0) return null;
+        await tx.participationEventRecord.create({
+          data: {
+            prolificArrivalId: current.id,
+            type: "terminated",
+            stage: "terminated",
+            detail: json({ outcome, reason: reason.slice(0, 500) }),
+          },
+        });
+        await tx.prolificCompensationRecord.upsert({
+          where: { prolificArrivalId: current.id },
+          create: {
+            prolificArrivalId: current.id,
+            kind: compensationKind,
+            amountPence: compensationAmountPence,
+            status: "pending",
+            nextAttemptAt: now,
+          },
+          update: {},
+        });
+        return tx.prolificArrivalRecord.findUniqueOrThrow({
+          where: { id: current.id },
+          include: { compensation: true },
+        });
+      }
+      return null;
+    });
+    return result ? participationOutcomeFromRow(result) : null;
+  }
+
+  async completeProlificParticipation(
+    identity: ProlificIdentity,
+  ): Promise<ParticipationOutcomeRecord> {
+    const arrival = await this.recordProlificArrival(identity);
+    const existing = await this.getParticipationOutcome(identity);
+    if (existing?.outcome) return existing;
+    const now = new Date();
+    const elapsedSeconds = Math.max(
+      0,
+      Math.floor((now.getTime() - Date.parse(arrival.arrivedAt)) / 1_000),
+    );
+    if (!this.dbEnabled) {
+      Object.assign(arrival, {
+        stage: "done",
+        stageUpdatedAt: now.toISOString(),
+        lastSeenAt: now.toISOString(),
+        outcome: "completed",
+        endedAt: now.toISOString(),
+        elapsedSeconds,
+        compensationKind: "full",
+        prolificActionStatus: "not_required",
+      });
+      return { id: arrivalKey(identity), ...arrival };
+    }
+    const row = await this.db.prolificArrivalRecord.update({
+      where: {
+        prolificStudyId_prolificSessionId: {
+          prolificStudyId: identity.studyId,
+          prolificSessionId: identity.sessionId,
+        },
+      },
+      data: {
+        stage: "done",
+        stageUpdatedAt: now,
+        lastSeenAt: now,
+        outcome: "completed",
+        endedAt: now,
+        elapsedSeconds,
+        compensationKind: "full",
+        events: { create: { type: "completed", stage: "done" } },
+        compensation: {
+          upsert: {
+            create: { kind: "full", status: "not_required" },
+            update: { kind: "full", status: "not_required" },
+          },
+        },
+      },
+      include: { compensation: true },
+    });
+    return participationOutcomeFromRow(row);
+  }
+
+  async getParticipationOutcome(
+    identity: ProlificIdentity,
+  ): Promise<ParticipationOutcomeRecord | undefined> {
+    if (!this.dbEnabled) {
+      const arrival = this.prolificArrivals.get(arrivalKey(identity));
+      if (!arrival) return undefined;
+      const id = arrivalKey(identity);
+      return { id, ...arrival, ...this.memoryProlificActions.get(id) };
+    }
+    const row = await this.db.prolificArrivalRecord.findUnique({
+      where: {
+        prolificStudyId_prolificSessionId: {
+          prolificStudyId: identity.studyId,
+          prolificSessionId: identity.sessionId,
+        },
+      },
+      include: { compensation: true },
+    });
+    return row ? participationOutcomeFromRow(row) : undefined;
+  }
+
+  async listParticipationOutcomes(): Promise<ParticipationOutcomeRecord[]> {
+    if (!this.dbEnabled) {
+      return [...this.prolificArrivals.entries()].map(([id, arrival]) => ({
+        id,
+        ...arrival,
+        ...this.memoryProlificActions.get(id),
+      }));
+    }
+    const rows = await this.db.prolificArrivalRecord.findMany({
+      include: { compensation: true },
+      orderBy: { arrivedAt: "desc" },
+    });
+    return rows.map(participationOutcomeFromRow);
+  }
+
+  async getParticipationOutcomeById(
+    id: string,
+  ): Promise<ParticipationOutcomeRecord | undefined> {
+    if (!this.dbEnabled) {
+      return this.listParticipationOutcomes().then((rows) =>
+        rows.find((row) => row.id === id),
+      );
+    }
+    const row = await this.db.prolificArrivalRecord.findUnique({
+      where: { id },
+      include: { compensation: true },
+    });
+    return row ? participationOutcomeFromRow(row) : undefined;
+  }
+
+  async markProlificAction(
+    arrivalId: string,
+    patch: {
+      status: string;
+      returnRequestedAt?: Date;
+      bonusBatchId?: string;
+      paymentSubmittedAt?: Date;
+      actionError?: string | null;
+      nextAttemptAt?: Date | null;
+    },
+  ): Promise<void> {
+    if (!this.dbEnabled) {
+      const outcome = await this.getParticipationOutcomeById(arrivalId);
+      if (!outcome) return;
+      const current = this.memoryProlificActions.get(arrivalId) ?? {};
+      this.memoryProlificActions.set(arrivalId, {
+        ...current,
+        ...(patch.returnRequestedAt
+          ? { returnRequestedAt: patch.returnRequestedAt.toISOString() }
+          : {}),
+        ...(patch.bonusBatchId ? { bonusBatchId: patch.bonusBatchId } : {}),
+        ...(patch.paymentSubmittedAt
+          ? { paymentSubmittedAt: patch.paymentSubmittedAt.toISOString() }
+          : {}),
+        ...(patch.actionError !== undefined
+          ? { actionError: patch.actionError ?? undefined }
+          : {}),
+        ...(patch.nextAttemptAt !== undefined
+          ? { nextAttemptAt: patch.nextAttemptAt?.toISOString() }
+          : {}),
+      });
+      const arrival = this.prolificArrivals.get(
+        arrivalKey({
+          participantId: outcome.participantId,
+          studyId: outcome.studyId,
+          sessionId: outcome.sessionId,
+        }),
+      );
+      if (arrival) {
+        arrival.prolificActionStatus =
+          patch.status as ProlificArrival["prolificActionStatus"];
+      }
+      return;
+    }
+    await this.db.prolificCompensationRecord.update({
+      where: { prolificArrivalId: arrivalId },
+      data: { ...patch, attemptCount: { increment: 1 } },
+    });
+  }
+
+  async dueProlificActions(limit = 20): Promise<ParticipationOutcomeRecord[]> {
+    if (!this.dbEnabled) {
+      const now = Date.now();
+      return (await this.listParticipationOutcomes())
+        .filter((outcome) => {
+          if (!outcome.outcome) return false;
+          if (
+            !["pending", "failed"].includes(
+              outcome.prolificActionStatus ?? "",
+            )
+          ) {
+            return false;
+          }
+          const next = this.memoryProlificActions.get(outcome.id)?.nextAttemptAt;
+          return !next || Date.parse(next) <= now;
+        })
+        .slice(0, limit);
+    }
+    const rows = await this.db.prolificArrivalRecord.findMany({
+      where: {
+        compensation: {
+          status: { in: ["pending", "failed"] },
+          attemptCount: { lt: 5 },
+          OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }],
+        },
+      },
+      include: { compensation: true },
+      orderBy: { endedAt: "asc" },
+      take: limit,
+    });
+    return rows.map(participationOutcomeFromRow);
   }
 
   async linkProlificArrival(
@@ -417,6 +953,7 @@ export class StoreService implements OnModuleInit {
         createdAt: true,
         startedAt: true,
         completedAt: true,
+        waitingDeadlineAt: true,
         roomId: true,
         _count: {
           select: {
@@ -445,6 +982,7 @@ export class StoreService implements OnModuleInit {
         createdAt: row.createdAt.toISOString(),
         startedAt: row.startedAt?.toISOString(),
         completedAt: row.completedAt?.toISOString(),
+        waitingDeadlineAt: row.waitingDeadlineAt?.toISOString(),
         roomId: row.roomId ?? undefined,
       };
     });
@@ -553,34 +1091,6 @@ export class StoreService implements OnModuleInit {
     return participant ? { session, participant } : undefined;
   }
 
-  /** Move an aborted Prolific seat into a new lobby without deleting its data. */
-  async moveParticipant(
-    participantId: string,
-    fromSessionId: string,
-    toSessionId: string,
-  ): Promise<void> {
-    if (!this.dbEnabled) {
-      const source = this.sessions.get(fromSessionId);
-      const target = this.sessions.get(toSessionId);
-      if (!source || !target) throw new Error("Unknown session during requeue");
-      const index = source.participants.findIndex(
-        (participant) => participant.id === participantId,
-      );
-      if (index < 0) throw new Error(`Unknown participant ${participantId}`);
-      source.participants.splice(index, 1);
-      return;
-    }
-
-    await this.ensureSeeded();
-    const moved = await this.db.participantRecord.updateMany({
-      where: { id: participantId, sessionId: fromSessionId },
-      data: { sessionId: toSessionId },
-    });
-    if (moved.count !== 1) {
-      throw new Error(`Could not requeue participant ${participantId}`);
-    }
-  }
-
   async getSession(id: string): Promise<Session | undefined> {
     if (!this.dbEnabled) return this.sessions.get(id);
     await this.ensureSeeded();
@@ -621,6 +1131,49 @@ export class StoreService implements OnModuleInit {
         prolificSessionId: participant.prolific?.sessionId,
         completedAt: toOptionalDate(participant.completedAt),
       },
+    });
+  }
+
+  /**
+   * Release a seat only while a lobby is still forming. The Prolific arrival
+   * remains in its separate audit table; participant/survey data are removed
+   * because the person withdrew before a group began.
+   */
+  async removeParticipantFromWaitingSession(
+    sessionId: string,
+    participantId: string,
+  ): Promise<boolean> {
+    if (!this.dbEnabled) {
+      const session = this.sessions.get(sessionId);
+      if (!session || session.status !== "waiting") return false;
+      const index = session.participants.findIndex(
+        (participant) => participant.id === participantId,
+      );
+      if (index < 0) return false;
+      session.participants.splice(index, 1);
+      this.memoryCreds.delete(participantId);
+      if (session.participants.length === 0) session.status = "aborted";
+      return true;
+    }
+
+    return this.db.$transaction(async (tx) => {
+      const session = await tx.sessionRecord.findUnique({
+        where: { id: sessionId },
+        select: { status: true },
+      });
+      if (session?.status !== "waiting") return false;
+      const removed = await tx.participantRecord.deleteMany({
+        where: { id: participantId, sessionId },
+      });
+      if (removed.count === 0) return false;
+      const remaining = await tx.participantRecord.count({ where: { sessionId } });
+      if (remaining === 0) {
+        await tx.sessionRecord.updateMany({
+          where: { id: sessionId, status: "waiting" },
+          data: { status: "aborted" },
+        });
+      }
+      return true;
     });
   }
 
@@ -836,6 +1389,7 @@ export class StoreService implements OnModuleInit {
           checkpointRevision: session.checkpointRevision ?? 0,
           durationMinutes: session.durationMinutes,
           roomId: session.roomId,
+          waitingDeadlineAt: toOptionalDate(session.waitingDeadlineAt),
           createdAt: toDate(session.createdAt),
           startedAt: toOptionalDate(session.startedAt),
           completedAt: toOptionalDate(session.completedAt),
@@ -851,6 +1405,7 @@ export class StoreService implements OnModuleInit {
           polls: json(session.polls),
           durationMinutes: session.durationMinutes,
           roomId: session.roomId,
+          waitingDeadlineAt: toOptionalDate(session.waitingDeadlineAt),
           startedAt: toOptionalDate(session.startedAt),
           ...(session.completedAt
             ? { completedAt: toDate(session.completedAt) }
@@ -968,19 +1523,91 @@ export class StoreService implements OnModuleInit {
         _count: { select: { participants: true } },
       },
     });
-    if (rows.length > 0) {
-      await this.db.sessionRecord.updateMany({
+    const aborted = [];
+    for (const row of rows) {
+      const changed = await this.db.sessionRecord.updateMany({
         where: {
-          id: { in: rows.map((row) => row.id) },
+          id: row.id,
           status: { in: abortableStatuses },
         },
         data: { status: "aborted" },
       });
+      if (changed.count > 0) aborted.push(row);
     }
-    return rows.map((row) => ({
+    return aborted.map((row) => ({
       id: row.id,
       createdAt: row.createdAt.toISOString(),
       participantCount: row._count.participants,
+    }));
+  }
+
+  /** Abort every lobby whose durable deadline has passed. */
+  async abortExpiredWaitingSessions(
+    now = new Date(),
+  ): Promise<
+    Array<{
+      id: string;
+      createdAt: string;
+      participantCount: number;
+      priorStatus: "waiting" | "provisioning";
+    }>
+  > {
+    if (!this.dbEnabled) {
+      const expired: Array<{
+        id: string;
+        createdAt: string;
+        participantCount: number;
+        priorStatus: "waiting" | "provisioning";
+      }> = [];
+      for (const session of this.sessions.values()) {
+        if (
+          (session.status !== "waiting" && session.status !== "provisioning") ||
+          !session.waitingDeadlineAt ||
+          Date.parse(session.waitingDeadlineAt) > now.getTime()
+        ) {
+          continue;
+        }
+        const priorStatus = session.status;
+        session.status = "aborted";
+        expired.push({
+          id: session.id,
+          createdAt: session.createdAt,
+          participantCount: session.participants.length,
+          priorStatus,
+        });
+      }
+      return expired;
+    }
+
+    const rows = await this.db.sessionRecord.findMany({
+      where: {
+        status: { in: ["waiting", "provisioning"] },
+        waitingDeadlineAt: { lte: now },
+      },
+      select: {
+        id: true,
+        status: true,
+        createdAt: true,
+        _count: { select: { participants: true } },
+      },
+    });
+    const aborted = [];
+    for (const row of rows) {
+      const changed = await this.db.sessionRecord.updateMany({
+        where: {
+          id: row.id,
+          status: { in: ["waiting", "provisioning"] },
+          waitingDeadlineAt: { lte: now },
+        },
+        data: { status: "aborted" },
+      });
+      if (changed.count > 0) aborted.push(row);
+    }
+    return aborted.map((row) => ({
+      id: row.id,
+      createdAt: row.createdAt.toISOString(),
+      participantCount: row._count.participants,
+      priorStatus: row.status as "waiting" | "provisioning",
     }));
   }
 
@@ -1002,6 +1629,10 @@ export class StoreService implements OnModuleInit {
 
   async createForming(condition: Condition): Promise<Session> {
     const now = new Date().toISOString();
+    const waitingMinutes = Math.max(
+      1,
+      Number(process.env.WAITING_TIMEOUT_MINUTES ?? 15) || 15,
+    );
     const session: Session = {
       id: randomUUID(),
       status: "waiting",
@@ -1032,6 +1663,9 @@ export class StoreService implements OnModuleInit {
       runtimeState: {},
       polls: [],
       durationMinutes: condition.durationMinutes,
+      waitingDeadlineAt: new Date(
+        Date.parse(now) + waitingMinutes * 60_000,
+      ).toISOString(),
       createdAt: now,
     };
     await this.saveSession(session);
@@ -1985,6 +2619,7 @@ function sessionFromRow(row: SessionRow): Session {
     polls: fromJson<Poll[]>(row.polls),
     durationMinutes: row.durationMinutes,
     roomId: row.roomId ?? undefined,
+    waitingDeadlineAt: row.waitingDeadlineAt?.toISOString(),
     createdAt: row.createdAt.toISOString(),
     startedAt: row.startedAt?.toISOString(),
     completedAt: row.completedAt?.toISOString(),
@@ -2007,6 +2642,7 @@ function sessionSummary(session: Session): SessionSummary {
     startedAt: session.startedAt,
     completedAt: session.completedAt,
     roomId: session.roomId,
+    waitingDeadlineAt: session.waitingDeadlineAt,
   };
 }
 
@@ -2040,6 +2676,15 @@ function prolificArrivalFromRow(row: {
   prolificSessionId: string;
   participantRecordId: string | null;
   arrivedAt: Date;
+  stage: string;
+  stageUpdatedAt: Date;
+  lastSeenAt: Date;
+  outcome: string | null;
+  outcomeReason: string | null;
+  endedAt: Date | null;
+  elapsedSeconds: number | null;
+  compensationKind: string | null;
+  compensationAmountPence: number | null;
 }): ProlificArrival {
   return {
     participantId: row.prolificPid,
@@ -2047,7 +2692,47 @@ function prolificArrivalFromRow(row: {
     sessionId: row.prolificSessionId,
     participantRecordId: row.participantRecordId ?? undefined,
     arrivedAt: row.arrivedAt.toISOString(),
+    stage: row.stage as ParticipationStage,
+    stageUpdatedAt: row.stageUpdatedAt.toISOString(),
+    lastSeenAt: row.lastSeenAt.toISOString(),
+    outcome: (row.outcome as ParticipationOutcome | null) ?? undefined,
+    outcomeReason: row.outcomeReason ?? undefined,
+    endedAt: row.endedAt?.toISOString(),
+    elapsedSeconds: row.elapsedSeconds ?? undefined,
+    compensationKind:
+      (row.compensationKind as ProlificArrival["compensationKind"]) ?? undefined,
+    compensationAmountPence: row.compensationAmountPence ?? undefined,
   };
+}
+
+function participationOutcomeFromRow(
+  row: Parameters<typeof prolificArrivalFromRow>[0] & {
+    id: string;
+    compensation: {
+      status: string;
+      returnRequestedAt: Date | null;
+      bonusBatchId: string | null;
+      paymentSubmittedAt: Date | null;
+      actionError: string | null;
+    } | null;
+  },
+): ParticipationOutcomeRecord {
+  return {
+    id: row.id,
+    ...prolificArrivalFromRow(row),
+    prolificActionStatus:
+      (row.compensation?.status as ParticipationOutcomeRecord["prolificActionStatus"]) ??
+      undefined,
+    returnRequestedAt: row.compensation?.returnRequestedAt?.toISOString(),
+    bonusBatchId: row.compensation?.bonusBatchId ?? undefined,
+    paymentSubmittedAt:
+      row.compensation?.paymentSubmittedAt?.toISOString(),
+    actionError: row.compensation?.actionError ?? undefined,
+  };
+}
+
+function arrivalKey(identity: ProlificIdentity): string {
+  return `${identity.studyId}:${identity.sessionId}`;
 }
 
 function surveyFromRow(row: SessionRow["participants"][number]["surveys"][number]): Survey {

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { SessionsController } from "./sessions.controller";
 import type { SessionsService } from "./sessions.service";
 import type { StoreService } from "../store/store.service";
+import type { ProlificActionsService } from "../prolific/prolific-actions.service";
 
 describe("SessionsController", () => {
   const sessions = {
@@ -10,6 +11,14 @@ describe("SessionsController", () => {
       arrivedAt: "now",
     })),
     resumeProlific: vi.fn(async () => null),
+    recordParticipationProgress: vi.fn(async () => ({ stage: "waiting" })),
+    terminateParticipation: vi.fn(async () => ({
+      outcome: "voluntary_withdrawal",
+      compensationKind: "none",
+      redirectUrl: "",
+      message: "ended",
+    })),
+    getParticipationOutcome: vi.fn(async () => null),
     openSession: vi.fn(async () => ({ session: { id: "s" } })),
     listSessions: vi.fn(async () => [{ id: "s" }]),
     getSession: vi.fn(async () => ({ id: "s" })),
@@ -37,8 +46,15 @@ describe("SessionsController", () => {
     completedCount: async () => 2,
     listProlificArrivals: vi.fn(async () => []),
     currentRound: async () => ({ id: 1, label: "", startedAt: "now" }),
+    listParticipationOutcomes: vi.fn(async () => []),
   } as unknown as StoreService;
-  const ctrl = new SessionsController(sessions, store);
+  const prolificActions = {
+    requestReturnById: vi.fn(),
+    prepareBonusById: vi.fn(),
+    payBonusById: vi.fn(),
+    resolveManuallyById: vi.fn(),
+  } as unknown as ProlificActionsService;
+  const ctrl = new SessionsController(sessions, store, prolificActions);
 
   it("openSession delegates to the service", async () => {
     await ctrl.openSession({ trackingToken: "t", participantName: "" });
@@ -53,6 +69,28 @@ describe("SessionsController", () => {
     };
     await ctrl.recordProlificArrival({ prolific });
     expect(sessions.recordProlificArrival).toHaveBeenCalledWith(prolific);
+  });
+
+  it("records participant progress and client-selectable termination", async () => {
+    const prolific = {
+      participantId: "aaaaaaaaaaaaaaaaaaaaaaaa",
+      studyId: "bbbbbbbbbbbbbbbbbbbbbbbb",
+      sessionId: "cccccccccccccccccccccccc",
+    };
+    await ctrl.participationProgress({ prolific, stage: "waiting" });
+    expect(sessions.recordParticipationProgress).toHaveBeenCalledWith(
+      prolific,
+      "waiting",
+    );
+    await ctrl.terminateParticipation({
+      prolific,
+      outcome: "voluntary_withdrawal",
+    });
+    expect(sessions.terminateParticipation).toHaveBeenCalledWith(
+      prolific,
+      "voluntary_withdrawal",
+      undefined,
+    );
   });
 
   it("getSession returns the sanitized participant view", async () => {

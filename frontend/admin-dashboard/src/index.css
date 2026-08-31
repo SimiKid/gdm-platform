@@ -206,6 +206,22 @@ p {
   color: #45566e;
 }
 
+.prolific-paths {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.prolific-paths label {
+  display: grid;
+  gap: 4px;
+}
+
+.prolific-paths .hint {
+  min-height: 2.2em;
+  margin: 0;
+}
+
 .pilot-name {
   min-width: 128px;
   color: #45566e;

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { httpSessionManager } from "../study/sessionClient";
+import DebriefingDisclosure from "./DebriefingDisclosure";
 import StudyShell from "./StudyShell";
 
 /**
@@ -24,6 +25,7 @@ export default function DebriefingPage({
   const paymentUrl = completionUrl || import.meta.env.VITE_PAYMENT_URL || "#";
   const paymentConfigured = paymentUrl !== "" && paymentUrl !== "#";
   const [feedback, setFeedback] = useState("");
+  const [debriefAcknowledged, setDebriefAcknowledged] = useState(false);
 
   function handleReturn() {
     if (feedback.trim()) {
@@ -41,19 +43,7 @@ export default function DebriefingPage({
 
         <p>This is the end of the study.</p>
 
-        <p>
-          We would like to share more details about the study: You were
-          randomly assigned to one of two conditions: the chatbot sent messages
-          either privately (to you) or publicly (to the whole group). Both
-          types of messages highlighted the most contributing group member when
-          they were contributing significantly more than the rest of the group.
-          This detail was withheld during the study so you could experience the
-          group discussion naturally; withholding it was necessary to avoid
-          influencing your behavior and was approved as part of the study's
-          ethics review. Our main research goal is to understand how these
-          nudges affect the group — its performance and perceptions — as well
-          as your individual experience.
-        </p>
+        <DebriefingDisclosure />
 
         <p>
           We'd love to hear your thoughts on the experiment — please share any
@@ -74,8 +64,17 @@ export default function DebriefingPage({
         </p>
         <p>Thank you again for contributing to this research.</p>
 
+        <label className="consent-check">
+          <input
+            type="checkbox"
+            checked={debriefAcknowledged}
+            onChange={() => setDebriefAcknowledged((value) => !value)}
+          />
+          <span>I have read and understood the debriefing above.</span>
+        </label>
+
         <div className="card-actions">
-          {paymentConfigured ? (
+          {paymentConfigured && debriefAcknowledged ? (
             <a
               className="btn btn-primary"
               href={paymentUrl}
@@ -83,6 +82,10 @@ export default function DebriefingPage({
             >
               Return to Prolific
             </a>
+          ) : paymentConfigured ? (
+            <button type="button" className="btn btn-primary" disabled>
+              Return to Prolific
+            </button>
           ) : (
             <>
               <button type="button" className="btn btn-primary" disabled>
@@ -93,6 +96,9 @@ export default function DebriefingPage({
                 keep this page open and contact the researcher.
               </p>
             </>
+          )}
+          {!debriefAcknowledged && (
+            <p className="action-hint">Please acknowledge the debriefing before returning.</p>
           )}
         </div>
       </div>

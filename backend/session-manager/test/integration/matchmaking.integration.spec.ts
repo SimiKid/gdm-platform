@@ -145,7 +145,7 @@ describe("matchmaking & lifecycle (integration)", () => {
     expect(again.session.participants).toHaveLength(1);
   });
 
-  it("requeues an aborted Prolific submission without violating its unique key", async () => {
+  it("keeps an aborted Prolific submission terminal instead of requeueing it", async () => {
     const prolific = {
       participantId: "aaaaaaaaaaaaaaaaaaaaaaaa",
       studyId: "bbbbbbbbbbbbbbbbbbbbbbbb",
@@ -161,13 +161,22 @@ describe("matchmaking & lifecycle (integration)", () => {
       await request(t.http).post("/api/sessions").send(requestBody).expect(201)
     ).body;
     await request(t.http).post("/api/rounds").send({}).expect(201);
-    const requeued = (
-      await request(t.http).post("/api/sessions").send(requestBody).expect(201)
+    await request(t.http).post("/api/sessions").send(requestBody).expect(409);
+    const resumed = (
+      await request(t.http)
+        .post("/api/prolific/resume")
+        .send({ prolific })
+        .expect(201)
     ).body;
 
-    expect(requeued.session.id).not.toBe(first.session.id);
-    expect(requeued.participantId).toBe(first.participantId);
-    expect(requeued.session.status).toBe("waiting");
+    expect(first.session.status).toBe("waiting");
+    expect(resumed).toMatchObject({
+      stage: "terminated",
+      termination: {
+        outcome: "group_aborted",
+        compensationKind: "partial",
+      },
+    });
   });
 
   it("does not leak tracking tokens or surveys through participant endpoints", async () => {

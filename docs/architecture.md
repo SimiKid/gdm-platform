@@ -70,7 +70,7 @@ NestJS API responsible for:
   with `MATRIX_SERVICE_PASSWORD`, so invite-only rooms remain manageable after
   Session Manager or full-stack restarts.
 - **Survey persistence** — stores entry and exit survey responses.
-- **Session lifecycle** — tracks status transitions: `waiting` -> `running` -> `completed`; a waiting lobby becomes `aborted` when a new study round starts.
+- **Session lifecycle** — tracks status transitions: `waiting` -> `running` -> `completed`; a waiting lobby becomes `aborted` when a new study round starts. Prolific heartbeats allow a 30-second reconnect grace, after which the participant is terminalized, their seat or Matrix room access is removed, and the outcome enters the Prolific action queue.
 - **Reports & export** — summary statistics for the Results tab plus pseudonymized analysis CSVs (participants, sessions, windows, rankings), a separately guarded linkage file, and a research ZIP with codebook. All report/export endpoints accept a `roundIds` filter. See [data-export.md](data-export.md).
 
 Data is stored in the research Postgres database via Prisma ORM.
@@ -104,17 +104,19 @@ React SPA served by nginx. Implements the participant journey:
 6. **Waiting Room** — calls `POST /api/sessions` to join, polls for group readiness
 7. **Chat** — Matrix-based group chat with WhatsApp-style UI, briefing panel, countdown timer, and a condition-selected shared workspace. Structured ranking is the default; a dormant external-iframe extension point shows a not-configured placeholder until a provider is supplied.
 8. **Exit Survey** — post-study questionnaire with individual re-ranking
-9. **Debriefing** — study explanation and compensation link
+9. **Debriefing** — study explanation and compensation link; post-consent
+   early exits receive the same disclosure before their exit redirect
 
 Nginx proxies `/api/` to the session manager and `/_matrix/` to Synapse, so the browser only connects to `localhost:3000`.
 
 ### Admin Dashboard (`frontend/admin-dashboard`)
 
-React SPA for researchers, split into four tabs:
+React SPA for researchers, split into five tabs:
 
 - **Overview** — study link, condition progress, session list.
 - **Results** — per-condition result summaries with a study-round filter, research exports (analysis ZIP, individual CSVs), and a guarded identifying-data section.
-- **Settings** — recruiting table (per-condition active/goal), study rounds management, shared session & bot parameters (applied to all arms, with a drift warning when arms deviate), compensation link.
+- **Settings** — recruiting table (per-condition active/goal), study rounds management, shared session & bot parameters (applied to all arms, with a drift warning when arms deviate), and Prolific completion/exit paths.
+- **Prolific** — durable participant outcomes and separately audited return/partial-bonus actions.
 - **Testing** — bot test workspace, including the 2-bot comparison toggle for non-baseline arms.
 
 Nginx proxies `/api/` to the session manager.

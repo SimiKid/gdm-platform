@@ -1,6 +1,8 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
 import type { InterventionLog, Message, Ranking } from "@gdm/shared";
+import { SessionsService } from "../../src/sessions/sessions.service";
+import { PrismaService } from "../../src/prisma/prisma.service";
 import {
   closeHarness,
   createTestApp,
@@ -553,12 +555,77 @@ describe("persistence & exports (integration)", () => {
     ).body.sessions[0].participants[0];
     expect(detailed.prolific).toEqual(prolific);
     expect(detailed.completedAt).toBe(completion.completedAt);
+    const outcomes = (
+      await request(t.http).get("/api/export/prolific-outcomes").expect(200)
+    ).body.outcomes;
+    expect(outcomes[0]).toMatchObject({
+      ...prolific,
+      stage: "done",
+      outcome: "completed",
+      compensationKind: "full",
+      prolificActionStatus: "not_required",
+    });
+  });
+
+  it("persists a stale-heartbeat timeout and releases the waiting seat", async () => {
+    const prolific = {
+      participantId: "aaaaaaaaaaaaaaaaaaaaaaaa",
+      studyId: "bbbbbbbbbbbbbbbbbbbbbbbb",
+      sessionId: "cccccccccccccccccccccccc",
+    };
+    const opened = (
+      await request(t.http)
+        .post("/api/sessions")
+        .send({
+          trackingToken: `prolific:${prolific.studyId}:${prolific.sessionId}`,
+          participantName: "",
+          conditionId: "baseline",
+          prolific,
+        })
+        .expect(201)
+    ).body;
+    const prisma = t.app.get(PrismaService);
+    await prisma.prolificArrivalRecord.update({
+      where: {
+        prolificStudyId_prolificSessionId: {
+          prolificStudyId: prolific.studyId,
+          prolificSessionId: prolific.sessionId,
+        },
+      },
+      data: { lastSeenAt: new Date(Date.now() - 31_000) },
+    });
+
+    expect(
+      await t.app.get(SessionsService).sweepDisconnectedParticipants(),
+    ).toBe(1);
+    const outcome = (
+      await request(t.http)
+        .post("/api/prolific/outcome")
+        .send({ prolific })
+        .expect(201)
+    ).body;
+    expect(outcome).toMatchObject({
+      outcome: "connection_timeout",
+      compensationKind: "partial",
+      compensationAmountPence: 10,
+    });
+    const session = await prisma.sessionRecord.findUniqueOrThrow({
+      where: { id: opened.session.id },
+      include: { participants: true },
+    });
+    expect(session.status).toBe("aborted");
+    expect(session.participants).toHaveLength(0);
   });
 
   it("persists study settings across restarts", async () => {
     await request(t.http)
       .put("/api/settings")
-      .send({ settings: { compensationUrl: "  https://pay.example/done  " } })
+      .send({
+        settings: {
+          compensationUrl: "  https://pay.example/done  ",
+          unmatchedUrl: "https://app.prolific.com/return?cc=UNMATCHED",
+        },
+      })
       .expect(200);
 
     await t.close();
@@ -566,6 +633,9 @@ describe("persistence & exports (integration)", () => {
 
     const settings = (await request(t.http).get("/api/settings").expect(200)).body;
     expect(settings.compensationUrl).toBe("https://pay.example/done");
+    expect(settings.unmatchedUrl).toBe(
+      "https://app.prolific.com/return?cc=UNMATCHED",
+    );
   });
 
   it("exports CSV with escaping and condition filtering", async () => {

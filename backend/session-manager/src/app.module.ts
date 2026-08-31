@@ -13,6 +13,7 @@ import { PrismaService } from "./prisma/prisma.service";
 import { AdminGuard } from "./auth/admin.guard";
 import { InternalGuard } from "./auth/internal.guard";
 import { ParticipantGuard } from "./auth/participant.guard";
+import { ProlificActionsService } from "./prolific/prolific-actions.service";
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { ParticipantGuard } from "./auth/participant.guard";
     AdminGuard,
     InternalGuard,
     ParticipantGuard,
+    ProlificActionsService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
   ],
 })
