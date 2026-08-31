@@ -13,9 +13,9 @@ fi
 
 profile="${1:-${LOADTEST_PROFILE:-smoke}}"
 case "$profile" in
-  smoke|diagnostic|step|spike|soak) ;;
+  smoke|diagnostic|intermediate|step|spike|soak) ;;
   *)
-    printf 'Unknown profile: %s\nUse: %s [smoke|diagnostic|step|spike|soak]\n' "$profile" "$0" >&2
+    printf 'Unknown profile: %s\nUse: %s [smoke|diagnostic|intermediate|step|spike|soak]\n' "$profile" "$0" >&2
     exit 2
     ;;
 esac
@@ -196,7 +196,7 @@ EOF
     if [[ "$profile" == "smoke" ]]; then
       printf 'Warning: server file-descriptor limit is %s; do not proceed to a large profile unchanged.\n' \
         "$minimum_fd_limit"
-    elif [[ "$profile" == "diagnostic" ]]; then
+    elif [[ "$profile" == "diagnostic" || "$profile" == "intermediate" ]]; then
       printf 'Warning: server file-descriptor limit is %s; recording the current VM configuration at up to 249 users.\n' \
         "$minimum_fd_limit"
     elif [[ "${LOADTEST_IGNORE_LOW_FD_LIMIT:-}" != "I_ACCEPT_THE_DESCRIPTOR_CEILING" ]]; then
