@@ -4,6 +4,8 @@ import StudyShell from "./StudyShell";
 import ConsentPage from "./ConsentPage";
 import AboutYouPage from "./AboutYouPage";
 import type { AboutYouAnswers } from "./AboutYouPage";
+import AttitudesPage from "./AttitudesPage";
+import type { AttitudesAnswers } from "./AttitudesPage";
 import RankingTaskPage from "./RankingTaskPage";
 import GroupIntroPage from "./GroupIntroPage";
 
@@ -12,23 +14,26 @@ interface Props {
   onComplete: (survey: Survey) => void;
 }
 
-type Step = "consent" | "about" | "task" | "group";
+type Step = "consent" | "about" | "attitudes" | "task" | "group";
 const STEP_NUMBER: Record<Step, 1 | 2 | 3 | 4> = {
   consent: 1,
   about: 2,
+  attitudes: 2,
   task: 3,
   group: 4,
 };
 
 /**
- * The pre-chat participant flow (pages 1–4):
- * informed consent → about you → individual ranking task (10-min timer)
- * → group phase instructions. "Join chat" hands the assembled entry survey
- * up to App, which moves on to the waiting room.
+ * The pre-chat participant flow (pages 1–5):
+ * informed consent → about you (demographics) → about you (attitudes)
+ * → individual ranking task (10-min timer) → group phase instructions.
+ * "Join chat" hands the assembled entry survey up to App, which moves
+ * on to the waiting room.
  */
 export default function Survey({ onComplete }: Props) {
   const [step, setStep] = useState<Step>("consent");
   const [about, setAbout] = useState<AboutYouAnswers | null>(null);
+  const [attitudes, setAttitudes] = useState<AttitudesAnswers | null>(null);
   const [task, setTask] = useState<Record<
     string,
     string | number | boolean | string[]
@@ -42,6 +47,7 @@ export default function Survey({ onComplete }: Props) {
         consentInformed: true,
         consentParticipation: true,
         ...(about ?? {}),
+        ...(attitudes ?? {}),
         ...(task ?? {}),
         groupInstructionsAcknowledged: true,
       },
@@ -58,6 +64,15 @@ export default function Survey({ onComplete }: Props) {
         <AboutYouPage
           onContinue={(answers) => {
             setAbout(answers);
+            setStep("attitudes");
+          }}
+        />
+      )}
+
+      {step === "attitudes" && (
+        <AttitudesPage
+          onContinue={(answers) => {
+            setAttitudes(answers);
             setStep("task");
           }}
         />

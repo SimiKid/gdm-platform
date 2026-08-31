@@ -73,13 +73,38 @@ export class ReportsService {
         "started_at",
         "entry_submitted",
         "age",
+        "age_prefer_not_to_say",
         "gender",
+        "gender_custom",
         "education",
+        "education_other",
         "field_of_study",
         "english_proficiency",
+        "gaais1",
+        "gaais2",
+        "gaais3",
+        "gaais4",
+        "gaais5",
+        "gaais6",
+        "gaais7",
+        "gaais8",
+        "gaais9",
+        "gaais10",
+        "tipi1",
+        "tipi2",
+        "tipi3",
+        "tipi4",
+        "tipi5",
+        "tipi6",
+        "tipi7",
+        "tipi8",
+        "tipi9",
+        "tipi10",
         "teamwork_frequency",
         "chat_comfort",
         "topic_familiarity",
+        "spaceflight_familiarity",
+        "survival_familiarity",
         "individual_ranking_completed",
         "individual_ranking_seconds_used",
         "individual_ranking_error",
@@ -88,6 +113,26 @@ export class ReportsService {
         "satisfaction",
         "fairness",
         "felt_heard",
+        "task_confidence",
+        "group_considered",
+        "group_balanced",
+        "attention_check_1",
+        "group_dominated",
+        "felt_team",
+        "comfortable_again",
+        "safe_speak_up",
+        "raise_concerns",
+        "contradicted",
+        "attention_check_2",
+        "contribution_serious",
+        "contribution_influenced",
+        "held_back",
+        "bot_intrusive",
+        "bot_helpful",
+        "bot_appropriate",
+        "bot_observed",
+        "bot_support",
+        "debrief_feedback",
         "message_count",
         "word_count",
         "character_count",
@@ -114,13 +159,20 @@ export class ReportsService {
         row.startedAt ?? "",
         cell(row.entrySubmitted),
         cell(row.age),
+        cell(row.agePreferNotToSay),
         cell(row.gender),
+        cell(row.genderCustom),
         cell(row.education),
+        cell(row.educationOther),
         cell(row.fieldOfStudy),
         cell(row.englishProficiency),
+        ...row.gaais.map(cell),
+        ...row.tipi.map(cell),
         cell(row.teamworkFrequency),
         cell(row.chatComfort),
         cell(row.topicFamiliarity),
+        cell(row.spaceflightFamiliarity),
+        cell(row.survivalFamiliarity),
         cell(row.individualRankingCompleted),
         cell(row.individualRankingSecondsUsed),
         cell(row.individualRankingError),
@@ -129,6 +181,11 @@ export class ReportsService {
         cell(row.satisfaction),
         cell(row.fairness),
         cell(row.feltHeard),
+        cell(row.taskConfidence),
+        ...row.groupDynamics.map(cell),
+        ...row.psychSafety.map(cell),
+        ...row.botPerception.map(cell),
+        cell(row.debriefFeedback),
         String(row.messageCount),
         String(row.wordCount),
         String(row.characterCount),
@@ -732,13 +789,24 @@ function participantRow(session: Session, participant: Participant) {
     startedAt: session.startedAt ?? null,
     entrySubmitted: entry ? true : null,
     age: scalarAnswer(entry, "age"),
+    agePreferNotToSay: scalarAnswer(entry, "agePreferNotToSay"),
     gender: scalarAnswer(entry, "gender"),
+    genderCustom: scalarAnswer(entry, "genderCustom"),
     education: scalarAnswer(entry, "education"),
+    educationOther: scalarAnswer(entry, "educationOther"),
     fieldOfStudy: scalarAnswer(entry, "fieldOfStudy"),
     englishProficiency: scalarAnswer(entry, "englishProficiency"),
+    gaais: Array.from({ length: 10 }, (_, i) =>
+      scalarAnswer(entry, `gaais${i + 1}`),
+    ),
+    tipi: Array.from({ length: 10 }, (_, i) =>
+      scalarAnswer(entry, `tipi${i + 1}`),
+    ),
     teamworkFrequency: scalarAnswer(entry, "teamworkFrequency"),
     chatComfort: scalarAnswer(entry, "chatComfort"),
     topicFamiliarity: scalarAnswer(entry, "topicFamiliarity"),
+    spaceflightFamiliarity: scalarAnswer(entry, "spaceflightFamiliarity"),
+    survivalFamiliarity: scalarAnswer(entry, "survivalFamiliarity"),
     individualRankingCompleted: rankingCompleted,
     individualRankingSecondsUsed: scalarAnswer(entry, "rankingSecondsUsed"),
     // Timed-out entry rankings are auto-completed in shown order, so only
@@ -752,6 +820,21 @@ function participantRow(session: Session, participant: Participant) {
     satisfaction: scalarAnswer(exit, "satisfaction"),
     fairness: scalarAnswer(exit, "fairness"),
     feltHeard: scalarAnswer(exit, "feltHeard"),
+    taskConfidence: scalarAnswer(exit, "taskConfidence"),
+    groupDynamics: [
+      "groupConsidered", "groupBalanced", "attentionCheck1",
+      "groupDominated", "feltTeam", "comfortableAgain",
+    ].map((key) => scalarAnswer(exit, key)),
+    psychSafety: [
+      "safeSpeakUp", "raiseConcerns", "contradicted",
+      "attentionCheck2", "contributionSerious", "contributionInfluenced",
+      "heldBack",
+    ].map((key) => scalarAnswer(exit, key)),
+    botPerception: [
+      "botIntrusive", "botHelpful", "botAppropriate",
+      "botObserved", "botSupport",
+    ].map((key) => scalarAnswer(exit, key)),
+    debriefFeedback: scalarAnswer(exit, "debriefFeedback"),
     messageCount: messages.length,
     wordCount,
     characterCount: messages.reduce(
@@ -1024,13 +1107,28 @@ exclusions. Treat it as identifying data; keep it out of analysis folders.
 | session_status | waiting / running / completed / aborted — filter on \`completed\` for analysis |
 | group_size / started_at | Session context |
 | entry_submitted / exit_submitted | \`true\` or empty (survey missing) |
-| age, gender, education, field_of_study | Entry demographics (free text where the form allows) |
-| english_proficiency, teamwork_frequency, chat_comfort, topic_familiarity | Entry 1–7 scales |
+| age, age_prefer_not_to_say | Participant age or \`true\` if they declined to answer |
+| gender, gender_custom | Gender identity; gender_custom filled when "self-describe" selected |
+| education, education_other | Highest education level; education_other filled when "other" selected |
+| field_of_study | Legacy field (pre-v2 forms only, empty for newer submissions) |
+| english_proficiency | English proficiency level (native_bilingual / fluent / intermediate) |
+| gaais1–gaais10 | GAAIS AI attitude items (1=disagree strongly … 5=agree strongly) |
+| tipi1–tipi10 | TIPI personality items (1=disagree strongly … 7=agree strongly) |
+| teamwork_frequency | How often participant works in teams (never/rarely/sometimes/often/very_often) |
+| chat_comfort | Text-chat comfort (1–5, legacy 1–7) |
+| topic_familiarity | Legacy combined spaceflight/survival familiarity (1–7, older data only) |
+| spaceflight_familiarity | Spaceflight topic familiarity (1–5) |
+| survival_familiarity | Wilderness/survival topic familiarity (1–5) |
 | individual_ranking_completed | \`false\` = the entry ranking timed out and was auto-completed in shown order |
 | individual_ranking_seconds_used | Time spent on the individual ranking |
 | individual_ranking_error | NASA error score of the entry ranking; empty unless completed = true |
 | exit_ranking_error | NASA error score of the participant's final individual ranking (exit survey) |
-| satisfaction, fairness, felt_heard | Exit 1–7 scales |
+| satisfaction, fairness, felt_heard | Legacy exit 1–7 scales (pre-v2 only) |
+| task_confidence | Confidence in group ranking (1–5) |
+| group_considered … comfortable_again | Group dynamics items (1–5, includes attention_check_1) |
+| safe_speak_up … held_back | Psychological safety items (1–5, includes attention_check_2) |
+| bot_intrusive … bot_support | Bot perception items (1–5) |
+| debrief_feedback | Free-text feedback from the debriefing page (optional) |
 | message_count, word_count, character_count | This participant's chat activity (bot messages never count) |
 | contribution_share | Share of the session's total contribution score (messages × ${DEFAULT_INTERVENTION_CONFIG.scoreWeights.messages} + words × ${DEFAULT_INTERVENTION_CONFIG.scoreWeights.words}, weights from the condition snapshot) |
 | meaningfulness_score_mean / classified_message_count | LLM classifier aggregates (llm arms only) |

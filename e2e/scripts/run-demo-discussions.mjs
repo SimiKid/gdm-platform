@@ -40,10 +40,11 @@ const QUIET_LINES = [
   ["Water top three for me too.", "I would move the compass last, the moon has no magnetic field.", "Should the first aid kit be higher?", "Okay, works for me."],
 ];
 
-const EXIT_RATINGS = {
-  baseline: [ [4, 4, 3], [5, 4, 4], [3, 3, 2] ],
-  "public-llm": [ [5, 4, 4], [6, 5, 5], [5, 5, 4] ],
-  "private-llm": [ [6, 5, 5], [6, 6, 5], [5, 5, 5] ],
+/** Per-seat confidence value (1-5) for exit survey step 2. */
+const EXIT_CONFIDENCE = {
+  baseline: [3, 4, 2],
+  "public-llm": [4, 5, 4],
+  "private-llm": [5, 5, 4],
 };
 
 const log = (arm, msg) => console.log(`[${new Date().toISOString()}] [${arm}] ${msg}`);
@@ -59,21 +60,45 @@ async function walkToWaitingRoom(page, arm, seat) {
   await page.getByRole("button", { name: "Start" }).click();
 
   await page
-    .getByRole("heading", { name: "Welcome to the Group Decision-Making Study" })
+    .getByRole("heading", { name: "Welcome to the Study" })
     .waitFor({ timeout: 20_000 });
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: /continue to the consent form/i }).click();
   for (const box of await page.getByRole("checkbox").all()) await box.check();
   await page.getByRole("button", { name: "Begin study" }).click();
 
   await page.locator("#about-age").fill(String(21 + seat * 3 + ARMS.indexOf(arm)));
-  await page.getByRole("radio", { name: "Prefer not to say" }).check();
-  await page.locator("#about-education").selectOption({ index: 1 + (seat % 3) });
-  await page.locator("#about-field").fill(["Psychology", "Computer science", "Economics"][seat]);
+  await page.getByRole("radio", { name: "Man" }).check();
+  await page.getByRole("radio", { name: "Bachelor's degree" }).check();
+  await page.getByRole("radio", { name: "Fluent (advanced)" }).check();
+  await page.getByRole("button", { name: "Continue" }).click();
+
+  // Attitudes & personality page: fill all matrix radios + single items.
+  for (const radio of await page.getByRole("radio", { name: /: Disagree strongly$/i }).all()) {
+    await radio.check();
+  }
+  await page
+    .getByRole("group", { name: /work in teams/ })
+    .getByRole("radio", { name: "Sometimes" })
+    .check();
+  await page
+    .getByRole("group", { name: /communicating via text chat/ })
+    .getByRole("radio", { name: "Rather comfortable" })
+    .check();
+  await page
+    .getByRole("group", { name: /spaceflight-related/ })
+    .getByRole("radio", { name: "Rather unfamiliar" })
+    .check();
+  await page
+    .getByRole("group", { name: /wilderness.*survival/i })
+    .getByRole("radio", { name: "Rather unfamiliar" })
+    .check();
   await page.getByRole("button", { name: "Continue" }).click();
 
   // Individual ranking: each seat adds items in a different order so the
   // NASA error scores vary between participants.
   await page
-    .getByRole("heading", { name: "Your Task: Survival on the Moon" })
+    .getByRole("heading", { name: "Task: Survival on the Moon" })
     .waitFor({ timeout: 20_000 });
   const addButtons = page.getByRole("button", { name: /^Add .* to the ranking$/ });
   while ((await addButtons.count()) > 0) {
@@ -82,28 +107,13 @@ async function walkToWaitingRoom(page, arm, seat) {
   }
   await page.getByRole("button", { name: "Submit my ranking" }).click();
 
-  await page.getByRole("radio", { name: "Fluent" }).check();
-  await page
-    .getByRole("group", { name: "How often do you work on tasks in teams?" })
-    .getByRole("radio", { name: "Sometimes" })
-    .check();
-  await page
-    .getByRole("group", { name: "How comfortable are you communicating via text chat?" })
-    .getByRole("radio", { name: String(4 + (seat % 3)), exact: true })
-    .check();
-  await page
-    .getByRole("group", { name: "How familiar are you with spaceflight or survival-related topics?" })
-    .getByRole("radio", { name: String(2 + seat), exact: true })
-    .check();
-  await page.getByRole("button", { name: "Continue" }).click();
-
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Join chat" }).click();
 }
 
 /** Send messages (and the odd shared-ranking move) until the exit survey appears. */
 async function chatPhase(page, arm, seat) {
-  const exitHeading = page.getByRole("heading", { name: "Almost done: A few final questions" });
+  const exitHeading = page.getByRole("heading", { name: "Almost done!" });
   const lines = seat === 0 ? DOMINANT_LINES : QUIET_LINES[seat - 1];
   const cadence = seat === 0 ? 24_000 : 55_000;
   const deadline = Date.now() + 16 * 60_000;
@@ -134,28 +144,45 @@ async function chatPhase(page, arm, seat) {
   throw new Error(`[${arm} seat ${seat}] exit survey never appeared`);
 }
 
-async function exitSurvey(page, [satisfaction, fairness, feltHeard]) {
+async function exitSurvey(page, confidence) {
+  // Step 1: final ranking
   await page
-    .getByRole("heading", { name: "Almost done: A few final questions" })
+    .getByRole("heading", { name: "Almost done!" })
     .waitFor({ timeout: 60_000 });
   const addButtons = page.getByRole("button", { name: /^Add .* to the ranking$/ });
   while ((await addButtons.count()) > 0) await addButtons.first().click();
-  const ratings = [
-    ["How satisfied are you with the group's final ranking?", satisfaction],
-    ["The group reached its decision fairly.", fairness],
-    ["I felt my views were heard during the discussion.", feltHeard],
+  await page.getByRole("button", { name: "Submit my final ranking" }).click();
+
+  // Step 2: confidence + group dynamics matrix
+  const confidenceLabels = [
+    "Not confident at all",
+    "Rather not confident",
+    "Neither",
+    "Rather confident",
+    "Very confident",
   ];
-  for (const [question, rating] of ratings) {
-    await page
-      .getByRole("group", { name: question })
-      .getByRole("radio", { name: String(rating), exact: true })
-      .check();
+  await page
+    .getByRole("radio", { name: confidenceLabels[confidence - 1] })
+    .check();
+  // Group dynamics — click "Disagree strongly" for all 6 rows
+  for (const radio of await page
+    .getByRole("radio", { name: /: Disagree strongly$/i })
+    .all()) {
+    await radio.check();
+  }
+  await page.getByRole("button", { name: "Continue" }).click();
+
+  // Step 3: psych safety + bot perception — click "Disagree strongly" for all rows
+  for (const radio of await page
+    .getByRole("radio", { name: /: Disagree strongly$/i })
+    .all()) {
+    await radio.check();
   }
   await page.getByRole("button", { name: "Submit" }).click();
+
   await page
-    .getByRole("heading", { name: "Thank you for participating!" })
+    .getByRole("heading", { name: "Debrief" })
     .waitFor({ timeout: 20_000 });
-  await page.getByRole("checkbox", { name: "I have read the debriefing." }).check();
 }
 
 async function runGroup(browser, arm) {
@@ -178,7 +205,7 @@ async function runGroup(browser, arm) {
     await Promise.all(pages.map((page, seat) => chatPhase(page, arm, seat)));
     log(arm, "discussion over, filling exit surveys…");
     await Promise.all(
-      pages.map((page, seat) => exitSurvey(page, EXIT_RATINGS[arm][seat])),
+      pages.map((page, seat) => exitSurvey(page, EXIT_CONFIDENCE[arm][seat])),
     );
     log(arm, "group done ✓");
   } finally {

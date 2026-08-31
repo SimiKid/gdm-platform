@@ -77,9 +77,9 @@ The example below is **abridged**: each session object additionally embeds `bot`
           "entrySurvey": {
             "submittedAt": "2026-07-13T10:04:00Z",
             "answers": {
-              "age": 29, "gender": "female", "education": "bachelor",
-              "fieldOfStudy": "psychology", "englishProficiency": "fluent",
-              "teamworkFrequency": "weekly", "chatComfort": 5, "topicFamiliarity": 2,
+              "age": 29, "gender": "woman", "education": "bachelors",
+              "englishProficiency": "fluent",
+              "teamworkFrequency": "sometimes", "chatComfort": 5, "topicFamiliarity": 2,
               "individualRanking": ["oxygen", "water", "map", "…"],
               "rankingCompleted": true,
               "rankingSecondsUsed": 312
@@ -342,9 +342,9 @@ One record per participant per survey kind (`entry` or `exit`).
       "kind": "entry",
       "submittedAt": "2026-07-13T10:04:00Z",
       "answers": {
-        "age": 29, "gender": "female", "education": "bachelor",
-        "fieldOfStudy": "psychology", "englishProficiency": "fluent",
-        "teamworkFrequency": "weekly", "chatComfort": 5, "topicFamiliarity": 2,
+        "age": 29, "gender": "woman", "education": "bachelors",
+        "englishProficiency": "fluent",
+        "teamworkFrequency": "sometimes", "chatComfort": 5, "topicFamiliarity": 2,
         "individualRanking": ["oxygen", "water", "map", "…"],
         "rankingCompleted": true,
         "rankingSecondsUsed": 312

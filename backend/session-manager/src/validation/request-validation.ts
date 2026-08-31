@@ -81,6 +81,18 @@ export function validateSurveyAnswers(
     if (answers.fieldOfStudy !== undefined) {
       boundedString(answers.fieldOfStudy, "fieldOfStudy", 1, 200);
     }
+    if (answers.genderCustom !== undefined) {
+      boundedString(answers.genderCustom, "genderCustom", 1, 200);
+    }
+    if (answers.educationOther !== undefined) {
+      boundedString(answers.educationOther, "educationOther", 1, 200);
+    }
+    if (
+      answers.agePreferNotToSay !== undefined &&
+      typeof answers.agePreferNotToSay !== "boolean"
+    ) {
+      bad("agePreferNotToSay must be a boolean");
+    }
     if (answers.individualRanking !== undefined) {
       exactRanking(answers.individualRanking, expectedItemIds, "individualRanking");
     }
@@ -95,7 +107,7 @@ export function validateSurveyAnswers(
         answers.rankingSecondsUsed,
         "rankingSecondsUsed",
         0,
-        600,
+        300,
       );
     }
     if (answers.englishProficiency !== undefined) {
@@ -120,10 +132,28 @@ export function validateSurveyAnswers(
     if (answers.topicFamiliarity !== undefined) {
       integerInRange(answers.topicFamiliarity, "topicFamiliarity", 1, 7);
     }
+    if (answers.spaceflightFamiliarity !== undefined) {
+      integerInRange(answers.spaceflightFamiliarity, "spaceflightFamiliarity", 1, 5);
+    }
+    if (answers.survivalFamiliarity !== undefined) {
+      integerInRange(answers.survivalFamiliarity, "survivalFamiliarity", 1, 5);
+    }
+    // GAAIS AI attitudes (1–5) and TIPI personality (1–7)
+    for (let i = 1; i <= 10; i++) {
+      const gaaisKey = `gaais${i}`;
+      if (answers[gaaisKey] !== undefined) {
+        integerInRange(answers[gaaisKey], gaaisKey, 1, 5);
+      }
+      const tipiKey = `tipi${i}`;
+      if (answers[tipiKey] !== undefined) {
+        integerInRange(answers[tipiKey], tipiKey, 1, 7);
+      }
+    }
   } else {
     if (answers.finalRanking !== undefined) {
       exactRanking(answers.finalRanking, expectedItemIds, "finalRanking");
     }
+    // Legacy exit fields (pre-v2)
     if (answers.satisfaction !== undefined) {
       integerInRange(answers.satisfaction, "satisfaction", 1, 7);
     }
@@ -132,6 +162,26 @@ export function validateSurveyAnswers(
     }
     if (answers.feltHeard !== undefined) {
       integerInRange(answers.feltHeard, "feltHeard", 1, 7);
+    }
+    // v2 exit fields
+    if (answers.taskConfidence !== undefined) {
+      integerInRange(answers.taskConfidence, "taskConfidence", 1, 5);
+    }
+    const exitLikert5Keys = [
+      "groupConsidered", "groupBalanced", "attentionCheck1",
+      "groupDominated", "feltTeam", "comfortableAgain",
+      "safeSpeakUp", "raiseConcerns", "contradicted",
+      "attentionCheck2", "contributionSerious", "contributionInfluenced",
+      "heldBack", "botIntrusive", "botHelpful", "botAppropriate",
+      "botObserved", "botSupport",
+    ];
+    for (const key of exitLikert5Keys) {
+      if (answers[key] !== undefined) {
+        integerInRange(answers[key], key, 1, 5);
+      }
+    }
+    if (answers.debriefFeedback !== undefined) {
+      boundedString(answers.debriefFeedback, "debriefFeedback", 0, 4_000);
     }
   }
 }

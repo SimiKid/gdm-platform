@@ -8,14 +8,7 @@ import { httpSessionManager } from "../study/sessionClient";
 import StudyShell from "./StudyShell";
 import RankingBoard from "./RankingBoard";
 import Likert from "./Likert";
-
-/** 1..n numeric scale as Likert options. */
-function numericScale(n: number) {
-  return Array.from({ length: n }, (_, i) => ({
-    value: String(i + 1),
-    label: String(i + 1),
-  }));
-}
+import LikertMatrix from "./LikertMatrix";
 
 interface Props {
   session: PublicSession;
@@ -26,33 +19,111 @@ interface Props {
   onDone: (completion: CompleteParticipantResponse) => void;
 }
 
+type ExitStep = "ranking" | "reflection2" | "reflection3";
+
+const CONFIDENCE_OPTIONS = [
+  { value: "1", label: "Not confident at all" },
+  { value: "2", label: "Rather not confident" },
+  { value: "3", label: "Neither" },
+  { value: "4", label: "Rather confident" },
+  { value: "5", label: "Very confident" },
+];
+
+const GROUP_DYNAMICS_ITEMS = [
+  { key: "groupConsidered", label: "The group genuinely considered everyone's contribution." },
+  { key: "groupBalanced", label: "The group discussion felt balanced." },
+  { key: "attentionCheck1", label: "This is an attention check. Please check \"disagree strongly\"." },
+  { key: "groupDominated", label: "Some participants dominated the discussion more than others." },
+  { key: "feltTeam", label: "I felt like part of a team during the task." },
+  { key: "comfortableAgain", label: "I would be comfortable working with this group again." },
+];
+
+const PSYCH_SAFETY_ITEMS = [
+  { key: "safeSpeakUp", label: "I felt safe to speak up with my thoughts in this group." },
+  { key: "raiseConcerns", label: "I was able to raise concerns without fear of judgment." },
+  { key: "contradicted", label: "I added my thoughts even if they contradicted those of my group members." },
+  { key: "attentionCheck2", label: "This is an attention check. Please check \"agree moderately\"." },
+  { key: "contributionSerious", label: "I felt my contribution was taken seriously." },
+  { key: "contributionInfluenced", label: "I felt that my contributions influenced the final ranking." },
+  { key: "heldBack", label: "There were things I wanted to contribute but held back." },
+];
+
+const BOT_PERCEPTION_ITEMS = [
+  { key: "botIntrusive", label: "The bot intervention felt intrusive to me." },
+  { key: "botHelpful", label: "The bot interventions felt helpful to me." },
+  { key: "botAppropriate", label: "The bot intervened appropriately in our discussion." },
+  { key: "botObserved", label: "The bot made me feel somehow observed." },
+  { key: "botSupport", label: "I would like to receive such bot support in meetings." },
+];
+
+const AGREE_SCALE_5 = [
+  "Disagree strongly",
+  "Disagree moderately",
+  "Neither disagree nor agree",
+  "Agree moderately",
+  "Agree strongly",
+];
+
 /**
- * Page 5 — Exit Survey, shown when the discussion timer runs out.
+ * Exit Survey — shown when the discussion timer runs out.
  *
- * Part 1 asks for a fresh individual ranking (same widget as the individual
- * task, no timer, starting unranked so it reflects the participant's own
- * post-discussion view). Part 2 rates the group experience on 1–7 scales.
- * Submitting persists everything and completes the session.
+ * Step 1: final individual ranking adjustment.
+ * Step 2: task confidence + group dynamics matrix.
+ * Step 3: psychological safety matrix + bot perception matrix, then submit.
  */
-export default function ExitSurvey({ session, participantId, groupRanking, onDone }: Props) {
+export default function ExitSurvey({
+  session,
+  participantId,
+  groupRanking,
+  onDone,
+}: Props) {
   const items = session.rankingTask.items;
+  const [step, setStep] = useState<ExitStep>("ranking");
+
+  // Step 1: ranking
   const [ranked, setRanked] = useState<string[]>(groupRanking ?? []);
-  const [satisfaction, setSatisfaction] = useState("");
-  const [fairness, setFairness] = useState("");
-  const [feltHeard, setFeltHeard] = useState("");
+
+  // Step 2: confidence + group dynamics
+  const [confidence, setConfidence] = useState("");
+  const [groupDynamics, setGroupDynamics] = useState<Record<string, string>>(
+    {},
+  );
+
+  // Step 3: psych safety + bot perception
+  const [psychSafety, setPsychSafety] = useState<Record<string, string>>({});
+  const [botPerception, setBotPerception] = useState<Record<string, string>>(
+    {},
+  );
+
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(false);
+
+  const allRanked = ranked.length === items.length;
+  const step2Ready =
+    confidence !== "" &&
+    GROUP_DYNAMICS_ITEMS.every((item) => groupDynamics[item.key]);
+  const step3Ready =
+    PSYCH_SAFETY_ITEMS.every((item) => psychSafety[item.key]) &&
+    BOT_PERCEPTION_ITEMS.every((item) => botPerception[item.key]);
 
   async function submit() {
     setSubmitting(true);
     setSubmitError(false);
+    const answers: Record<string, string | number | boolean | string[]> = {
+      finalRanking: ranked,
+      taskConfidence: Number(confidence),
+    };
+    for (const item of GROUP_DYNAMICS_ITEMS) {
+      answers[item.key] = Number(groupDynamics[item.key]);
+    }
+    for (const item of PSYCH_SAFETY_ITEMS) {
+      answers[item.key] = Number(psychSafety[item.key]);
+    }
+    for (const item of BOT_PERCEPTION_ITEMS) {
+      answers[item.key] = Number(botPerception[item.key]);
+    }
     const survey: Survey = {
-      answers: {
-        finalRanking: ranked,
-        satisfaction: Number(satisfaction),
-        fairness: Number(fairness),
-        feltHeard: Number(feltHeard),
-      },
+      answers,
       submittedAt: new Date().toISOString(),
     };
     try {
@@ -68,69 +139,143 @@ export default function ExitSurvey({ session, participantId, groupRanking, onDon
       );
       onDone(completion);
     } catch {
-      // These answers are the primary post-discussion measure — never drop
-      // them silently. Keep the participant here and let them retry.
       setSubmitError(true);
       setSubmitting(false);
-      return;
     }
   }
 
-  const allRanked = ranked.length === items.length;
-  const ready = allRanked && satisfaction && fairness && feltHeard;
+  // ── Step 1: Final ranking ─────────────────────────────────────────────
+  if (step === "ranking") {
+    return (
+      <StudyShell>
+        <div className="study-card">
+          <h1>Almost done!</h1>
 
+          <p>
+            Before moving to the final questionnaire,{" "}
+            <strong>
+              we want to provide you a final opportunity to adjust your personal
+              ranking.
+            </strong>
+          </p>
+          <p>
+            Once again, this is your own view! You can reflect on your initial
+            ranking or the ranking you reached with the group. We are solely
+            interested in your personal view!
+          </p>
+          <p>
+            Once you are done, please click submit. The time limit for your
+            final ranking is 2 minutes.
+          </p>
+
+          <RankingBoard
+            items={items}
+            ranked={ranked}
+            onChange={setRanked}
+            poolBelow={!!groupRanking?.length}
+          />
+
+          <div className="card-actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={!allRanked}
+              onClick={() => setStep("reflection2")}
+            >
+              Submit my final ranking
+            </button>
+            {!allRanked && (
+              <p className="action-hint">
+                Rank all {items.length} items to submit (
+                {items.length - ranked.length} remaining).
+              </p>
+            )}
+          </div>
+        </div>
+      </StudyShell>
+    );
+  }
+
+  // ── Step 2: Task confidence + group dynamics ──────────────────────────
+  if (step === "reflection2") {
+    return (
+      <StudyShell>
+        <div className="study-card">
+          <h1>Final Task Reflection</h1>
+          <p>
+            Finally, we ask you to reflect on your experience in the group by
+            answering the questions below.
+          </p>
+
+          <Likert
+            name="confidence"
+            legend="How confident are you that your group was able to submit the correct ranking?"
+            options={CONFIDENCE_OPTIONS}
+            value={confidence}
+            onChange={setConfidence}
+          />
+
+          <LikertMatrix
+            name="group-dynamics"
+            legend="To what extent do you agree with the following statements:"
+            items={GROUP_DYNAMICS_ITEMS}
+            scaleLabels={AGREE_SCALE_5}
+            values={groupDynamics}
+            onChange={(key, value) =>
+              setGroupDynamics((prev) => ({ ...prev, [key]: value }))
+            }
+          />
+
+          <div className="card-actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={!step2Ready}
+              onClick={() => setStep("reflection3")}
+            >
+              Continue
+            </button>
+            {!step2Ready && (
+              <p className="action-hint">
+                Please answer all questions to continue.
+              </p>
+            )}
+          </div>
+        </div>
+      </StudyShell>
+    );
+  }
+
+  // ── Step 3: Psychological safety + bot perception ─────────────────────
   return (
     <StudyShell>
       <div className="study-card">
-        <h1>Almost done: A few final questions</h1>
-
-        <h2>Part 1: Your final ranking</h2>
+        <h1>Final Task Reflection</h1>
         <p>
-          Now that the group discussion is over, please give your personal
-          ranking of the {items.length} items. The group's final ranking is pre-filled as a
-          starting point. Adjust it to reflect your own view. There is no right
-          answer here; we are interested in your personal view after the
-          discussion.
+          Finally, we ask you to reflect on your experience in the group by
+          answering the questions below.
         </p>
 
-        <RankingBoard
-          items={items}
-          ranked={ranked}
-          onChange={setRanked}
-          poolBelow={!!groupRanking?.length}
+        <LikertMatrix
+          name="psych-safety"
+          legend="To what extent do you agree with the following statements:"
+          items={PSYCH_SAFETY_ITEMS}
+          scaleLabels={AGREE_SCALE_5}
+          values={psychSafety}
+          onChange={(key, value) =>
+            setPsychSafety((prev) => ({ ...prev, [key]: value }))
+          }
         />
 
-        <h2>Part 2: Your experience of the group discussion</h2>
-        <p>
-          Please rate the following statements (1 = strongly disagree, 7 =
-          strongly agree):
-        </p>
-
-        <Likert
-          name="satisfaction"
-          legend="How satisfied are you with the group's final ranking?"
-          options={numericScale(7)}
-          value={satisfaction}
-          onChange={setSatisfaction}
-          anchors={["1 = very dissatisfied", "7 = very satisfied"]}
-        />
-
-        <Likert
-          name="fairness"
-          legend="The group reached its decision fairly."
-          options={numericScale(7)}
-          value={fairness}
-          onChange={setFairness}
-          anchors={["1 = strongly disagree", "7 = strongly agree"]}
-        />
-
-        <Likert
-          name="felt-heard"
-          legend="I felt my views were heard during the discussion."
-          options={numericScale(7)}
-          value={feltHeard}
-          onChange={setFeltHeard}
-          anchors={["1 = strongly disagree", "7 = strongly agree"]}
+        <LikertMatrix
+          name="bot-perception"
+          legend="The bot intervention"
+          items={BOT_PERCEPTION_ITEMS}
+          scaleLabels={AGREE_SCALE_5}
+          values={botPerception}
+          onChange={(key, value) =>
+            setBotPerception((prev) => ({ ...prev, [key]: value }))
+          }
         />
 
         <div className="card-actions">
@@ -138,21 +283,23 @@ export default function ExitSurvey({ session, participantId, groupRanking, onDon
             type="button"
             className="btn btn-primary"
             onClick={submit}
-            disabled={!ready || submitting}
+            disabled={!step3Ready || submitting}
           >
-            {submitting ? "Submitting…" : submitError ? "Try again" : "Submit"}
+            {submitting
+              ? "Submitting…"
+              : submitError
+                ? "Try again"
+                : "Submit"}
           </button>
           {submitError && (
             <p className="error" role="alert">
-              We couldn't submit your answers. Please check your connection
-              and try again. Your input is still here.
+              We couldn't submit your answers. Please check your connection and
+              try again. Your input is still here.
             </p>
           )}
-          {!ready && (
+          {!step3Ready && (
             <p className="action-hint">
-              {allRanked
-                ? "Please rate all three statements to submit."
-                : `Rank all ${items.length} items to submit (${items.length - ranked.length} remaining).`}
+              Please answer all questions to submit.
             </p>
           )}
         </div>

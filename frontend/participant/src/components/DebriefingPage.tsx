@@ -1,83 +1,98 @@
 import { useState } from "react";
+import { httpSessionManager } from "../study/sessionClient";
 import StudyShell from "./StudyShell";
 
 /**
  * Page 6 — Debriefing & Compensation, the final page of the study.
- * Reveals the withheld study focus and gates the compensation link on the
- * "I have read the debriefing" checkbox. The link itself is set by the
- * researcher in the admin dashboard (Settings → Compensation Link), with
- * the build-time VITE_PAYMENT_URL as fallback.
+ * Reveals the withheld study focus and shows the compensation link.
+ * The link itself is set by the researcher in the admin dashboard
+ * (Settings → Compensation Link), with the build-time VITE_PAYMENT_URL
+ * as fallback.
  */
 interface Props {
   /** Returned by the participant-completion endpoint after the exit survey. */
   completionUrl?: string;
+  sessionId: string;
+  participantId: string;
 }
 
-export default function DebriefingPage({ completionUrl = "" }: Props) {
-  const [read, setRead] = useState(false);
+export default function DebriefingPage({
+  completionUrl = "",
+  sessionId,
+  participantId,
+}: Props) {
   const paymentUrl = completionUrl || import.meta.env.VITE_PAYMENT_URL || "#";
-
   const paymentConfigured = paymentUrl !== "" && paymentUrl !== "#";
+  const [feedback, setFeedback] = useState("");
+
+  function handleReturn() {
+    if (feedback.trim()) {
+      // Fire-and-forget: persist the feedback but don't block the redirect.
+      httpSessionManager
+        .submitDebriefFeedback(sessionId, participantId, feedback.trim())
+        .catch(() => {});
+    }
+  }
 
   return (
     <StudyShell>
       <div className="study-card">
-        <h1>Thank you for participating!</h1>
+        <h1>Debrief</h1>
 
-        <h2>What this study was about</h2>
-        <p>
-          On the welcome page, we told you this study investigates how groups
-          make decisions in online chat. That is true, but we can now tell you
-          the specific focus: we examined whether an AI assistant that
-          encourages balanced participation affects group decision-making.
-          Depending on your session, the study assistant may have sent messages
-          nudging members who spoke very little or very much, either privately
-          or visibly in the group chat, or it may have stayed passive. This
-          detail was withheld beforehand because knowing it could have changed
-          how you communicated.
-        </p>
+        <p>This is the end of the study.</p>
 
-        <h2>Your data</h2>
         <p>
-          Research exports use pseudonymous participant codes. If you now
-          prefer to withdraw your data, contact the researcher through
-          Prolific Messages within 14 days and quote your Prolific participant
-          ID. The researcher will remove the linked record; this does not
-          affect your compensation.
-        </p>
-        <p>
-          Please keep the study purpose confidential until data collection is
-          complete, as other participants have not yet taken part.
-        </p>
-        <p>
-          For questions or interest in the results, contact the researcher
-          through Prolific Messages.
+          We would like to share more details about the study: You were
+          randomly assigned to one of two conditions: the chatbot sent messages
+          either privately (to you) or publicly (to the whole group). Both
+          types of messages highlighted the most contributing group member when
+          they were contributing significantly more than the rest of the group.
+          This detail was withheld during the study so you could experience the
+          group discussion naturally; withholding it was necessary to avoid
+          influencing your behavior and was approved as part of the study's
+          ethics review. Our main research goal is to understand how these
+          nudges affect the group — its performance and perceptions — as well
+          as your individual experience.
         </p>
 
-        <label className="consent-check">
-          <input
-            type="checkbox"
-            checked={read}
-            onChange={(e) => setRead(e.target.checked)}
-          />
-          <span>I have read the debriefing.</span>
-        </label>
+        <p>
+          We'd love to hear your thoughts on the experiment — please share any
+          feedback in the box below.
+        </p>
+
+        <textarea
+          className="feedback-box"
+          rows={4}
+          placeholder="Optional feedback…"
+          value={feedback}
+          onChange={(e) => setFeedback(e.target.value)}
+        />
+
+        <p>
+          If you have further questions about the study, you can contact the
+          researchers through Prolific.
+        </p>
+        <p>Thank you again for contributing to this research.</p>
 
         <div className="card-actions">
-          {read && paymentConfigured ? (
-            <a className="btn btn-primary" href={paymentUrl}>
+          {paymentConfigured ? (
+            <a
+              className="btn btn-primary"
+              href={paymentUrl}
+              onClick={handleReturn}
+            >
               Return to Prolific
             </a>
           ) : (
-            <button type="button" className="btn btn-primary" disabled>
-              Return to Prolific
-            </button>
-          )}
-          {read && !paymentConfigured && (
-            <p className="error" role="alert">
-              The Prolific completion link has not been configured yet. Please
-              keep this page open and contact the researcher.
-            </p>
+            <>
+              <button type="button" className="btn btn-primary" disabled>
+                Return to Prolific
+              </button>
+              <p className="error" role="alert">
+                The Prolific completion link has not been configured yet. Please
+                keep this page open and contact the researcher.
+              </p>
+            </>
           )}
         </div>
       </div>

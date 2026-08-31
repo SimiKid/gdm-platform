@@ -8,7 +8,7 @@ describe("AboutYouPage", () => {
     const user = userEvent.setup();
     render(<AboutYouPage onContinue={vi.fn()} />);
 
-    await user.type(screen.getByLabelText("Age"), "17");
+    await user.type(screen.getByLabelText("How old are you?"), "17");
 
     expect(
       screen.getByText("You must be at least 18 years old to participate."),
