@@ -36,6 +36,17 @@
       { "duration": "5m", "target": 0 }
     ]
   },
+  "intermediate": {
+    "description": "Capacity-boundary diagnostic: stable plateaus at 150 and 201 participants.",
+    "continueAfterSloFailure": true,
+    "stages": [
+      { "duration": "3m", "target": 150 },
+      { "duration": "10m", "target": 150 },
+      { "duration": "3m", "target": 201 },
+      { "duration": "15m", "target": 201 },
+      { "duration": "5m", "target": 0 }
+    ]
+  },
   "spike": {
     "description": "Spike test after the progressive profile has passed.",
     "stages": [

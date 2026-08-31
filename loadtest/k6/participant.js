@@ -195,6 +195,7 @@ function enroll() {
       ? data.session.ranking.order.slice()
       : [],
     recentMessageIds: [],
+    sentReactionKeys: new Set(),
     seenEventIds: new Set(),
     nextMessageAt: future(messageMinSeconds, messageMaxSeconds),
     nextCursorAt: future(cursorSeconds, cursorSeconds),
@@ -362,23 +363,34 @@ function sendRanking(participantState) {
 }
 
 function sendReaction(participantState) {
-  const target =
-    participantState.recentMessageIds[
-      randomInt(0, participantState.recentMessageIds.length - 1)
-    ];
   const emojis = ["👍", "👎", "❤️"];
+  const choices = [];
+  for (const target of participantState.recentMessageIds) {
+    for (const emoji of emojis) {
+      const reactionKey = `${target}|${emoji}`;
+      if (!participantState.sentReactionKeys.has(reactionKey)) {
+        choices.push({ target, emoji, reactionKey });
+      }
+    }
+  }
+  // Matrix permits at most one annotation with the same key from a sender
+  // to an event. Skipping when all recent combinations are exhausted avoids
+  // counting an invalid synthetic action as an application failure.
+  if (choices.length === 0) return;
+  const choice = choices[randomInt(0, choices.length - 1)];
   sendMatrixEvent(
     participantState,
     "m.reaction",
     {
       "m.relates_to": {
         rel_type: "m.annotation",
-        event_id: target,
-        key: emojis[randomInt(0, emojis.length - 1)],
+        event_id: choice.target,
+        key: choice.emoji,
       },
     },
     "reaction",
   );
+  participantState.sentReactionKeys.add(choice.reactionKey);
 }
 
 function sendMatrixEvent(
