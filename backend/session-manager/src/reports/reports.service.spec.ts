@@ -45,6 +45,12 @@ function entrySurvey(overrides: Record<string, unknown> = {}): Survey {
       education: "masters_or_higher",
       fieldOfStudy: "=cmd()", // hostile on purpose: formula-injection guard (legacy field)
       englishProficiency: "fluent",
+      gaais1: 4, gaais2: 5, gaais3: 4, gaais4: 3, gaais5: 4,
+      gaais6: 2, gaais7: 2, gaais8: 1, gaais9: 1, gaais10: 2,
+      tipi1: 5, tipi2: 3, tipi3: 6, tipi4: 2, tipi5: 7,
+      tipi6: 3, tipi7: 5, tipi8: 2, tipi9: 6, tipi10: 3,
+      spaceflightFamiliarity: 2,
+      survivalFamiliarity: 3,
       teamworkFrequency: 5,
       chatComfort: 7,
       topicFamiliarity: 2,

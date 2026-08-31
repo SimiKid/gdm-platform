@@ -132,6 +132,23 @@ export function validateSurveyAnswers(
     if (answers.topicFamiliarity !== undefined) {
       integerInRange(answers.topicFamiliarity, "topicFamiliarity", 1, 7);
     }
+    if (answers.spaceflightFamiliarity !== undefined) {
+      integerInRange(answers.spaceflightFamiliarity, "spaceflightFamiliarity", 1, 5);
+    }
+    if (answers.survivalFamiliarity !== undefined) {
+      integerInRange(answers.survivalFamiliarity, "survivalFamiliarity", 1, 5);
+    }
+    // GAAIS AI attitudes (1–5) and TIPI personality (1–7)
+    for (let i = 1; i <= 10; i++) {
+      const gaaisKey = `gaais${i}`;
+      if (answers[gaaisKey] !== undefined) {
+        integerInRange(answers[gaaisKey], gaaisKey, 1, 5);
+      }
+      const tipiKey = `tipi${i}`;
+      if (answers[tipiKey] !== undefined) {
+        integerInRange(answers[tipiKey], tipiKey, 1, 7);
+      }
+    }
   } else {
     if (answers.finalRanking !== undefined) {
       exactRanking(answers.finalRanking, expectedItemIds, "finalRanking");

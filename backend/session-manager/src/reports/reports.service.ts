@@ -80,9 +80,31 @@ export class ReportsService {
         "education_other",
         "field_of_study",
         "english_proficiency",
+        "gaais1",
+        "gaais2",
+        "gaais3",
+        "gaais4",
+        "gaais5",
+        "gaais6",
+        "gaais7",
+        "gaais8",
+        "gaais9",
+        "gaais10",
+        "tipi1",
+        "tipi2",
+        "tipi3",
+        "tipi4",
+        "tipi5",
+        "tipi6",
+        "tipi7",
+        "tipi8",
+        "tipi9",
+        "tipi10",
         "teamwork_frequency",
         "chat_comfort",
         "topic_familiarity",
+        "spaceflight_familiarity",
+        "survival_familiarity",
         "individual_ranking_completed",
         "individual_ranking_seconds_used",
         "individual_ranking_error",
@@ -124,9 +146,13 @@ export class ReportsService {
         cell(row.educationOther),
         cell(row.fieldOfStudy),
         cell(row.englishProficiency),
+        ...row.gaais.map(cell),
+        ...row.tipi.map(cell),
         cell(row.teamworkFrequency),
         cell(row.chatComfort),
         cell(row.topicFamiliarity),
+        cell(row.spaceflightFamiliarity),
+        cell(row.survivalFamiliarity),
         cell(row.individualRankingCompleted),
         cell(row.individualRankingSecondsUsed),
         cell(row.individualRankingError),
@@ -745,9 +771,17 @@ function participantRow(session: Session, participant: Participant) {
     educationOther: scalarAnswer(entry, "educationOther"),
     fieldOfStudy: scalarAnswer(entry, "fieldOfStudy"),
     englishProficiency: scalarAnswer(entry, "englishProficiency"),
+    gaais: Array.from({ length: 10 }, (_, i) =>
+      scalarAnswer(entry, `gaais${i + 1}`),
+    ),
+    tipi: Array.from({ length: 10 }, (_, i) =>
+      scalarAnswer(entry, `tipi${i + 1}`),
+    ),
     teamworkFrequency: scalarAnswer(entry, "teamworkFrequency"),
     chatComfort: scalarAnswer(entry, "chatComfort"),
     topicFamiliarity: scalarAnswer(entry, "topicFamiliarity"),
+    spaceflightFamiliarity: scalarAnswer(entry, "spaceflightFamiliarity"),
+    survivalFamiliarity: scalarAnswer(entry, "survivalFamiliarity"),
     individualRankingCompleted: rankingCompleted,
     individualRankingSecondsUsed: scalarAnswer(entry, "rankingSecondsUsed"),
     // Timed-out entry rankings are auto-completed in shown order, so only
@@ -1038,7 +1072,13 @@ exclusions. Treat it as identifying data; keep it out of analysis folders.
 | education, education_other | Highest education level; education_other filled when "other" selected |
 | field_of_study | Legacy field (pre-v2 forms only, empty for newer submissions) |
 | english_proficiency | English proficiency level (native_bilingual / fluent / intermediate) |
-| teamwork_frequency, chat_comfort, topic_familiarity | Entry scales |
+| gaais1–gaais10 | GAAIS AI attitude items (1=disagree strongly … 5=agree strongly) |
+| tipi1–tipi10 | TIPI personality items (1=disagree strongly … 7=agree strongly) |
+| teamwork_frequency | How often participant works in teams (never/rarely/sometimes/often/very_often) |
+| chat_comfort | Text-chat comfort (1–5, legacy 1–7) |
+| topic_familiarity | Legacy combined spaceflight/survival familiarity (1–7, older data only) |
+| spaceflight_familiarity | Spaceflight topic familiarity (1–5) |
+| survival_familiarity | Wilderness/survival topic familiarity (1–5) |
 | individual_ranking_completed | \`false\` = the entry ranking timed out and was auto-completed in shown order |
 | individual_ranking_seconds_used | Time spent on the individual ranking |
 | individual_ranking_error | NASA error score of the entry ranking; empty unless completed = true |

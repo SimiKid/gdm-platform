@@ -120,28 +120,35 @@ async function walkToWaitingRoom(page: Page, seat: number): Promise<void> {
   await page.getByRole("radio", { name: "Fluent (advanced)" }).check();
   await page.getByRole("button", { name: "Continue" }).click();
 
+  // Attitudes & personality page: fill all matrix radios + single items.
+  // AI attitudes — click first scale option for each row.
+  for (const radio of await page.getByRole("radio", { name: /: Disagree strongly$/i }).all()) {
+    await radio.check();
+  }
+  await page
+    .getByRole("group", { name: /work in teams/ })
+    .getByRole("radio", { name: "Sometimes" })
+    .check();
+  await page
+    .getByRole("group", { name: /communicating via text chat/ })
+    .getByRole("radio", { name: "Rather comfortable" })
+    .check();
+  await page
+    .getByRole("group", { name: /spaceflight-related/ })
+    .getByRole("radio", { name: "Rather unfamiliar" })
+    .check();
+  await page
+    .getByRole("group", { name: /wilderness.*survival/i })
+    .getByRole("radio", { name: "Rather unfamiliar" })
+    .check();
+  await page.getByRole("button", { name: "Continue" }).click();
+
   // Individual ranking: add every current task item in list order, then submit.
   await expect(
     page.getByRole("heading", { name: "Your Task: Survival on the Moon" }),
   ).toBeVisible();
   await rankAllItems(page);
   await page.getByRole("button", { name: "Submit my ranking" }).click();
-
-  // Follow-up questions.
-  await page.getByRole("radio", { name: "Fluent" }).check();
-  await page
-    .getByRole("group", { name: "How often do you work on tasks in teams?" })
-    .getByRole("radio", { name: "Sometimes" })
-    .check();
-  await page
-    .getByRole("group", { name: "How comfortable are you communicating via text chat?" })
-    .getByRole("radio", { name: "5", exact: true })
-    .check();
-  await page
-    .getByRole("group", { name: "How familiar are you with spaceflight or survival-related topics?" })
-    .getByRole("radio", { name: "4", exact: true })
-    .check();
-  await page.getByRole("button", { name: "Continue" }).click();
 
   // Group intro → waiting room.
   await page.getByRole("checkbox").check();

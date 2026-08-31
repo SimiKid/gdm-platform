@@ -28,6 +28,38 @@ async function completeAboutYou() {
   await userEvent.click(screen.getByRole("button", { name: "Continue" }));
 }
 
+async function completeAttitudes() {
+  // Click all matrix radios — "Disagree strongly" is the first option in both
+  // the AI (5-point) and personality (7-point) matrices = 20 radios total.
+  const allDisagreeStrongly = screen.getAllByRole("radio", {
+    name: /: Disagree strongly$/i,
+  });
+  for (const radio of allDisagreeStrongly) {
+    await userEvent.click(radio);
+  }
+  // Single-item Likert questions
+  await userEvent.click(screen.getByRole("radio", { name: "Sometimes" }));
+  const comfort = screen.getByRole("group", {
+    name: /communicating via text chat/,
+  });
+  await userEvent.click(
+    within(comfort).getByRole("radio", { name: "Rather comfortable" }),
+  );
+  const spaceflight = screen.getByRole("group", {
+    name: /spaceflight-related/,
+  });
+  await userEvent.click(
+    within(spaceflight).getByRole("radio", { name: "Rather unfamiliar" }),
+  );
+  const survival = screen.getByRole("group", {
+    name: /wilderness.*survival/i,
+  });
+  await userEvent.click(
+    within(survival).getByRole("radio", { name: "Rather unfamiliar" }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+}
+
 async function rankAllItems() {
   // Keyboard-accessible alternative to drag-and-drop: the "Add" buttons.
   let addButtons = screen.getAllByRole("button", { name: /^Add .* to the ranking$/ });
@@ -39,34 +71,27 @@ async function rankAllItems() {
   }
 }
 
-async function answerFollowUps() {
-  await userEvent.click(screen.getByRole("radio", { name: "Sometimes" }));
-  const comfort = screen.getByRole("group", {
-    name: /communicating via text chat/,
-  });
-  await userEvent.click(within(comfort).getByRole("radio", { name: "6" }));
-  const familiarity = screen.getByRole("group", {
-    name: /spaceflight or survival/,
-  });
-  await userEvent.click(within(familiarity).getByRole("radio", { name: "2" }));
-  await userEvent.click(screen.getByRole("button", { name: "Continue" }));
-}
-
 describe("Survey", () => {
-  it("walks consent → about you → task → group phase and returns the entry survey", async () => {
+  it("walks consent → about you → attitudes → task → group phase and returns the entry survey", async () => {
     const onComplete = vi.fn();
     render(<Survey onComplete={onComplete} />);
 
-    // Page 1 — intro then consent: Begin study only enables once all boxes are ticked.
+    // Page 1 — intro then consent
     expect(screen.getByText(/Welcome to the Study/)).toBeInTheDocument();
     await completeConsent();
 
-    // Page 2 — about you
+    // Page 2 — about you (demographics)
     expect(screen.getByText(/About You/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
     await completeAboutYou();
 
-    // Page 3 — individual ranking task with the 10-minute timer.
+    // Page 3 — about you (attitudes & personality)
+    expect(
+      screen.getByText(/attitudes towards Artificial Intelligence/),
+    ).toBeInTheDocument();
+    await completeAttitudes();
+
+    // Page 4 — individual ranking task with the 10-minute timer.
     expect(screen.getByText(/Survival on the Moon/)).toBeInTheDocument();
     expect(screen.getByRole("timer")).toBeInTheDocument();
     const submit = screen.getByRole("button", { name: "Submit my ranking" });
@@ -77,11 +102,7 @@ describe("Survey", () => {
     await userEvent.click(screen.getAllByRole("button", { name: /Move .* down/ })[0]);
     await userEvent.click(submit);
 
-    // Page 3 (continued) — follow-up questions without time pressure.
-    expect(screen.getByText(/A few more questions/)).toBeInTheDocument();
-    await answerFollowUps();
-
-    // Page 4 — group phase instructions gate "Join chat" on the checkbox.
+    // Page 5 — group phase instructions gate "Join chat" on the checkbox.
     const join = screen.getByRole("button", { name: "Join chat" });
     expect(join).toBeDisabled();
     await userEvent.click(screen.getByRole("checkbox"));
@@ -94,10 +115,13 @@ describe("Survey", () => {
     expect(survey.answers.gender).toBe("woman");
     expect(survey.answers.education).toBe("bachelors");
     expect(survey.answers.englishProficiency).toBe("fluent");
-    expect(survey.answers.individualRanking).toHaveLength(10);
+    expect(survey.answers.gaais1).toBe(1);
+    expect(survey.answers.tipi1).toBe(1);
+    expect(survey.answers.teamworkFrequency).toBe("sometimes");
+    expect(survey.answers.chatComfort).toBe(4);
+    expect(survey.answers.spaceflightFamiliarity).toBe(2);
+    expect(survey.answers.survivalFamiliarity).toBe(2);
     expect(survey.answers.rankingCompleted).toBe(true);
-    expect(survey.answers.chatComfort).toBe(6);
-    expect(survey.answers.topicFamiliarity).toBe(2);
   });
 
   it("keeps Begin study disabled until every consent box is ticked", async () => {
