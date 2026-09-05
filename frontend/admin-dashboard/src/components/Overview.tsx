@@ -185,6 +185,11 @@ function ExportCard() {
           Overview (CSV)
         </AuthenticatedDownloadLink>
       </div>
+      <div className="download-primary">
+        <AuthenticatedDownloadLink className="link-button" path="/export/sessions-detailed.csv" filename="detailed_overview.csv">
+          Detailed Overview (CSV)
+        </AuthenticatedDownloadLink>
+      </div>
       <details className="export-advanced">
         <summary>Individual datasets</summary>
         <table className="export-table">
