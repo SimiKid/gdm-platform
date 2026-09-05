@@ -327,6 +327,18 @@ export class SessionsController {
     return this.sessions.exportCsv(researchFilter(conditionIds, roundIds));
   }
 
+  /** Detailed per-session settings snapshot (one row per session). */
+  @Get("export/sessions-detailed.csv")
+  @UseGuards(AdminGuard)
+  @Header("Content-Type", "text/csv; charset=utf-8")
+  @Header("Content-Disposition", 'attachment; filename="detailed_overview.csv"')
+  exportSessionsDetailedCsv(
+    @Query("conditionIds") conditionIds?: string,
+    @Query("roundIds") roundIds?: string,
+  ): Promise<string> {
+    return this.sessions.exportDetailedCsv(researchFilter(conditionIds, roundIds));
+  }
+
   /** Chat logs export (one row per message). */
   @Get("export/messages")
   @UseGuards(AdminGuard)
