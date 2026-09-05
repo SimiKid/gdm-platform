@@ -825,6 +825,29 @@ describe("SessionsService (session-manager)", () => {
     expect(csv).toContain("baseline");
   });
 
+  it("exports the detailed per-session settings CSV", async () => {
+    const res = await svc.openSession(open());
+
+    const csv = await svc.exportDetailedCsv();
+    const [header, firstRow] = csv.split("\n");
+    // Comma-delimited with the full configuration column set.
+    expect(header).toContain("session_id,status,round_id");
+    expect(header).toContain("dominance_weight_meaningfulness");
+    expect(header).not.toContain("cooldown_seconds");
+    const cells = firstRow.split(",");
+    expect(cells[0]).toBe(res.session.id);
+    // Standard dot decimals for the configuration numbers.
+    expect(cells).toContain("0.4"); // contribution_threshold
+    expect(cells).toContain("FALSE"); // comparison_mode
+    // Retired tone suffixes fold onto the canonical axis.
+    expect(cells).toContain("baseline"); // intervention_mode
+
+    // Condition filter applies like every other export.
+    expect(await svc.exportDetailedCsv({ conditionIds: ["private-rule"] })).toBe(
+      csv.split("\n")[0],
+    );
+  });
+
   it("exports chat logs, nudge events, and surveys with condition filters", async () => {
     const res = await svc.openSession(open());
     await svc.submitSurvey({

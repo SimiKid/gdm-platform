@@ -9,7 +9,11 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
-import { isServiceUser } from "@gdm/shared";
+import {
+  DEFAULT_INTERVENTION_CONFIG,
+  isServiceUser,
+  normalizeInterventionMode,
+} from "@gdm/shared";
 import type {
   CheckpointSessionRequest,
   CompleteParticipantResponse,
@@ -640,6 +644,92 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         session.startedAt ?? "",
         session.completedAt ?? "",
       ]),
+    ];
+    return toCsv(rows);
+  }
+
+  /**
+   * Per-session settings snapshot for researcher analysis: one row per session
+   * carrying its condition and intervention configuration. Standard CSV format
+   * (dot decimals, comma-delimited), consistent with the other exports.
+   */
+  async exportDetailedCsv(filter: ResearchFilter = {}): Promise<string> {
+    const sessions = (await this.exportBundle(filter)).sessions;
+    const rows = [
+      [
+        "session_id",
+        "status",
+        "round_id",
+        "condition_id",
+        "condition_name",
+        "goal",
+        "group_size",
+        "duration_minutes",
+        "llm_mode",
+        "workspace_mode",
+        "comparison_mode",
+        "intervention_mode",
+        "invite_grace_seconds",
+        "protected_start_minutes",
+        "protected_end_minutes",
+        "contribution_threshold",
+        "contribution_window_minutes",
+        "score_weight_words",
+        "score_weight_messages",
+        "dominance_weight_share",
+        "dominance_weight_meaningfulness",
+        "final_group_ranking",
+        "room_id",
+        "created_at",
+        "started_at",
+        "completed_at",
+      ],
+      ...sessions.map((session) => {
+        // Old sessions may predate some config keys; merge defaults so every
+        // column is populated.
+        const config = {
+          ...DEFAULT_INTERVENTION_CONFIG,
+          ...session.condition.config,
+        };
+        const scoreWeights = {
+          ...DEFAULT_INTERVENTION_CONFIG.scoreWeights,
+          ...config.scoreWeights,
+        };
+        const dominanceWeights = {
+          ...DEFAULT_INTERVENTION_CONFIG.dominanceWeights,
+          ...config.dominanceWeights,
+        };
+        return [
+          session.id,
+          session.status,
+          String(session.roundId),
+          session.condition.id,
+          session.condition.name,
+          String(session.condition.goal),
+          String(session.condition.groupSize),
+          String(session.durationMinutes),
+          config.llmMode ?? "off",
+          config.workspaceMode === "external" ? "external" : "ranking",
+          config.comparisonMode ? "TRUE" : "FALSE",
+          // Fold retired tone suffixes (e.g. "public-neutral") onto the
+          // canonical baseline/public/private axis, matching the stored type.
+          normalizeInterventionMode(config.interventionMode),
+          String(config.inviteGraceSeconds),
+          String(config.protectedStartMinutes),
+          String(config.protectedEndMinutes),
+          String(config.contributionThreshold),
+          String(config.contributionWindowMinutes),
+          String(scoreWeights.words),
+          String(scoreWeights.messages),
+          String(dominanceWeights.share),
+          String(dominanceWeights.meaningfulness),
+          session.ranking.order.join("|"),
+          session.roomId ?? "",
+          session.createdAt,
+          session.startedAt ?? "",
+          session.completedAt ?? "",
+        ];
+      }),
     ];
     return toCsv(rows);
   }
