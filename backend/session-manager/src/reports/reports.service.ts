@@ -607,6 +607,7 @@ export class ReportsService {
         "group_id",
         "member_id",
         "condition",
+        "round",
         "session_status",
         "age",
         "gender",
@@ -660,7 +661,8 @@ export class ReportsService {
             session.id,
             String(index + 1),
             session.condition.name,
-            session.status,
+            String(session.roundId),
+            session.status === "completed" ? "1" : "0",
             cell(row.age),
             cell(row.gender),
             cell(row.education),
@@ -711,6 +713,7 @@ export class ReportsService {
         "session_id",
         "group_id",
         "condition",
+        "round",
         "message_id",
         "timestamp",
         "member_id",
@@ -724,12 +727,9 @@ export class ReportsService {
         session.participants.forEach((p, i) => {
           if (p.matrixUserId) memberIndex.set(p.matrixUserId, i + 1);
         });
-        const interventionByMessage = new Map<string, string>();
+        const interventionByText = new Map<string, string>();
         for (const intervention of session.interventions) {
-          interventionByMessage.set(
-            `${intervention.timestamp}|${intervention.message}`,
-            intervention.id,
-          );
+          interventionByText.set(intervention.message, intervention.id);
         }
         return session.chat.messages.map((message) => {
           const isBotMsg = isServiceUser(message.senderId);
@@ -737,14 +737,13 @@ export class ReportsService {
             ? ""
             : String(memberIndex.get(message.senderId) ?? "");
           const interventionId = isBotMsg
-            ? interventionByMessage.get(
-                `${message.timestamp}|${message.text}`,
-              ) ?? ""
+            ? interventionByText.get(message.text) ?? ""
             : "";
           return [
             session.id,
             session.id,
             session.condition.name,
+            String(session.roundId),
             message.id,
             message.timestamp,
             memberId,
