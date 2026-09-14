@@ -92,9 +92,7 @@ each run starts throwaway containers and removes them afterwards.
   collection through real sync (messages, reactions, redactions, `de.gdm.ranking`),
   the server-side discussion timer, the nudge behavior per condition
   (baseline stays silent, public nudges fire exactly once per intervention
-  window, private nudges carry the `de.gdm.recipient` key), and **2-bot
-  comparison mode** (Assistants A and B both join an invite-only room and
-  both nudge, as in production).
+  window, private nudges carry the `de.gdm.recipient` key).
 
 ### Conventions
 

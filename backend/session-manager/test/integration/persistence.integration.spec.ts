@@ -672,8 +672,8 @@ describe("persistence & exports (integration)", () => {
       })
       .expect(201);
 
-    // Session 2 (public-rule): finalized empty.
-    const other = await fillSession(t, "public-rule");
+    // Session 2 (public-llm): finalized empty.
+    const other = await fillSession(t, "public-llm");
     await request(t.http)
       .post(`/api/sessions/${other[0].session.id}/finalize`)
       .send({ messages: [], rankingHistory: [] })

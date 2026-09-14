@@ -42,7 +42,6 @@ function windowEvaluation(
     id: `w-${overrides.windowIndex ?? 0}`,
     sessionId,
     conditionId: "public-llm",
-    arm: "primary",
     windowIndex: 0,
     windowStart: "2026-07-30T10:08:00.000Z",
     windowEnd: "2026-07-30T10:12:00.000Z",

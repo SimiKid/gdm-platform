@@ -50,7 +50,7 @@ The participant frontend's nginx reverse-proxies `/api/` to the session manager 
 
 ### 1. Open the admin dashboard
 
-Go to http://localhost:3003. The dashboard has five tabs: **Prolific** (participant outcomes and compensation actions), **Overview** (progress, session list, study link), **Results** (descriptives and research exports), **Settings** (recruiting, study rounds, shared parameters, completion/exit paths), and **Testing** (pilot links, 2-bot comparison). Confirm that all five conditions (baseline + the 2x2 delivery x detection arms) are listed in Settings → Recruiting and at least one is **active** (the toggle lives there, not on Overview). The default group size is **3**. The Overview also shows the current **study round** — pilot sessions are stamped into whatever round is open (Round 1 on a fresh stack).
+Go to http://localhost:3003. The dashboard has five tabs: **Prolific** (participant outcomes and compensation actions), **Overview** (progress, session list, study link), **Results** (descriptives and research exports), **Settings** (recruiting, study rounds, shared parameters, completion/exit paths), and **Testing** (pilot links, E2E residue). Confirm that all three conditions (`baseline`, `public-llm`, `private-llm`) are listed in Settings → Recruiting and at least one is **active** (the toggle lives there, not on Overview). The default group size is **3**. The Overview also shows the current **study round** — pilot sessions are stamped into whatever round is open (Round 1 on a fresh stack).
 
 ### 2. Open participant links
 
@@ -65,10 +65,10 @@ This is the single link researchers hand out. Each tab that opens it self-issues
 Open it in **3 separate browser tabs** (one per participant, matching the group size). To force a specific condition, use a pilot link from the **Testing** tab instead:
 
 ```
-http://localhost:3000/?conditionId=public-rule
+http://localhost:3000/?conditionId=public-llm
 ```
 
-(The seeded condition ids are `baseline`, `public-rule`, `public-llm`, `private-rule`, `private-llm`.)
+(The seeded condition ids are `baseline`, `public-llm`, `private-llm`.)
 
 ### 3. Walk through the flow
 
@@ -161,8 +161,8 @@ All environment variables live in `infra/.env`. Key settings:
 | `ADMIN_API_TOKEN` | Protects researcher endpoints; empty = open (dev only) |
 | `INTERNAL_API_TOKEN` | Shared secret between Session Manager and Chat Service; empty = open (dev only) |
 | `MATRIX_SERVICE_PASSWORD` | Password of the stable `gdm_orchestrator` Matrix account; **required** in production (Session Manager exits without it) |
-| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | Enable the LLM classifier for the Rule+LLM arms; without a key those arms silently degrade to rule-based |
-| `LLM_MODE` | Optional global override: `off` kill switch, `active` forces every arm to Rule+LLM; leave empty normally |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | Required by both nudging arms (classifier + fresh nudge wording); without a key classifications are recorded as failures and dominance drops to 0.9 × share |
+| `LLM_MODE` | Optional global override: `off` kill switch for the classifier, `active` forces it on everywhere (including baseline); leave empty normally |
 | `WAITING_TIMEOUT_MINUTES` | Shared waiting-lobby deadline, starting with the first participant (default `5`) |
 | `PARTICIPANT_RECONNECT_GRACE_SECONDS` | Maximum missing-heartbeat window before a Prolific participant is terminally disconnected (default `30`) |
 | `PARTIAL_PAYMENT_PENCE_PER_MINUTE` | Rounded-up partial-compensation rate (minimum/default `10`) |

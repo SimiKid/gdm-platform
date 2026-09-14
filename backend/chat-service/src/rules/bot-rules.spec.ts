@@ -44,7 +44,6 @@ function fakeBot() {
   return {
     botUserId: "@gdm_bot:localhost",
     sendText: vi.fn(async () => undefined),
-    sendTextAs: vi.fn(async () => undefined),
     getJoinedMemberIds: vi.fn(async () => MEMBERS),
   } as unknown as MatrixBotService;
 }
@@ -125,7 +124,7 @@ describe("ContributionBotRules", () => {
     const generate = vi.fn(async () => generated);
     const { rt, bot, event } = await makeDominantRed("public");
 
-    await new ContributionBotRules(undefined, {}, { generate }).onWindowElapsed(
+    await new ContributionBotRules(undefined, { generate }).onWindowElapsed(
       rt,
       event.ts + 1_000,
     );
@@ -149,7 +148,7 @@ describe("ContributionBotRules", () => {
     });
     const { rt, bot, event } = await makeDominantRed("public");
 
-    await new ContributionBotRules(undefined, {}, { generate }).onWindowElapsed(
+    await new ContributionBotRules(undefined, { generate }).onWindowElapsed(
       rt,
       event.ts + 1_000,
     );
@@ -472,101 +471,7 @@ describe("ContributionBotRules", () => {
   });
 });
 
-describe("StudyBotRules (two-bot comparison mode)", () => {
-  it("runs both detection arms with their own bot identities and state", async () => {
-    const classify = vi.fn(async (message: Message, context: ClassifierContext) =>
-      fakeClassification(message, context, { meaningfulnessScore: 1 }),
-    );
-    const { rt, bot } = runtime("public", { comparisonMode: true });
-    const rules = new StudyBotRules({ classify });
-    record(rt, MEMBERS[1], "ok", "m-blue");
-    const event = record(
-      rt,
-      MEMBERS[0],
-      "I think oxygen matters most because without oxygen we cannot move or breathe at all on the lunar surface today.",
-      "m-red",
-    );
-
-    await rules.onEvent(rt, event);
-    await rules.onWindowElapsed(rt, event.ts + 1_000);
-
-    // Assistant A (rule-based) and Assistant B (rule+LLM) both nudge publicly.
-    expect(bot.sendTextAs).toHaveBeenCalledWith(
-      "a",
-      "!r",
-      expect.stringContaining("a lot of energy"),
-    );
-    expect(bot.sendTextAs).toHaveBeenCalledWith(
-      "b",
-      "!r",
-      expect.stringContaining("a lot of energy"),
-    );
-    expect(bot.sendText).not.toHaveBeenCalled();
-    expect(rt.interventions.map((item) => item.llmMode)).toEqual(["off", "active"]);
-    expect(rt.interventions.every((item) => item.audience === "public")).toBe(true);
-    // Independent reset/grace state per arm.
-    expect(rt.state["contributionBotRules:A"]).toBeDefined();
-    expect(rt.state["contributionBotRules:B"]).toBeDefined();
-    // Only the LLM arm classifies, and each message only once.
-    expect(classify).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps both comparison bots private in a private condition", async () => {
-    const classify = vi.fn(async (message: Message, context: ClassifierContext) =>
-      fakeClassification(message, context, { meaningfulnessScore: 1 }),
-    );
-    const { rt, bot } = runtime("private", { comparisonMode: true });
-    const rules = new StudyBotRules({ classify });
-    record(rt, MEMBERS[1], "ok", "m-blue");
-    const event = record(
-      rt,
-      MEMBERS[0],
-      "I think oxygen matters most because without oxygen we cannot move or breathe at all on the lunar surface today.",
-      "m-red",
-    );
-
-    await rules.onEvent(rt, event);
-    await rules.onWindowElapsed(rt, event.ts + 1_000);
-
-    // A and B both nudge, but only the dominating member may see either.
-    expect(bot.sendTextAs).toHaveBeenCalledWith(
-      "a",
-      "!r",
-      expect.stringContaining("a lot of energy"),
-      expect.objectContaining({ [GDM_RECIPIENT_KEY]: MEMBERS[0] }),
-    );
-    expect(bot.sendTextAs).toHaveBeenCalledWith(
-      "b",
-      "!r",
-      expect.stringContaining("a lot of energy"),
-      expect.objectContaining({ [GDM_RECIPIENT_KEY]: MEMBERS[0] }),
-    );
-    expect(rt.interventions.every((item) => item.audience === "private")).toBe(
-      true,
-    );
-  });
-
-  it("comparison bots never nudge in a baseline condition", async () => {
-    const classify = vi.fn(async (message: Message, context: ClassifierContext) =>
-      fakeClassification(message, context, { meaningfulnessScore: 1 }),
-    );
-    const { rt, bot } = runtime("baseline", { comparisonMode: true });
-    const rules = new StudyBotRules({ classify });
-    record(rt, MEMBERS[1], "ok", "m-blue");
-    const event = record(
-      rt,
-      MEMBERS[0],
-      "I think oxygen matters most because without oxygen we cannot move or breathe at all on the lunar surface today.",
-      "m-red",
-    );
-
-    await rules.onEvent(rt, event);
-    await rules.onWindowElapsed(rt, event.ts + 1_000);
-
-    expect(bot.sendTextAs).not.toHaveBeenCalled();
-    expect(rt.interventions).toHaveLength(0);
-  });
-
+describe("StudyBotRules", () => {
   it("starts message classifications concurrently", async () => {
     const pending: Array<{
       message: Message;
@@ -579,7 +484,7 @@ describe("StudyBotRules (two-bot comparison mode)", () => {
           pending.push({ message, context, resolve });
         }),
     );
-    const { rt } = runtime("public", { comparisonMode: true });
+    const { rt } = runtime("public", { llmMode: "active" });
     const rules = new StudyBotRules({ classify });
     const first = record(rt, MEMBERS[0], "oxygen first", "concurrent-1");
     const second = record(rt, MEMBERS[1], "water second", "concurrent-2");
@@ -595,7 +500,7 @@ describe("StudyBotRules (two-bot comparison mode)", () => {
     expect(rt.contributionClassifications).toHaveLength(2);
   });
 
-  it("sends Assistant A at the boundary and bounds Assistant B's classifier wait", async () => {
+  it("bounds the wait for in-flight classifications at the window boundary", async () => {
     vi.useFakeTimers();
     let finishClassification!: (
       value: ReturnType<typeof fakeClassification>,
@@ -610,7 +515,7 @@ describe("StudyBotRules (two-bot comparison mode)", () => {
           finishClassification = resolve;
         }),
     );
-    const { rt, bot } = runtime("public", { comparisonMode: true });
+    const { rt, bot } = runtime("public", { llmMode: "active" });
     const rules = new StudyBotRules({ classify });
     record(rt, MEMBERS[1], "ok", "bounded-blue");
     const event = record(
@@ -626,31 +531,14 @@ describe("StudyBotRules (two-bot comparison mode)", () => {
       expect(classify).toHaveBeenCalledTimes(1);
 
       const windowRequest = rules.onWindowElapsed(rt, event.ts + 1_000);
-      await vi.advanceTimersByTimeAsync(0);
-      expect(bot.sendTextAs).toHaveBeenCalledWith(
-        "a",
-        "!r",
-        expect.any(String),
-      );
-      expect(bot.sendTextAs).not.toHaveBeenCalledWith(
-        "b",
-        "!r",
-        expect.any(String),
-      );
-
       await vi.advanceTimersByTimeAsync(1_999);
-      expect(bot.sendTextAs).not.toHaveBeenCalledWith(
-        "b",
-        "!r",
-        expect.any(String),
-      );
+      // Still waiting for the classification of the closed window.
+      expect(bot.sendText).not.toHaveBeenCalled();
+
       await vi.advanceTimersByTimeAsync(1);
       await windowRequest;
-      expect(bot.sendTextAs).toHaveBeenCalledWith(
-        "b",
-        "!r",
-        expect.any(String),
-      );
+      // The wait is bounded: the nudge fires on 0.9 × share alone.
+      expect(bot.sendText).toHaveBeenCalledWith("!r", expect.any(String));
 
       finishClassification(
         fakeClassification(classifiedMessage, classifierContext),
@@ -661,14 +549,13 @@ describe("StudyBotRules (two-bot comparison mode)", () => {
     }
   });
 
-  it("delegates to the single engine when comparison mode is off", async () => {
+  it("runs the single engine with the condition's own delivery", async () => {
     const { rt, bot, event } = await makeDominantRed("public");
     const rules = new StudyBotRules();
     await rules.onEvent(rt, event);
     await rules.onWindowElapsed(rt, event.ts + 1_000);
 
     expect(bot.sendText).toHaveBeenCalledTimes(1);
-    expect(bot.sendTextAs).not.toHaveBeenCalled();
     expect(rt.interventions).toHaveLength(1);
   });
 });
@@ -683,7 +570,6 @@ describe("window evaluation records", () => {
     expect(evaluation).toMatchObject({
       sessionId: "s",
       conditionId: "public",
-      arm: "primary",
       outcome: "nudged",
       llmMode: "off",
       threshold: 0.4,
@@ -785,29 +671,6 @@ describe("window evaluation records", () => {
     });
     expect(rt.windowEvaluations[0].candidateTargets).toEqual([
       { userId: MEMBERS[0], identityName: "Red" },
-    ]);
-  });
-
-  it("comparison mode records one evaluation per detection arm", async () => {
-    const classify = vi.fn(async (message: Message, context: ClassifierContext) =>
-      fakeClassification(message, context, { meaningfulnessScore: 1 }),
-    );
-    const { rt } = runtime("public", { comparisonMode: true });
-    const rules = new StudyBotRules({ classify });
-    record(rt, MEMBERS[1], "ok", "m-blue");
-    const event = record(
-      rt,
-      MEMBERS[0],
-      "I think oxygen matters most because without oxygen we cannot move or breathe at all on the lunar surface today.",
-      "m-red",
-    );
-    await rules.onEvent(rt, event);
-    await rules.onWindowElapsed(rt, event.ts + 1_000);
-
-    expect(rt.windowEvaluations.map((item) => item.arm)).toEqual(["a", "b"]);
-    expect(rt.windowEvaluations.map((item) => item.llmMode)).toEqual([
-      "off",
-      "active",
     ]);
   });
 

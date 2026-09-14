@@ -218,20 +218,6 @@ export class SessionRuntime {
     });
   }
 
-  /**
-   * Post as a named comparison bot ("a" / "b") instead of the primary bot.
-   * With `recipientId` set, the client renders it only to that participant
-   * (same mechanism as postPrivate).
-   */
-  postAs(botKind: string, body: string, recipientId?: string): Promise<void> {
-    if (recipientId) {
-      return this.bot.sendTextAs(botKind, this.roomId, body, {
-        [GDM_RECIPIENT_KEY]: recipientId,
-      });
-    }
-    return this.bot.sendTextAs(botKind, this.roomId, body);
-  }
-
   get isEnded(): boolean {
     return this.ended;
   }

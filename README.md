@@ -1,8 +1,8 @@
 # GDM Platform
 
-A study platform for researching AI-supported group decision-making. Groups discuss a shared task in a real-time chat environment while a rule-based bot monitors contribution balance and intervenes when participation becomes uneven.
+A study platform for researching AI-supported group decision-making. Groups discuss a shared task in a real-time chat environment while a bot monitors contribution balance and intervenes when participation becomes uneven.
 
-The project investigates whether in-the-moment AI nudges can improve both decision quality and group experience, using a 2x2 between-subjects design (public/private delivery x rule-based/rule+LLM detection) plus a no-intervention baseline. Data collection is organized into numbered study rounds with per-round recruiting goals.
+The project investigates whether in-the-moment AI nudges can improve both decision quality and group experience, using a between-subjects design with public vs. private nudge delivery (both with rule+LLM detection) plus a no-intervention baseline. Data collection is organized into numbered study rounds with per-round recruiting goals.
 
 ## Repository Structure
 
@@ -35,7 +35,7 @@ See [docs/getting-started.md](docs/getting-started.md) for prerequisites, ports,
 |---|---|
 | [Getting Started](docs/getting-started.md) | Prerequisites, running locally, configuration, useful commands |
 | [Architecture](docs/architecture.md) | Services, data flow, session lifecycle, design decisions |
-| [Bot Rulebook](docs/bot-rulebook.md) | Intervention logic: 2x2 conditions + baseline, contribution scoring, thresholds, and generated nudge wording |
+| [Bot Rulebook](docs/bot-rulebook.md) | Intervention logic: public/private delivery + baseline, contribution scoring, thresholds, and generated nudge wording |
 | [Data Export](docs/data-export.md) | All export endpoints, JSON structures, and CSV column reference for researchers |
 | [Testing](docs/testing.md) | Test strategy: unit / integration / e2e layers, how to run them, conventions |
 | [Pilot Checklist](docs/pilot-checklist.md) | Step-by-step verification for local pilot runs |
@@ -45,5 +45,5 @@ See [docs/getting-started.md](docs/getting-started.md) for prerequisites, ports,
 
 ## Current Deferrals
 
-- Purely LLM-triggered interventions — nudges stay window-triggered in all arms; in the rule+LLM arms the live classifier feeds the dominance score and invite grace, but never fires a nudge on its own
+- Purely LLM-triggered interventions — nudges stay window-triggered in all arms; in the nudging arms the live classifier feeds the dominance score and invite grace, but never fires a nudge on its own
 - Matrix appservice registration for the bot

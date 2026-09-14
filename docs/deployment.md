@@ -50,7 +50,7 @@ VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (fallback)
      stable Matrix room owner used to re-invite a bot after service restarts.
    - Add `ANTHROPIC_API_KEY` for fresh nudge wording and Rule+LLM detection,
      and keep the pinned `ANTHROPIC_MODEL`. Leave `LLM_MODE` empty so each
-     condition's own detection arm applies. The key is read only by
+     condition's own `llmMode` applies. The key is read only by
      `chat-service`.
    - For API-validated Prolific recruitment, set the draft's 24-character
      `PROLIFIC_STUDY_ID`, a researcher **API token** in
@@ -214,9 +214,9 @@ backed up.
 2. Put `ANTHROPIC_API_KEY=...` in the VM's `infra/.env`; never commit it.
 3. Keep `ANTHROPIC_MODEL=claude-haiku-4-5-20251001` for reproducible results.
 4. Redeploy the chat service. Every non-baseline intervention then gets fresh
-   nudge wording, and Rule+LLM conditions (`llmMode: "active"`) classify
+   nudge wording, and both nudging arms (`llmMode: "active"`) classify
    messages automatically. `LLM_MODE=off` disables semantic detection but not
-   generated wording; `LLM_MODE=active` forces every arm to Rule+LLM.
+   generated wording; `LLM_MODE=active` forces the classifier on everywhere.
    Production startup fails fast if the key is missing. Runtime API failures
    use validated fixed fallback wording so they do not suppress a nudge.
 5. Run a fake pilot and download **Contributions & behavioral telemetry**.

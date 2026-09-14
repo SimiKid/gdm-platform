@@ -1,29 +1,29 @@
 # Bot Rulebook
 
-How the rule-based intervention bot works, from trigger to message delivery.
+How the intervention bot works, from trigger to message delivery.
 
 ## Research Context
 
-The study uses a **2x2 between-subjects design** — delivery (public/private)
-× detection (rule-based / rule-based + LLM meaningfulness) — plus a
-**no-intervention baseline** to test whether real-time AI nudges during group
-discussions improve decision quality and group experience.
+The study uses a **between-subjects design with one factor, delivery** —
+public vs. private nudges — plus a **no-intervention baseline** to test
+whether real-time AI nudges during group discussions improve decision quality
+and group experience.
 
-Delivery is carried by `interventionMode` (`public` / `private` / `baseline`);
-detection by `llmMode` (`off` = rule-based, `active` = rule + LLM composite
-dominance score). Detection/trigger logic is identical across delivery
-conditions — only public vs. private delivery differs, preserving internal
-validity. Every nudge uses the same wording policy: fresh, friendly,
-encouraging text that names only the target and their exact percentage.
+Delivery is carried by `interventionMode` (`public` / `private` / `baseline`).
+Both nudging arms use the same rule + LLM detection (`llmMode: "active"`:
+composite dominance score), so detection/trigger logic is identical across
+delivery conditions — only public vs. private delivery differs, preserving
+internal validity. The baseline runs with `llmMode: "off"` (raw contribution
+share, no classifier calls) because it never delivers anything. Every nudge
+uses the same wording policy: fresh, friendly, encouraging text that names
+only the target and their exact percentage.
 
 ## Experimental Conditions
 
 | Condition | Delivery (`interventionMode`) | Detection (`llmMode`) | Description |
 |---|---|---|---|
 | `baseline` | baseline | off | No bot intervention; messages are recorded but the bot stays silent |
-| `public-rule` | public | off | Public nudges, rule-based detection |
 | `public-llm` | public | active | Public nudges, rule + LLM meaningfulness detection |
-| `private-rule` | private | off | Private nudges, rule-based detection |
 | `private-llm` | private | active | Private nudges, rule + LLM meaningfulness detection |
 
 The nudge **format and tone constraints are identical across all non-baseline
@@ -32,7 +32,7 @@ is generated afresh for each intervention. (An earlier neutral/engaging tone
 axis was retired; conditions persisted with old mode strings like
 `public-engaging` are folded onto the delivery axis automatically.)
 
-Each condition is assigned to a session at creation time and cannot change mid-session. Five conditions are seeded on first startup.
+Each condition is assigned to a session at creation time and cannot change mid-session. Three conditions are seeded on first startup.
 
 ## Intervention Lifecycle
 
@@ -73,7 +73,7 @@ Window boundary reached (every contributionWindowMinutes)
 
 ### Entry Points
 
-`ContributionBotRules.onEvent()` in `backend/chat-service/src/rules/bot-rules.ts` is called for **every timeline event** in an active session's room, except the bot's own events; it only observes (records and, with an LLM arm, classifies messages). `ContributionBotRules.onWindowElapsed()` is called by the session service's per-session window timer at each boundary (aligned to the end of the warm-up, so restarts resume the same window grid) and decides the nudges. Before evaluating, the engine waits up to 2 seconds (`CLASSIFICATION_WAIT_MS`) for classifications still in flight for the closed window, so slow LLM responses are usually included rather than counted as 0.
+`ContributionBotRules.onEvent()` in `backend/chat-service/src/rules/bot-rules.ts` is called for **every timeline event** in an active session's room, except the bot's own events; it only observes (records and, in the nudging arms, classifies messages). `ContributionBotRules.onWindowElapsed()` is called by the session service's per-session window timer at each boundary (aligned to the end of the warm-up, so restarts resume the same window grid) and decides the nudges. Before evaluating, the engine waits up to 2 seconds (`CLASSIFICATION_WAIT_MS`) for classifications still in flight for the closed window, so slow LLM responses are usually included rather than counted as 0.
 
 The participant list used for the contribution split is fetched from Matrix once (at the first classified message or first window boundary) and cached for the whole session; if the lookup fails, the engine falls back to the distinct message senders seen so far. A participant who joins after that snapshot does not appear in the split.
 
@@ -109,8 +109,8 @@ design).
 
 The trigger metric is the **dominance score**:
 
-- Rule-based arm (`llmMode: "off"`): `dominance = share`.
-- Rule-based + LLM arm (`llmMode: "active"`):
+- Baseline (`llmMode: "off"`): `dominance = share`.
+- Nudging arms (`llmMode: "active"`):
   `dominance = 0.90 × share + 0.10 × meaningfulness`, where meaningfulness is
   the mean `meaningfulnessScore` of the member's classified messages in the
   window (0 when none are classified, e.g. on API failure). Weights are
@@ -123,7 +123,7 @@ If any participant's `dominance score >= contributionThreshold` (default
 score descending and **only the top one** is nudged per trigger.
 
 A candidate is skipped while their **invite grace period** runs: when their
-classified message shows `invitesParticipation == true` (active LLM arm
+classified message shows `invitesParticipation == true` (nudging arms
 only), they cannot be flagged for `inviteGraceSeconds` (default 60) — a
 reward for self-correction.
 
@@ -204,14 +204,13 @@ the participant timer's red "wrap up!" cue.
 | Threshold | `contributionThreshold` | `0.40` | Dominance score at which a participant triggers an intervention |
 | Warm-up | `protectedStartMinutes` | `3` | Arrival phase: nobody is counted or nudged; the first window starts when it ends |
 | Protected end | `protectedEndMinutes` | `2` | Minutes of no-intervention cool-down |
-| Invite grace | `inviteGraceSeconds` | `60` | Flag suppression after a member invites others (active LLM arm) |
+| Invite grace | `inviteGraceSeconds` | `60` | Flag suppression after a member invites others (nudging arms) |
 | Score window | `contributionWindowMinutes` | `4` | Window length; the bot evaluates (and can nudge once) at the end of every window |
 | Message weight | `scoreWeights.messages` | `1` | Points per message |
 | Word weight | `scoreWeights.words` | `0.05` | Points per word |
 | Share weight | `dominanceWeights.share` | `0.90` | Composite weight of the raw contribution share |
 | Meaningfulness weight | `dominanceWeights.meaningfulness` | `0.10` | Composite weight of the LLM meaningfulness score |
-| Classifier mode | `llmMode` | `off` | `off` (rule-based) / `active` (composite score + grace period) |
-| Two-bot test | `comparisonMode` | unset (off) | Pilot only: both detection bots nudge side by side; optional field, only `=== true` enables it (see below) |
+| Classifier mode | `llmMode` | `off` | `active` in both nudging arms (composite score + grace period); `off` (raw share, no classifier) in the baseline. Not a study axis |
 
 Defaults are defined in `packages/shared/src/interventions.ts` (`DEFAULT_INTERVENTION_CONFIG`). Conditions are seeded with these defaults by the session manager on first startup (see `seedConditions()` in `backend/session-manager/src/store/store.service.ts`), along with session-level defaults `goal: 5`, `durationMinutes: 10`, `groupSize: 3`.
 
@@ -222,19 +221,19 @@ Changes to a condition in the admin dashboard affect **future sessions only**. R
 Every intervention is recorded as an `InterventionLog` containing:
 
 - Session and condition IDs
-- Delivery mode, audience, and detection arm (`llmMode`)
+- Delivery mode, audience, and detection mode (`llmMode`)
 - Timestamp
 - The full contribution split at the time of intervention
 - Target(s) and quiet member(s) identified
 - The exact message text sent
 
-In addition, the bot records a **`WindowEvaluation` for every window boundary it reaches** — fired or not. Each carries the window's grid index and time span, the detection arm (`arm`: `primary` for normal sessions, `a`/`b` in comparison mode), the outcome (`nudged`, `no-target`, `grace-suppressed`, `baseline-suppressed`, `warm-up`, `wrap-up`, `too-few-participants`), the full contribution split and over-threshold candidates where a split was computed, and a link to the `InterventionLog` when a nudge fired. Baseline sessions therefore carry the same per-window dominance data as the delivery arms (`baseline-suppressed` marks windows where a nudge *would* have fired). Failed LLM classification requests are recorded as `ClassificationFailure` entries, so classifier coverage is auditable. The bot's own nudge messages are stored in the chat log (with `recipientId` set on private nudges) but never count toward contribution scores.
+In addition, the bot records a **`WindowEvaluation` for every window boundary it reaches** — fired or not. Each carries the window's grid index and time span, the detection mode (`llmMode`), the outcome (`nudged`, `no-target`, `grace-suppressed`, `baseline-suppressed`, `warm-up`, `wrap-up`, `too-few-participants`), the full contribution split and over-threshold candidates where a split was computed, and a link to the `InterventionLog` when a nudge fired. Baseline sessions therefore carry the same per-window dominance data as the delivery arms (`baseline-suppressed` marks windows where a nudge *would* have fired). Failed LLM classification requests are recorded as `ClassificationFailure` entries, so classifier coverage is auditable. The bot's own nudge messages are stored in the chat log (with `recipientId` set on private nudges) but never count toward contribution scores.
 
 These records are included in the raw exports (`/api/export/sessions`, `/api/export/interventions`), power the dashboard's **Results** tab, and feed the analysis-ready research exports (`/api/export/windows`, `/api/export/research.zip`) — see `docs/data-export.md`.
 
-## Meaningfulness Classifier (Rule + LLM Detection Arm)
+## Meaningfulness Classifier (Rule + LLM Detection)
 
-Conditions with `llmMode: "active"` (the Rule+LLM arms) classify every
+Conditions with `llmMode: "active"` (both nudging arms) classify every
 participant message with Anthropic's Messages API. The same API also generates
 fresh nudge wording in every non-baseline arm; `ANTHROPIC_API_KEY` must be set
 for dynamic wording and Rule+LLM detection. The default model is
@@ -268,39 +267,7 @@ meaningfulness score) are available from `/api/export/contributions` and
 
 The API receives pseudonymous color labels,
 but it does receive chat text; consent and the data-processing documentation
-must state this before the Rule+LLM arms are used with real participants.
-
-## Two-Bot Comparison Mode (pilot / user testing only)
-
-Setting `comparisonMode: true` on a condition (toggle in the admin
-**Testing** tab, offered for non-baseline arms only, with a standing "switch
-it off before recruiting" warning) runs **both detection arms in the same
-room** so testers can compare them live:
-
-| Bot | Matrix user | Detection |
-|---|---|---|
-| 🤖 Assistant A | `gdm_bot_a_<suffix>` | Rule-based (message + word counts) |
-| 🤖 Assistant B | `gdm_bot_b_<suffix>` | Rule-based + LLM meaningfulness (composite score + invite grace) |
-
-Mechanics:
-
-- Each arm runs the full rule engine with its **own** tracker reset and
-  grace-period state — each bot behaves as it would alone. One timing
-  nuance: Assistant A evaluates immediately at the window boundary, while
-  Assistant B evaluates after the up-to-2-second classification wait, so
-  B's nudge can land slightly after A's.
-- Both follow the **condition's delivery audience**: in a public condition
-  everyone sees A and B, in a private condition only the nudged member sees
-  them. Each bot gets newly generated wording under the same format and tone
-  constraints.
-- The labels are neutral (A/B) so testers stay blind to which arm is which;
-  the mapping above is the only place it's documented. Every intervention log
-  records `llmMode` (`off` = A, `active` = B) for the debrief.
-- The primary sync bot stays silent; Assistants A and B are separate Matrix
-  users that join on session start. The classifier runs once per message
-  (arms share the recorded classifications).
-- Never enable this for real study sessions — it exists to pilot the two
-  detection approaches against each other.
+must state this before the nudging arms are used with real participants.
 
 ## Key Source Files
 

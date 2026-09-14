@@ -23,15 +23,8 @@ export function senderPseudonym(session: Session, senderId: string): string {
     (p) => p.id === senderId || p.matrixUserId === senderId,
   );
   if (participant) return pseudonymize("P", participant.id);
-  if (isServiceUser(senderId)) return botKindLabel(senderId);
+  if (isServiceUser(senderId)) return "BOT";
   // Unknown sender (e.g. a participant whose creds mapping was lost): still
   // pseudonymize deterministically rather than leaking the raw Matrix id.
   return pseudonymize("P", senderId);
-}
-
-/** "BOT" for the primary bot, "BOT-A"/"BOT-B" for the comparison arms. */
-export function botKindLabel(userId: string): string {
-  if (/_bot_a_/i.test(userId)) return "BOT-A";
-  if (/_bot_b_/i.test(userId)) return "BOT-B";
-  return "BOT";
 }

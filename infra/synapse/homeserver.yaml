@@ -97,11 +97,10 @@ rc_invites:
     burst_count: 100
   per_issuer:
     per_second: 50
-    # 249 participants + primary recorder + both comparison bots = 498.
+    # 249 participants + the recorder bot = 250; generous headroom kept.
     burst_count: 600
 
-# The primary recorder (and, in comparison mode, each named bot) joins one
-# room per group. Synapse's default per-account burst of 10 would throttle the
+# The recorder bot joins one room per group. Synapse's default per-account burst of 10 would throttle the
 # recorder after only 30 participants; 249 participants need up to 83 joins.
 rc_joins:
   local:

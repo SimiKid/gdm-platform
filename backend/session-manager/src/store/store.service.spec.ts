@@ -19,16 +19,19 @@ describe("StoreService", () => {
     vi.useRealTimers();
   });
 
-  it("seeds the five study conditions", async () => {
+  it("seeds the three study conditions", async () => {
     const conditions = await store.listConditions();
-    expect(conditions).toHaveLength(5);
+    expect(conditions).toHaveLength(3);
     expect(conditions[0]).toMatchObject({ active: true, goal: 5, groupSize: 3 });
     expect(conditions.map((c) => c.config.interventionMode)).toEqual([
       "baseline",
       "public",
-      "public",
       "private",
-      "private",
+    ]);
+    expect(conditions.map((c) => c.config.llmMode)).toEqual([
+      "off",
+      "active",
+      "active",
     ]);
     expect(conditions.every((c) => c.config.workspaceMode === "ranking")).toBe(
       true,

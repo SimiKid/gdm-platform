@@ -113,13 +113,13 @@ The example below is **abridged**: each session object additionally embeds `bot`
           "id": "intervention-uuid",
           "sessionId": "session-uuid",
           "roomId": "!room-id:synapse",
-          "conditionId": "public-rule",
+          "conditionId": "public-llm",
           "timestamp": "2026-07-13T10:15:00Z",
           "mode": "public",
           "audience": "public",
           "trigger": "contribution-threshold",
           "threshold": 0.4,
-          "llmMode": "off",
+          "llmMode": "active",
           "contributionWindowMinutes": 4,
           "contributionSplit": [
             {
@@ -278,14 +278,14 @@ One record per bot intervention across all sessions.
       "id": "intervention-uuid",
       "sessionId": "session-uuid",
       "roomId": "!room-id:synapse",
-      "conditionId": "public-rule",
-      "conditionName": "Public × Rule-based",
+      "conditionId": "public-llm",
+      "conditionName": "Public × Rule+LLM",
       "timestamp": "2026-07-13T10:15:00Z",
       "mode": "public",
       "audience": "public",
       "trigger": "contribution-threshold",
       "threshold": 0.4,
-      "llmMode": "off",
+      "llmMode": "active",
       "contributionWindowMinutes": 4,
       "contributionSplit": [
         {
@@ -314,7 +314,7 @@ One record per bot intervention across all sessions.
 | `audience` | `public` or `private` |
 | `trigger` | What caused the nudge (`contribution-threshold`) |
 | `threshold` | Dominance-score threshold that was exceeded (0..1) |
-| `llm_mode` | Detection arm: `off` (rule-based) or `active` (composite score) |
+| `llm_mode` | Detection mode: `active` (composite score; both nudging arms) or `off` (raw share; baseline) |
 | `targets` | Pipe-separated identity names of nudged participants |
 | `quiet_members` | Pipe-separated identity names of participants whose contribution was low |
 | `message` | The exact text the bot sent |
@@ -484,7 +484,7 @@ The JSON export contains three arrays. The CSV contains only the aggregate contr
 
 ## Research exports (analysis-ready)
 
-Available from the **Results tab → Research Exports** section. These are the files intended for statistical analysis: identifiers are **pseudonymous** (`P-xxxxxxxx` for participants, `S-xxxxxxxx` for sessions — the first 8 hex chars of SHA-256 over the internal UUID, stable across re-downloads), surveys and activity are pre-joined, and derived measures (ranking scores, participation equality) are computed server-side. Bot senders appear as `BOT` (`BOT-A`/`BOT-B` in pilot comparison sessions).
+Available from the **Results tab → Research Exports** section. These are the files intended for statistical analysis: identifiers are **pseudonymous** (`P-xxxxxxxx` for participants, `S-xxxxxxxx` for sessions — the first 8 hex chars of SHA-256 over the internal UUID, stable across re-downloads), surveys and activity are pre-joined, and derived measures (ranking scores, participation equality) are computed server-side. Bot senders appear as `BOT`.
 
 **One-click bundle:** `GET /api/export/research.zip` → `research_bundle.zip`, containing `participants.csv`, `sessions_analysis.csv`, `windows.csv`, `rankings.csv`, a pseudonymized `messages.csv`, and `codebook.md` — a generated data dictionary with a study-rounds section, a full column table for `participants.csv`, prose descriptions of the other files, the NASA scoring rule and expert key, the equality metrics, and the window-outcome glossary. The linkage file is deliberately **not** in the bundle.
 
@@ -510,7 +510,7 @@ One row per ranking, with `round` and `condition_id` context columns: each parti
 
 **Endpoints:** `GET /api/export/windows` (JSON) · `GET /api/export/windows.csv`
 
-The bot records **every** evaluated contribution-window boundary, not just fired nudges — including baseline sessions, where `baseline-suppressed` rows show when a nudge *would* have fired. The CSV is long format (one row per window × participant, ready for mixed-effects models); the JSON nests the per-participant split inside each window record. Besides the identifiers and outcome, each CSV row carries `round`, `intervention_mode`, `arm` (`primary` normally; `a`/`b` in pilot comparison sessions), the frozen `window_minutes`/`threshold`, `max_dominance_score`, `is_candidate_target`, and `was_nudged`. Outcomes: `nudged`, `no-target`, `grace-suppressed`, `baseline-suppressed`, `warm-up`, `wrap-up`, `too-few-participants`. Only sessions run after this instrumentation was deployed have window records.
+The bot records **every** evaluated contribution-window boundary, not just fired nudges — including baseline sessions, where `baseline-suppressed` rows show when a nudge *would* have fired. The CSV is long format (one row per window × participant, ready for mixed-effects models); the JSON nests the per-participant split inside each window record. Besides the identifiers and outcome, each CSV row carries `round`, `intervention_mode`, `llm_mode`, the frozen `window_minutes`/`threshold`, `max_dominance_score`, `is_candidate_target`, and `was_nudged`. Outcomes: `nudged`, `no-target`, `grace-suppressed`, `baseline-suppressed`, `warm-up`, `wrap-up`, `too-few-participants`. Only sessions run after this instrumentation was deployed have window records.
 
 ### Linkage (identifying — handle with care)
 

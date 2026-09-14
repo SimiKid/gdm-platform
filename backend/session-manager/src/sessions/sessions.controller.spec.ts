@@ -175,22 +175,22 @@ describe("SessionsController", () => {
   });
 
   it("exports JSON and CSV with optional condition filters", async () => {
-    await expect(ctrl.exportSessions("public-rule,public-llm")).resolves.toEqual({
+    await expect(ctrl.exportSessions("baseline,public-llm")).resolves.toEqual({
       generatedAt: "now",
       sessions: [],
     });
     expect(sessions.exportBundle).toHaveBeenCalledWith({
-      conditionIds: ["public-rule", "public-llm"],
+      conditionIds: ["baseline", "public-llm"],
       roundIds: [],
     });
 
-    await expect(ctrl.exportSessionsCsv("public-rule")).resolves.toBe("session_id\n");
-    expect(sessions.exportCsv).toHaveBeenCalledWith({ conditionIds: ["public-rule"], roundIds: [] });
+    await expect(ctrl.exportSessionsCsv("public-llm")).resolves.toBe("session_id\n");
+    expect(sessions.exportCsv).toHaveBeenCalledWith({ conditionIds: ["public-llm"], roundIds: [] });
   });
 
   it("exports chat logs, nudge events, and surveys per data set", async () => {
-    await ctrl.exportMessages("public-rule");
-    expect(sessions.exportMessages).toHaveBeenCalledWith({ conditionIds: ["public-rule"], roundIds: [] });
+    await ctrl.exportMessages("public-llm");
+    expect(sessions.exportMessages).toHaveBeenCalledWith({ conditionIds: ["public-llm"], roundIds: [] });
     await expect(ctrl.exportMessagesCsv(undefined)).resolves.toBe("message_id\n");
     expect(sessions.exportMessagesCsv).toHaveBeenCalledWith({
       conditionIds: [],

@@ -14,7 +14,7 @@ workspace "GDM Study Platform" "AI-supported group decision-making study" {
             group "Backend" {
                 sessionManager = container "Session Manager" "Instantiates & tracks sessions per condition and study round (how many done / still needed); persists sessions, surveys & messages; serves reports & exports" "NestJS"
                 chatService = container "Chat Service" "Runtime glue between the session entity, the bot and Matrix during a session" "NestJS"
-                bot = container "Bot / Rule Engine" "Rule-based contribution-share detector; sends group or private nudges. Rule+LLM arms add semantic classification" "Node module inside Chat Service"
+                bot = container "Bot / Rule Engine" "Rule+LLM contribution-dominance detector; sends group or private nudges" "Node module inside Chat Service"
                 matrix = container "Matrix Server" "Real-time chat; rooms = groups; durable message store; E2EE off on study rooms" "Synapse"
                 exportService = container "Export Service" "Future standalone service if exports outgrow Session Manager endpoints" "NestJS"
                 db = container "Research Database" "Sessions, surveys, messages, interventions" "PostgreSQL" {
@@ -24,7 +24,7 @@ workspace "GDM Study Platform" "AI-supported group decision-making study" {
         }
 
         # External
-        llm = softwareSystem "LLM (Anthropic API)" "Semantic contribution classification in the rule+LLM arms" {
+        llm = softwareSystem "LLM (Anthropic API)" "Semantic contribution classification in the nudging arms" {
             tags "External"
         }
 
@@ -51,7 +51,7 @@ workspace "GDM Study Platform" "AI-supported group decision-making study" {
         bot -> matrix "Reads event stream via bot user" "Matrix C-S API (/sync)"
         bot -> matrix "Posts nudges (group / private)" "Matrix C-S API"
 
-        bot -> llm "Classifies message contributions (rule+LLM arms)"
+        bot -> llm "Classifies message contributions (nudging arms)"
 
         exportService -> db "Reads for JSON / CSV export" "SQL"
 

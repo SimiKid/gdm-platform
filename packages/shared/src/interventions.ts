@@ -1,7 +1,7 @@
 /**
- * Delivery axis of the study design. Detection (rule-based vs. rule-based +
- * LLM meaningfulness) is the second axis, carried by `llmMode` — together
- * they form the 2×2 + baseline condition set.
+ * The study's single design axis: how nudges are delivered. The condition set
+ * is `baseline` (no nudges), `public-llm` and `private-llm`; both nudging arms
+ * use the same rule + LLM detection (`llmMode: "active"`).
  */
 export type InterventionMode = "baseline" | "public" | "private";
 
@@ -56,9 +56,10 @@ export interface DominanceWeights {
 /**
  * Study condition knobs consumed by the Chat Service bot rules.
  *
- * The current study design has four bot intervention methods.
- * The task content and durable database are intentionally independent from
- * these settings so both can change later without rewriting the rule engine.
+ * The current study design has two bot intervention methods (public and
+ * private nudges) plus a silent baseline. The task content and durable
+ * database are intentionally independent from these settings so both can
+ * change later without rewriting the rule engine.
  */
 export interface InterventionConfig {
   /**
@@ -98,17 +99,11 @@ export interface InterventionConfig {
   dominanceWeights: DominanceWeights;
   /**
    * Semantic classifier mode. `active` folds the meaningfulness score into
-   * the dominance score (rule-based + LLM detection arm).
+   * the dominance score (rule + LLM detection) and is what both nudging arms
+   * use. `off` (raw contribution share, no classifier calls) is reserved for
+   * the silent baseline, where nothing is delivered anyway. Not a study axis.
    */
   llmMode?: "off" | "active";
-  /**
-   * Pilot/testing only: run BOTH detection bots side by side in the room —
-   * "Assistant A" (rule-based) and "Assistant B" (rule-based + LLM), each
-   * with its own tracker state. Delivery follows the condition's
-   * `interventionMode` (public/private); each arm forces its own detection,
-   * ignoring the condition's `llmMode`. Never enable for real study sessions.
-   */
-  comparisonMode?: boolean;
 }
 
 export interface ContributionShare {
@@ -140,7 +135,7 @@ export interface InterventionLog {
   timestamp: string;
   trigger: "contribution-threshold";
   threshold: number;
-  /** Detection arm that produced this intervention (off = rule-based only). */
+  /** Detection mode that produced this intervention. */
   llmMode: "off" | "active";
   contributionWindowMinutes: number;
   contributionSplit: ContributionShare[];
@@ -180,8 +175,6 @@ export interface WindowEvaluation {
   id: string;
   sessionId: string;
   conditionId: string;
-  /** Detection arm: "primary", or "a"/"b" in comparison mode. */
-  arm: string;
   /** 0-based index on the session's window grid (grid starts at warm-up end). */
   windowIndex: number;
   windowStart: string; // ISO 8601

@@ -10,7 +10,6 @@ import type { PublicSession } from "@gdm/shared";
 import SharedRanking from "./SharedRanking";
 import ExternalWorkspace from "./ExternalWorkspace";
 import {
-  botLabel,
   buildIdentities,
   identityFor,
   isBot,
@@ -457,7 +456,7 @@ export default function Chat({ client, session, onTimeUp, onWithdraw }: Props) {
   }
 
   const room = activeRoomId ? client.getRoom(activeRoomId) : null;
-  // Keep experimental-arm labels blinded during the discussion.
+  // Keep the study condition blinded during the discussion.
   const title = session ? "Group discussion" : room?.name ?? "Group Chat";
   // Turn the timer red and show "wrap up!" exactly when the bot stops nudging:
   // the wrap-up window is the condition's protected-end period (config-driven).
@@ -585,7 +584,7 @@ export default function Chat({ client, session, onTimeUp, onWithdraw }: Props) {
                         className={`bot-message ${msg.recipient ? "private" : ""}`}
                       >
                         <div className="bot-label">
-                          <span>🤖 {botLabel(msg.sender)}</span>
+                          <span>🤖 Assistant</span>
                           {/* Zoom-style delivery badge: participants must
                               never be unsure who can see a nudge. */}
                           <span

@@ -26,16 +26,13 @@ type SaveState = "idle" | "saving" | "saved" | "error";
 /**
  * Settings view, split by how often a researcher touches things:
  *
- *  1. Recruiting — the daily controls (arm on/off, goal, progress). Study
- *     design (delivery × detection) is shown as read-only badges.
+ *  1. Recruiting — the daily controls (arm on/off, goal, progress). The
+ *     arm's delivery (baseline / public / private) is a read-only badge.
  *  2. Session & Bot Parameters — ONE shared form applied to all study arms.
  *     A between-subjects design needs identical parameters everywhere, so
  *     arms deviating from the shared values surface as a drift warning
  *     instead of being silently editable per row.
  *  3. Prolific completion and early-exit paths.
- *
- * The 2-bot comparison toggle lives in the Testing view — it is a pilot tool
- * and must not sit next to the daily recruiting controls.
  */
 export default function Settings({
   rows,
@@ -269,22 +266,11 @@ const DELIVERY_LABELS: Record<string, string> = {
   private: "🔒 Private",
 };
 
-const DETECTION_LABELS: Record<"off" | "active", string> = {
-  off: "Rule-based",
-  active: "Rule + LLM",
-};
-
 function ArmBadges({ condition }: { condition: Condition }) {
   const mode = condition.config.interventionMode;
-  const llm = condition.config.llmMode ?? "off";
   return (
     <span className="arm-badges">
       <span className="arm">{DELIVERY_LABELS[mode] ?? mode}</span>
-      {mode !== "baseline" && (
-        <span className={llm === "active" ? "arm llm" : "arm"}>
-          {DETECTION_LABELS[llm]}
-        </span>
-      )}
     </span>
   );
 }

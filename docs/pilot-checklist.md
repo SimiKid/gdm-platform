@@ -14,15 +14,16 @@ Open the admin dashboard at http://localhost:3003.
 
 Confirm:
 
-- all five conditions are visible in Settings → Recruiting (baseline + the
-  2x2 grid: public/private delivery x rule-based/rule+LLM detection)
+- all three conditions are visible in Settings → Recruiting (`baseline`,
+  `public-llm`, `private-llm`)
 - desired pilot condition is active
 - group size is set appropriately (default `3`)
 - the Overview shows the expected current **study round** (Round 1 on a fresh
   stack) — pilot sessions are stamped into the open round
-- for the `public-llm` / `private-llm` arms: `ANTHROPIC_API_KEY` is set in
-  `infra/.env` (with `LLM_MODE=active` the chat service refuses to start
-  without it; with `LLM_MODE` unset the arms silently degrade to rule-based)
+- `ANTHROPIC_API_KEY` is set in `infra/.env`: both nudging arms depend on
+  it. Without a key every classification is recorded as a failure and the
+  dominance score silently drops to 0.9 × share (there is no rule-only arm
+  to fall back to); in production the chat service refuses to start
 - `research-db` is healthy in `docker compose ps`
 
 ## 2. Create a Forced-Condition Group
@@ -37,15 +38,13 @@ To force a specific condition, use a pilot link from the admin dashboard's
 **Testing** tab or manually:
 
 ```
-http://localhost:3000/?conditionId=public-rule
+http://localhost:3000/?conditionId=public-llm
 ```
 
 Open in 3 tabs (one per participant). Repeat for each condition:
 
 - `baseline`
-- `public-rule`
 - `public-llm`
-- `private-rule`
 - `private-llm`
 
 ## 3. Verify Participant Flow
@@ -76,21 +75,14 @@ To trigger an intervention:
 - Wait until outside the protected start window (default: 3 minutes)
 - Confirm the bot message appears
 
-Expected behavior per condition (nudge **text is identical** across all
-non-baseline arms — only delivery and detection differ):
+Expected behavior per condition (nudge **text is identical** across both
+nudging arms — only delivery differs):
 
 | Condition | What to verify |
 |---|---|
 | `baseline` | No bot messages appear at all |
-| `public-rule` | Whole group sees the nudge (📢 badge), rule-based trigger |
-| `public-llm` | Whole group sees the nudge; classifications recorded (check the contributions export) |
-| `private-rule` | Only the dominant participant sees the nudge (🔒 badge) |
-| `private-llm` | Only the dominant participant sees the nudge; classifications recorded |
-
-Optional: in the **Testing** tab, enable the 2-bot comparison toggle on a
-non-baseline arm and verify Assistants A and B both nudge — then **switch it
-off again** (never leave it on for real recruiting; the Testing tab shows a
-standing warning while it is enabled).
+| `public-llm` | Whole group sees the nudge (📢 badge); classifications recorded (check the contributions export) |
+| `private-llm` | Only the dominant participant sees the nudge (🔒 badge); classifications recorded |
 
 ## 5. Verify Admin Data
 

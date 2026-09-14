@@ -547,7 +547,7 @@ tbody tr:last-child td {
 
 /* ── Recruiting table ──────────────────────────────── */
 
-/* Read-only study-design badges (delivery × detection) per arm. */
+/* Read-only delivery badge per arm. */
 .arm-badges {
   display: flex;
   flex-wrap: wrap;
@@ -564,11 +564,6 @@ tbody tr:last-child td {
   font-size: 0.72rem;
   font-weight: 650;
   white-space: nowrap;
-}
-
-.arm.llm {
-  background: #e3effb;
-  color: #1c7ed6;
 }
 
 .pill {
@@ -741,51 +736,3 @@ tbody tr:last-child td {
   }
 }
 
-/* ── 2-bot comparison test (Testing view) ──────────── */
-
-.warnbar {
-  border: 1px solid #b45309;
-  border-radius: 8px;
-  background: #fff4d6;
-  color: #8a5a00;
-  font-size: 0.86rem;
-  padding: 12px 14px;
-  margin-bottom: 6px;
-}
-
-.twobot-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  border-bottom: 1px solid #edf1f6;
-  padding: 11px 2px;
-}
-
-.twobot-row:last-child {
-  border-bottom: 0;
-}
-
-.twobot-row .who {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.twobot-row .who small {
-  color: #5f6f86;
-  font-size: 0.76rem;
-}
-
-.twobot-state {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.twobot-state .st {
-  min-width: 24px;
-  color: #8a97ab;
-  font-size: 0.8rem;
-  font-weight: 650;
-}

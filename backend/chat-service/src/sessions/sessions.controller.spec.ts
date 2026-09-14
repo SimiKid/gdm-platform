@@ -4,13 +4,7 @@ import type { SessionsService } from "./sessions.service";
 import type { MatrixBotService } from "../matrix/matrix-bot.service";
 import type { Condition } from "@gdm/shared";
 
-const bot = {
-  botUserId: "@bot:localhost",
-  comparisonBotUserIds: vi.fn(async () => [
-    "@gdm_bot_a_x:localhost",
-    "@gdm_bot_b_x:localhost",
-  ]),
-} as unknown as MatrixBotService;
+const bot = { botUserId: "@bot:localhost" } as unknown as MatrixBotService;
 
 describe("SessionsController (chat-service)", () => {
   it("start delegates to the service and returns ok", async () => {
@@ -28,11 +22,8 @@ describe("SessionsController (chat-service)", () => {
     expect(sessions.startSession).toHaveBeenCalled();
   });
 
-  it("exposes all bot Matrix users for room invites", async () => {
+  it("exposes the bot's Matrix user for room invites", () => {
     const ctrl = new SessionsController({} as SessionsService, bot);
-    await expect(ctrl.botIdentity()).resolves.toEqual({
-      userId: "@bot:localhost",
-      comparisonUserIds: ["@gdm_bot_a_x:localhost", "@gdm_bot_b_x:localhost"],
-    });
+    expect(ctrl.botIdentity()).toEqual({ userId: "@bot:localhost" });
   });
 });

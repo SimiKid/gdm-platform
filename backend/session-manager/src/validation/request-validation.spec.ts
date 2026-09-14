@@ -13,7 +13,7 @@ describe("request validation", () => {
       validateOpenSessionRequest({
         trackingToken: crypto.randomUUID(),
         participantName: "",
-        conditionId: "public-rule",
+        conditionId: "public-llm",
       }),
     ).not.toThrow();
     expect(() =>

@@ -15,9 +15,6 @@ export interface TimelineEvent {
 
 type EventHandler = (event: TimelineEvent) => void;
 
-/** The two comparison-mode bots: "a" = rule-based, "b" = rule + LLM. */
-export const COMPARISON_BOT_KINDS = ["a", "b"] as const;
-
 /**
  * The Chat Service's Matrix presence: a single bot user that joins every
  * managed room and tails the /sync stream. Open registration is enabled on the
@@ -54,16 +51,6 @@ export class MatrixBotService implements OnModuleInit {
     process.env.MATRIX_SYNC_REQUEST_TIMEOUT_MS,
     40_000,
   );
-  /**
-   * Named secondary bot identities for the two-bot comparison mode
-   * (e.g. "a" → gdm_bot_a_<suffix>). They only join and send — the primary
-   * bot's /sync stream observes the room for all of them.
-   */
-  private readonly identities = new Map<
-    string,
-    Promise<{ userId: string; accessToken: string }>
-  >();
-
   async onModuleInit(): Promise<void> {
     await this.ensureReady();
   }
@@ -83,18 +70,6 @@ export class MatrixBotService implements OnModuleInit {
     );
   }
 
-  /**
-   * Matrix user ids of the comparison bots, registering them on first use.
-   * The Session Manager needs these to invite them into the invite-only
-   * study rooms before the bots can join.
-   */
-  async comparisonBotUserIds(): Promise<string[]> {
-    const identities = await Promise.all(
-      COMPARISON_BOT_KINDS.map((kind) => this.ensureIdentity(kind)),
-    );
-    return identities.map((identity) => identity.userId);
-  }
-
   /** Subscribe to every timeline event across all joined rooms. */
   onTimelineEvent(handler: EventHandler): void {
     this.handlers.push(handler);
@@ -103,26 +78,6 @@ export class MatrixBotService implements OnModuleInit {
   /** Accept the Session Manager's invitation and join a study room by id. */
   async join(roomId: string): Promise<void> {
     await this.joinWith(this.accessToken, roomId);
-  }
-
-  /** Join a room as a named secondary identity (registered on first use). */
-  async joinAs(kind: string, roomId: string): Promise<void> {
-    const identity = await this.ensureIdentity(kind);
-    await this.joinWith(identity.accessToken, roomId);
-  }
-
-  /**
-   * Post a message as a named secondary identity. `extraContent` is merged
-   * into the event content — e.g. the recipient key for a private nudge.
-   */
-  async sendTextAs(
-    kind: string,
-    roomId: string,
-    body: string,
-    extraContent: Record<string, unknown> = {},
-  ): Promise<void> {
-    const identity = await this.ensureIdentity(kind);
-    await this.sendWith(identity.accessToken, roomId, body, extraContent);
   }
 
   /**
@@ -284,43 +239,14 @@ export class MatrixBotService implements OnModuleInit {
     if (!res.ok) throw new Error(`bot send failed (${res.status})`);
   }
 
-  private ensureIdentity(
-    kind: string,
-  ): Promise<{ userId: string; accessToken: string }> {
-    const existing = this.identities.get(kind);
-    if (existing) return existing;
-    const created = this.registerUser(`gdm_bot_${kind}_`)
-      .then((identity) => {
-        this.log.log(`comparison bot "${kind}" user ${identity.userId}`);
-        return identity;
-      })
-      .catch((error: unknown) => {
-        // Do not cache a transient failure for the lifetime of the process.
-        // The next provisioning attempt can register the identity again.
-        if (this.identities.get(kind) === created) this.identities.delete(kind);
-        throw error;
-      });
-    this.identities.set(kind, created);
-    return created;
-  }
-
   private async register(): Promise<void> {
-    const identity = await this.registerUser("gdm_bot_");
-    this.userId = identity.userId;
-    this.accessToken = identity.accessToken;
-    this.log.log(`bot user ${this.userId}`);
-  }
-
-  private async registerUser(
-    usernamePrefix: string,
-  ): Promise<{ userId: string; accessToken: string }> {
     const suffix = randomUUID().replaceAll("-", "").slice(0, 16);
     const res = await this.fetchWithRateLimitRetry("bot register", () =>
       fetch(`${this.internalUrl}/_matrix/client/v3/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          username: `${usernamePrefix}${suffix}`,
+          username: `gdm_bot_${suffix}`,
           password: `${randomBytes(24).toString("base64url")}Aa1!`,
           auth: { type: "m.login.dummy" },
         }),
@@ -329,7 +255,9 @@ export class MatrixBotService implements OnModuleInit {
     );
     if (!res.ok) throw new Error(`bot register failed (${res.status})`);
     const data = (await res.json()) as { user_id: string; access_token: string };
-    return { userId: data.user_id, accessToken: data.access_token };
+    this.userId = data.user_id;
+    this.accessToken = data.access_token;
+    this.log.log(`bot user ${this.userId}`);
   }
 
   /** Initial sync includes recent room history so restart gaps can be replayed. */

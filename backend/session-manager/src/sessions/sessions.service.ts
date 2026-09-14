@@ -667,7 +667,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         "duration_minutes",
         "llm_mode",
         "workspace_mode",
-        "comparison_mode",
         "intervention_mode",
         "invite_grace_seconds",
         "protected_start_minutes",
@@ -710,7 +709,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           String(session.durationMinutes),
           config.llmMode ?? "off",
           config.workspaceMode === "external" ? "external" : "ranking",
-          config.comparisonMode ? "TRUE" : "FALSE",
           // Fold retired tone suffixes (e.g. "public-neutral") onto the
           // canonical baseline/public/private axis, matching the stored type.
           normalizeInterventionMode(config.interventionMode),
@@ -1238,7 +1236,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   /** Re-authorize a new bot account after chat-service restart. */
   async recoverRunningSessions(
     botUserId: string,
-    comparisonBotUserIds: string[] = [],
   ): Promise<StartSessionNotification[]> {
     if (!botUserId) throw new ConflictException("botUserId is required");
     const running = await this.store.runningSessions();
@@ -1257,17 +1254,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         this.log.warn(
           `primary bot re-invite failed for ${session.id}: ${String(error)}`,
         );
-      }
-      if (session.condition.config.comparisonMode === true) {
-        for (const comparisonUserId of comparisonBotUserIds) {
-          try {
-            await this.matrix.invite(session.roomId!, comparisonUserId);
-          } catch (err) {
-            this.log.warn(
-              `comparison bot re-invite failed for ${comparisonUserId}: ${String(err)}`,
-            );
-          }
-        }
       }
       notes.push({
         sessionId: session.id,
@@ -1487,8 +1473,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     // Invite the Chat Service bot so it can join when it takes the session
     // over (best-effort — the chat still works client-side without the bot).
-    // Comparison conditions additionally need Assistant A/B invited: rooms
-    // are invite-only, so an uninvited bot's join is rejected with 403.
+    // Rooms are invite-only, so an uninvited bot's join is rejected with 403.
     const bot = await this.fetchBotIdentity();
     if (bot.userId) {
       try {
@@ -1499,17 +1484,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         // On a retry the primary bot may already be invited or joined. The
         // idempotent Chat Service start below is the authoritative check.
         this.log.warn(`primary bot invite retry failed: ${String(error)}`);
-      }
-    }
-    if (session.condition.config.comparisonMode === true) {
-      for (const comparisonUserId of bot.comparisonUserIds) {
-        try {
-          await this.matrix.invite(roomId, comparisonUserId);
-        } catch (err) {
-          this.log.warn(
-            `comparison bot invite failed for ${comparisonUserId}: ${String(err)}`,
-          );
-        }
       }
     }
 
@@ -1587,28 +1561,19 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     return run;
   }
 
-  /** Ask the Chat Service which Matrix users its bots run as. */
-  private async fetchBotIdentity(): Promise<{
-    userId?: string;
-    comparisonUserIds: string[];
-  }> {
+  /** Ask the Chat Service which Matrix user its bot runs as. */
+  private async fetchBotIdentity(): Promise<{ userId?: string }> {
     try {
       const res = await fetch(`${this.chatServiceUrl}/internal/bot`, {
         headers: internalHeaders(),
         signal: AbortSignal.timeout(5000),
       });
       if (!res.ok) throw new Error(`status ${res.status}`);
-      const data = (await res.json()) as {
-        userId?: string;
-        comparisonUserIds?: string[];
-      };
-      return {
-        userId: data.userId || undefined,
-        comparisonUserIds: data.comparisonUserIds ?? [],
-      };
+      const data = (await res.json()) as { userId?: string };
+      return { userId: data.userId || undefined };
     } catch (err) {
       this.log.warn(`could not resolve bot user (chat service down?): ${String(err)}`);
-      return { userId: undefined, comparisonUserIds: [] };
+      return { userId: undefined };
     }
   }
 

@@ -73,10 +73,6 @@ export class SessionsService
     string,
     ReturnType<typeof setTimeout>
   >();
-  private readonly comparisonJoinTimers = new Map<
-    string,
-    ReturnType<typeof setTimeout>
-  >();
   private recoveryTimer?: ReturnType<typeof setTimeout>;
   private recoveryRequest?: Promise<void>;
   private shuttingDown = false;
@@ -106,13 +102,11 @@ export class SessionsService
     for (const timer of this.checkpointTimers.values()) clearTimeout(timer);
     for (const timer of this.windowTimers.values()) clearTimeout(timer);
     for (const timer of this.sessionEndTimers.values()) clearTimeout(timer);
-    for (const timer of this.comparisonJoinTimers.values()) clearTimeout(timer);
     if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
     this.recoveryTimer = undefined;
     this.checkpointTimers.clear();
     this.windowTimers.clear();
     this.sessionEndTimers.clear();
-    this.comparisonJoinTimers.clear();
 
     const ruleWork = [...this.ruleRequests.values()].flatMap((requests) => [
       ...requests,
@@ -150,24 +144,6 @@ export class SessionsService
     // guard above must not block the Session Manager's retry, or the session
     // would be orphaned (no bot, no timer, never finalized).
     await this.bot.join(note.roomId);
-    let comparisonJoinFailed = false;
-    if (note.condition.config.comparisonMode === true) {
-      // Two-bot comparison test: Assistant A (rule-based) and Assistant B
-      // (rule-based + LLM) join alongside the primary sync bot. The Session
-      // Manager invited them during provisioning (study rooms are
-      // invite-only). Never let their failure kill the takeover — recording
-      // and the timer matter more than the extra bots.
-      for (const kind of ["a", "b"] as const) {
-        try {
-          await this.bot.joinAs(kind, note.roomId);
-        } catch (err) {
-          comparisonJoinFailed = true;
-          this.log.error(
-            `comparison bot ${kind} could not join ${note.roomId}: ${String(err)}`,
-          );
-        }
-      }
-    }
     const startedAtMs = note.startedAt
       ? new Date(note.startedAt).getTime()
       : Date.now();
@@ -197,7 +173,6 @@ export class SessionsService
       replayed.add(event.eventId);
       this.handleEvent(event);
     }
-    if (comparisonJoinFailed) this.scheduleComparisonJoinRetry(note.roomId);
     this.log.log(
       `managing session ${note.sessionId} in ${note.roomId} (${note.condition.name})`,
     );
@@ -292,7 +267,7 @@ export class SessionsService
       // promises recipientId for private nudges), but rules and the
       // classifier must never run on them, and they never count toward
       // contribution scores. Recording off the bot's own sync echo keeps the
-      // real Matrix event id/timestamp and covers comparison bots A/B too.
+      // real Matrix event id/timestamp.
       if (
         event.type === "m.room.message" &&
         !runtime.hasProcessed(event.eventId)
@@ -517,9 +492,6 @@ export class SessionsService
     this.runtimes.delete(roomId);
     this.retiredRooms.add(roomId);
     this.pendingEvents.delete(roomId);
-    const comparisonTimer = this.comparisonJoinTimers.get(roomId);
-    if (comparisonTimer) clearTimeout(comparisonTimer);
-    this.comparisonJoinTimers.delete(roomId);
     this.ruleRequests.delete(roomId);
     this.windowRequests.delete(roomId);
     this.checkpointRequests.delete(roomId);
@@ -607,10 +579,7 @@ export class SessionsService
       const res = await fetch(`${this.sessionManagerUrl}/sessions/recover`, {
         method: "POST",
         headers: internalHeaders(),
-        body: JSON.stringify({
-          botUserId: this.bot.botUserId,
-          comparisonBotUserIds: await this.bot.comparisonBotUserIds(),
-        }),
+        body: JSON.stringify({ botUserId: this.bot.botUserId }),
         signal: AbortSignal.timeout(15_000),
       });
       if (!res.ok) throw new Error(`status ${res.status}`);
@@ -647,32 +616,6 @@ export class SessionsService
     }, 5000);
   }
 
-  private scheduleComparisonJoinRetry(roomId: string): void {
-    if (this.shuttingDown || this.comparisonJoinTimers.has(roomId)) return;
-    this.comparisonJoinTimers.set(
-      roomId,
-      setTimeout(async () => {
-        this.comparisonJoinTimers.delete(roomId);
-        const runtime = this.runtimes.get(roomId);
-        if (
-          this.shuttingDown ||
-          !runtime ||
-          runtime.isEnded ||
-          runtime.condition.config.comparisonMode !== true
-        ) {
-          return;
-        }
-        const results = await Promise.allSettled([
-          this.bot.joinAs("a", roomId),
-          this.bot.joinAs("b", roomId),
-        ]);
-        if (results.some((result) => result.status === "rejected")) {
-          this.log.warn(`comparison bot join retry failed for ${roomId}`);
-          this.scheduleComparisonJoinRetry(roomId);
-        }
-      }, 5000),
-    );
-  }
 }
 
 function positiveInt(value: string | undefined, fallback: number): number {
