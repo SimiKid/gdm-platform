@@ -13,8 +13,9 @@ const API_HEADERS = ADMIN_TOKEN
  * The test provisions its own condition so it never touches the study's real
  * arms: baseline mode (no bot nudges to race against) and a one-minute
  * discussion so the timer fires within the test run. Whole minutes only —
- * the research DB stores durationMinutes as an integer and would silently
- * truncate a fraction to 0 (instant session end, no client timer).
+ * the research DB stores durationMinutes as an integer and the session
+ * manager rounds and clamps condition writes to 1–240, so a fraction would
+ * silently run a different discussion length than intended.
  * The id is unique per run so stale waiting sessions from an aborted earlier
  * run can never soak up this run's participants.
  */

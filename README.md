@@ -8,14 +8,15 @@ The project investigates whether in-the-moment AI nudges can improve both decisi
 
 ```
 packages/shared/          Shared TypeScript types, DTOs, and defaults
-backend/session-manager/  Matchmaking, session state, conditions, study rounds, surveys, reports/exports (NestJS + Prisma)
-backend/chat-service/     Bot runtime: Matrix sync, message recording, intervention rules, LLM classifier (NestJS)
-frontend/participant/     Participant study flow: recruiting, survey, chat, exit survey (React)
-frontend/admin-dashboard/ Researcher dashboard: overview, results, settings (rounds, parameters), bot testing (React)
+backend/session-manager/  Matchmaking, session state, conditions, study rounds, surveys, Prolific lifecycle, reports/exports (NestJS + Prisma)
+backend/chat-service/     Bot runtime: Matrix sync, message recording, intervention rules, LLM classifier, nudge wording, optional moderation (NestJS)
+backend/export-service/   Empty placeholder for a possible future standalone export service
+frontend/participant/     Participant study flow: recruiting, consent, surveys, ranking task, chat, exit survey, debriefing (React)
+frontend/admin-dashboard/ Researcher dashboard: Prolific outcomes, overview, results, settings (rounds, parameters), bot testing (React)
 e2e/                      Playwright end-to-end suite against the compose stack
 loadtest/                 k6 load-test harness (profiles, scripts, monitoring)
-infra/                    Docker Compose stack (dev + prod), Synapse config, Caddyfile, deploy script
-docs/                     Architecture, bot rulebook, data export, testing, deployment, pilot checklist
+infra/                    Docker Compose stack (dev + prod), Synapse config + render script, Caddyfile, deploy + backup scripts
+docs/                     Architecture (+ Structurizr model), bot rulebook, data export, testing, deployment, pilot checklist, Prolific runbook
 ```
 
 ## Quick Start

@@ -12,7 +12,7 @@ exercised by exactly one layer so failures point somewhere specific.
 |---|---|---|---|---|
 | Unit | `pnpm test` | Node | seconds | Pure logic, participant components in jsdom |
 | Integration | `pnpm test:integration` | Docker | minutes (real timers + two container runs) | Nest apps over HTTP, Postgres, Synapse |
-| End-to-end | `pnpm test:e2e` | Running compose stack | ~2 min | Everything: browsers, all services, Matrix |
+| End-to-end | `pnpm test:e2e` | Running compose stack | a few minutes (the golden path waits for a real one-minute discussion) | Everything: browsers, all services, Matrix |
 
 Known gap: the **admin dashboard has no unit tests** (its package defines no
 `test` script, so `pnpm -r` skips it silently) — its behavior is covered only
@@ -21,7 +21,7 @@ by the e2e layer.
 All commands work from the repo root (they fan out via `pnpm -r`) or inside a
 single package.
 
-## Unit Tests (`src/**/*.spec.ts`)
+## Unit Tests (`src/**/*.spec.ts`, `src/**/*.spec.tsx` in the frontend)
 
 Fast, no network, no containers. They own the pure logic:
 
@@ -30,29 +30,41 @@ Fast, no network, no containers. They own the pure logic:
   the `llmMode: "active"` composite dominance score, and the `LLM_MODE` env
   override). This is the scientific core; keep its coverage rich.
 - **`session-runtime.spec.ts`** — the per-room state machine (messages,
-  reactions, redactions, ranking history); plus classifier and Matrix-bot
-  specs (`anthropic-contribution-classifier.spec.ts`,
-  `matrix-bot.service.spec.ts`).
+  reactions, redactions, ranking history); plus classifier, nudge-generator,
+  Matrix-bot and internal-guard specs
+  (`anthropic-contribution-classifier.spec.ts`,
+  `anthropic-nudge-message-generator.spec.ts`, `matrix-bot.service.spec.ts`,
+  `auth/internal.guard.spec.ts`).
 - **`sessions.service.spec.ts` / controller specs** (both services) —
-  matchmaking and event handling against hand-rolled fakes.
+  matchmaking and event handling against hand-rolled fakes. The session
+  manager additionally has specs for its guards (`auth/guards.spec.ts`), the
+  Matrix client (`matrix/matrix.service.spec.ts`), Prolific actions
+  (`prolific/prolific-actions.service.spec.ts`), request validation and body
+  limits (`validation/request-validation.spec.ts`, `request-body.spec.ts`),
+  and a small store spec (`store/store.service.spec.ts`) for the pure
+  normalization helpers.
 - **Reports/analysis specs** (`backend/session-manager/src/reports/`) —
   pseudonymization, NASA scoring, equality metrics, and the report service.
 - **Frontend component specs** — Testing Library flows for the participant
-  pages (`Survey.spec.tsx` walks consent → about you → task → group phase;
-  `AboutYouPage`, `Chat`, `SharedRanking`, `Recruiting`, `ExitSurvey`, and the
-  `src/study/` helpers have their own specs).
+  pages (`Survey.spec.tsx` walks consent → about you → attitudes → task →
+  group phase; `App`, `AboutYouPage`, `Chat`, `SharedRanking`,
+  `ExternalWorkspace`, `Recruiting`, `ExitSurvey`, `DebriefingPage`,
+  `StudyExitPage`, and the `src/study/` helpers have their own specs).
 
 Conventions:
 
 - Unit tests construct services by hand and fake only the Matrix/HTTP boundary.
   Assert on behavior (what was recorded, posted, returned) — not on request
   URLs or headers; wire formats belong to the integration layer.
-- Coverage gates run via `pnpm test:cov`. Backend files whose main body is
-  only exercised by another layer are excluded from the unit metrics with a
-  comment saying which layer owns them (e.g. `store.service.ts` → integration
-  suite). The participant frontend inverts this: its coverage config is an
-  **allowlist** (`src/study/**` plus a few named components), so pages outside
-  it are simply not in the metric.
+- Coverage gates run via `pnpm test:cov` (80 % lines/functions/statements,
+  70 % branches in both backends). In the session manager, files whose main
+  body is only exercised by another layer are excluded from the unit metrics
+  with a comment saying which layer owns them (`store.service.ts` and
+  `prisma.service.ts` → integration suite); the chat service only excludes
+  `main.ts`, the Nest modules and the spec files themselves. The participant frontend inverts this: its
+  coverage config is an **allowlist** (`src/study/**/*.ts` plus
+  `Recruiting.tsx`, `Survey.tsx`, `ExitSurvey.tsx`), so pages outside it are
+  simply not in the metric.
 
 ## Integration Tests (`test/integration/*.integration.spec.ts`)
 
@@ -68,31 +80,37 @@ each run starts throwaway containers and removes them afterwards.
 - **Faked:** Synapse (`FakeMatrixService`) and the Chat Service (a fetch
   recorder). Any other outbound network call fails the test.
 - **Covers:** condition seeding, seat-by-seat matchmaking and provisioning,
-  the concurrent-join race (simultaneous joiners must land in one group),
-  404/409 paths, the finalize → Postgres → read-back round-trip **across app
-  restarts** (a fresh app instance can only answer from the database), survey
-  upserts and token/survey leak protection, token rejoin on refresh, condition
-  edits surviving restarts, oversized (>100 KB) checkpoints, settings, CSV
-  export escaping and filtering, **study rounds** (start aborts lobbies,
-  resets progress, round-scopes matchmaking), and the reports suite
-  (`reports.integration.spec.ts`: window evaluations and classification
-  failures across restart, old-checkpoint compatibility, pseudonymized
-  `participants.csv` + `linkage.csv`, `roundIds`/`conditionIds` filtering,
-  and the research ZIP with codebook and no linkage file).
+  least-claimed condition assignment, the concurrent-join race (simultaneous
+  joiners must land in one group), 404/409 paths, seat credentials being
+  required on participant endpoints, aborted Prolific submissions staying
+  terminal, the finalize → Postgres → read-back round-trip **across app
+  restarts** (a fresh app instance can only answer from the database),
+  partial/retried checkpoint merges, monotonic reaction redactions, survey
+  upserts and token/survey leak protection, token rejoin on refresh, Prolific
+  arrival/identity/completion persistence, stale-heartbeat timeouts releasing
+  a seat, condition edits surviving restarts, oversized (>100 KB)
+  checkpoints, settings, CSV export escaping and filtering, **study rounds**
+  (start aborts lobbies, resets progress, round-scopes matchmaking), and the
+  reports suite (`reports.integration.spec.ts`: window evaluations and
+  classification failures across restart, old-checkpoint compatibility,
+  pseudonymized `participants.csv` + `linkage.csv`, `roundIds`/`conditionIds`
+  filtering, and the research ZIP with codebook and no linkage file).
 
 ### chat-service (`backend/chat-service/test/integration/`)
 
 - **Real:** the whole app including the bot's Matrix registration, its
   long-poll `/sync` loop and `ContributionBotRules`, against a real
-  `matrixdotorg/synapse` container (SQLite-backed, rate limits disabled,
-  config generated in `global-setup.ts`).
+  `matrixdotorg/synapse:v1.157.2` container (override with
+  `SYNAPSE_TEST_IMAGE`; SQLite-backed, rate limits disabled, config generated
+  in `global-setup.ts`).
 - **Faked:** the Session Manager — a local `node:http` recorder that captures
   the finalize callback.
 - **Covers:** room takeover on `POST /internal/sessions/start`, event
   collection through real sync (messages, reactions, redactions, `de.gdm.ranking`),
-  the server-side discussion timer, the nudge behavior per condition
-  (baseline stays silent, public nudges fire exactly once per intervention
-  window, private nudges carry the `de.gdm.recipient` key).
+  backfill of messages sent while the recorder was down, the server-side
+  discussion timer, the nudge behavior per condition (baseline stays silent,
+  public nudges fire exactly once per intervention window, private nudges
+  carry the `de.gdm.recipient` key).
 
 ### Conventions
 
@@ -101,7 +119,9 @@ each run starts throwaway containers and removes them afterwards.
 - These configs compile with SWC instead of esbuild: booting the real Nest
   module graph requires `emitDecoratorMetadata`, which esbuild cannot emit.
   (Unit tests don't notice because they construct services by hand.)
-- One container per run (vitest `globalSetup`), state wiped between tests.
+- One container per run (vitest `globalSetup`). The session-manager harness
+  truncates the database before every test; the chat-service tests share one
+  Synapse and isolate themselves by creating fresh users and rooms.
 - Timers under test are driven by small real durations (fractional
   `durationMinutes` in the start notification), not fake timers — the point
   is the real event loop.
@@ -116,9 +136,11 @@ axis is only exercised by the opt-in live spec), the Results dashboard
 (`results-dashboard.spec.ts`: descriptives, round-filter chips rewriting
 every download link, the research-bundle ZIP, and the Study Rounds
 confirm/cancel step), the admin download, and all JSON/CSV export families
-including `roundIds`×`conditionIds` composition and the 401 guards on
-`linkage.csv`/`research.zip`. API-provisioned scenarios jump directly into
-the real Matrix chat so only the golden path waits for the one-minute timer.
+including `roundIds`×`conditionIds` composition. The 401 guards on
+`linkage.csv`/`research.zip` are asserted only when `E2E_ADMIN_TOKEN` is
+set, i.e. against a token-protected stack, not in the default local run.
+API-provisioned scenarios jump directly into the real Matrix chat so only the
+golden path waits for the one-minute timer.
 
 ```bash
 cd infra && sh start.sh     # the stack must be up; global-setup fails fast if not
@@ -148,15 +170,20 @@ First-time setup: `pnpm --filter @gdm/e2e exec playwright install chromium`.
 Notes:
 
 - Specs create their own disposable `e2e-…` conditions and deactivate them
-  afterwards (the shared helper mints `e2e-condition-<id>` with a 2-minute
-  discussion and group size 2; the golden path uses `e2e-<timestamp>` with 1
+  afterwards (the shared helper defaults to a 2-minute discussion and group
+  size 2 under a per-spec prefix such as `e2e-exports-…` or
+  `e2e-intervention-public-…`, falling back to `e2e-condition-…`; the
+  recovery spec uses 3 minutes; the golden path uses `e2e-<timestamp>` with 1
   minute and group size 3; `results-dashboard.spec.ts` is read-only and
   creates none), so runs never touch the real study arms and stale sessions
   from an aborted run can't soak up participants. Test rows remain in the research DB; wipe with
   `sh stop.sh --volumes` when you want a clean slate.
 - Discussion durations must be **whole minutes**: the research DB stores
-  `durationMinutes` as an integer and silently truncates fractions to 0
-  (instant session end, no client timer).
+  `durationMinutes` as an integer and the session manager rounds and clamps
+  every condition write to 1–240 (`0.25` becomes `1`, `1.5` becomes `2`), so
+  a fractional value silently runs a different discussion length than the
+  test intended. (Fractional minutes are only honoured by the chat-service
+  integration harness, which bypasses the session manager.)
 - On failure, Playwright saves a trace:
   `pnpm --filter @gdm/e2e exec playwright show-trace test-results/<run>/trace.zip`.
 - The e2e tests the images the stack is running — rebuild after backend
@@ -165,16 +192,22 @@ Notes:
   `E2E_SESSION_MANAGER_URL` and `E2E_ADMIN_URL` override the localhost
   defaults, and `E2E_ADMIN_TOKEN` authenticates against a stack whose
   `ADMIN_API_TOKEN` is set (attached as an `Authorization: Bearer` credential
-  to API calls and pre-seeded into the dashboard's sessionStorage). See the smoke-test section
-  in [deployment.md](deployment.md) for the ready-made production command.
-- Keep the full suite at one worker. For a deliberate load probe, target only
-  `tests/golden-path.spec.ts` with `--repeat-each=N --workers=W`; each worker
-  provisions its own condition, so concurrent sessions cannot cross-match.
+  to API calls and pre-seeded into the dashboard's `sessionStorage` under
+  `gdm-admin-token`, from where the dashboard migrates it into
+  `localStorage`). See the smoke-test section in [deployment.md](deployment.md)
+  for the ready-made production command.
+- Keep the full suite at one worker (`workers: 1`, `fullyParallel: false` in
+  `playwright.config.ts`; 5-minute per-test timeout). For a deliberate load
+  probe, target only `tests/golden-path.spec.ts` with
+  `--repeat-each=N --workers=W`; each worker process derives its condition id
+  from its start time (`e2e-<timestamp>`), so concurrent sessions cannot
+  cross-match.
 
 ## Demo script (not a test)
 
-`e2e/scripts/run-demo-discussions.mjs` drives 9 real browsers through the
-full participant flow as 3 parallel groups of 3 (arms `baseline`,
+`e2e/scripts/run-demo-discussions.mjs` drives 9 isolated browser contexts
+(one Chromium process) through the full participant flow as 3 parallel
+groups of 3 (arms `baseline`,
 `public-llm`, `private-llm`) with the real 3-minute warm-up and 10-minute
 discussion (~13 min total). Use it to generate realistic demo data or to
 eyeball the bots live:

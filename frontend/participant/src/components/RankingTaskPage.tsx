@@ -5,7 +5,7 @@ import RankingBoard from "./RankingBoard";
 export interface RankingTaskAnswers {
   /** Item ids, most to least important. */
   individualRanking: string[];
-  /** False when the 10-minute timer expired before every item was ranked. */
+  /** False when the 5-minute timer expired before every item was ranked. */
   rankingCompleted: boolean;
   rankingSecondsUsed: number;
 }
@@ -25,7 +25,7 @@ function formatSeconds(s: number): string {
 /**
  * Page 4 — the individual ranking task ("Survival on the Moon").
  *
- * Submit unlocks once all task items are ranked. A 10-minute countdown runs at
+ * Submit unlocks once all task items are ranked. A 5-minute countdown runs at
  * the top; when it expires the current state is submitted as-is (any leftover
  * items are appended in their shown order and the ranking is flagged
  * incomplete).

@@ -115,7 +115,7 @@ let prisma: PrismaClient | undefined;
 
 /**
  * Wipe every table so each test starts from an empty database. The next
- * createTestApp() re-seeds the five study conditions via StoreService.
+ * createTestApp() re-seeds the three study conditions via StoreService.
  */
 export async function resetDatabase(): Promise<void> {
   process.env.DATABASE_URL = inject("databaseUrl");

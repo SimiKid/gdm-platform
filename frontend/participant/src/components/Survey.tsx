@@ -29,7 +29,7 @@ const STEP_NUMBER: Record<Step, 1 | 2 | 3 | 4> = {
 /**
  * The pre-chat participant flow (pages 1–5):
  * informed consent → about you (demographics) → about you (attitudes)
- * → individual ranking task (10-min timer) → group phase instructions.
+ * → individual ranking task (5-min timer) → group phase instructions.
  * "Join chat" hands the assembled entry survey up to App, which moves
  * on to the waiting room.
  */

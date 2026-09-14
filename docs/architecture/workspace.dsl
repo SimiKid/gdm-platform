@@ -8,15 +8,17 @@ workspace "GDM Study Platform" "AI-supported group decision-making study" {
 
             group "Frontend" {
                 spa = container "Participant Client" "Survey & chat screens; renders inline private nudges" "React, matrix-js-sdk"
-                admin = container "Admin Dashboard" "Configure conditions, trigger export" "React"
+                admin = container "Admin Dashboard" "Prolific outcomes, study overview, results, settings (rounds, parameters), test links, exports" "React"
             }
 
             group "Backend" {
                 sessionManager = container "Session Manager" "Instantiates & tracks sessions per condition and study round (how many done / still needed); persists sessions, surveys & messages; serves reports & exports" "NestJS"
-                chatService = container "Chat Service" "Runtime glue between the session entity, the bot and Matrix during a session" "NestJS"
+                chatService = container "Chat Service" "Runtime glue between the session entity, the bot and Matrix during a session; live checkpoints; optional chat moderation" "NestJS"
                 bot = container "Bot / Rule Engine" "Rule+LLM contribution-dominance detector; sends group or private nudges" "Node module inside Chat Service"
                 matrix = container "Matrix Server" "Real-time chat; rooms = groups; durable message store; E2EE off on study rooms" "Synapse"
-                exportService = container "Export Service" "Future standalone service if exports outgrow Session Manager endpoints" "NestJS"
+                exportService = container "Export Service" "Empty placeholder (backend/export-service); exports currently live in Session Manager" "NestJS" {
+                    tags "Optional"
+                }
                 db = container "Research Database" "Sessions, surveys, messages, interventions" "PostgreSQL" {
                     tags "Database"
                 }
@@ -24,7 +26,10 @@ workspace "GDM Study Platform" "AI-supported group decision-making study" {
         }
 
         # External
-        llm = softwareSystem "LLM (Anthropic API)" "Semantic contribution classification in the nudging arms" {
+        llm = softwareSystem "LLM (Anthropic API)" "Nudge wording, semantic contribution classification in the nudging arms, optional moderation" {
+            tags "External"
+        }
+        prolific = softwareSystem "Prolific" "Recruitment platform: submission validation, returns, bonus payments" {
             tags "External"
         }
 
@@ -40,7 +45,7 @@ workspace "GDM Study Platform" "AI-supported group decision-making study" {
         admin -> sessionManager "Exports JSON / CSV from research DB" "HTTPS/JSON"
 
         sessionManager -> chatService "Starts & owns the live session (with assigned condition)"
-        chatService -> sessionManager "Returns session entity incl. messages (at session end)"
+        chatService -> sessionManager "Live checkpoints; recovery after restart; returns session entity incl. messages (at session end)"
         sessionManager -> db "Persists sessions, conditions, surveys, messages, rankings and interventions" "SQL"
 
         sessionManager -> matrix "Provisions rooms & users, invites participants" "Matrix C-S API / Admin API"
@@ -51,9 +56,12 @@ workspace "GDM Study Platform" "AI-supported group decision-making study" {
         bot -> matrix "Reads event stream via bot user" "Matrix C-S API (/sync)"
         bot -> matrix "Posts nudges (group / private)" "Matrix C-S API"
 
-        bot -> llm "Classifies message contributions (nudging arms)"
+        bot -> llm "Generates nudge wording; classifies message contributions (nudging arms)"
+        sessionManager -> prolific "Validates submissions, requests returns, pays bonuses (when API token configured)" "HTTPS/JSON"
 
-        exportService -> db "Reads for JSON / CSV export" "SQL"
+        exportService -> db "Would read for JSON / CSV export (not implemented)" "SQL" {
+            tags "Optional"
+        }
 
         # NOTE: Synapse also keeps its own internal Postgres (durable message store).
         # It is the fallback if the backend crashes before end-of-session persistence.

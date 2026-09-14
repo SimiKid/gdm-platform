@@ -27,7 +27,9 @@ For a Prolific participant the application:
 
 1. captures `PROLIFIC_PID`, `STUDY_ID`, and `SESSION_ID`;
 2. removes them from the visible address bar;
-3. verifies the submission against Prolific's API when validation is enabled;
+3. verifies the submission against Prolific's API whenever
+   `PROLIFIC_API_TOKEN` is configured (see section 6 for what
+   `PROLIFIC_REQUIRE_VALIDATION` does and does not do);
 4. records an arrival before consent, so early exits are reconcilable;
 5. records progress through consent, entry survey, waiting room, chat, exit
    survey, and completion;
@@ -35,8 +37,12 @@ For a Prolific participant the application:
 7. displays the corresponding Prolific completion/return path; and
 8. exposes audited return and partial-bonus actions in the admin dashboard.
 
-The server, not the browser, assigns `recruitment_source`. Supplying arbitrary
-JSON or a generic token cannot make a direct participant a Prolific participant.
+The server, not the browser, assigns `recruitment_source`. With an API token
+configured, supplying arbitrary JSON or a generic token cannot make a direct
+participant a Prolific participant. Without a token (development, or a
+misconfigured server) any well-formed identifiers are accepted and stored as
+`recruitment_source=prolific` without verification — which is why production
+must run with the token and `PROLIFIC_REQUIRE_VALIDATION=true`.
 
 ## Current production configuration
 
@@ -232,13 +238,18 @@ the intended full base reward unless the protocol explicitly allows that.
 
 ## 3. Configure screening
 
-The app terminates eligibility when a participant reports:
+The app terminates eligibility on the About You page when a participant
+reports:
 
-- age under 18; or
-- English proficiency `None`.
+- an age under 18 (checked when the age field loses focus, before Continue is
+  pressed; ages above 120 are a validation error, not a screen-out); or
+- English proficiency `None` (option value `none`, checked on selection).
 
 It does not terminate `Basic` or `Intermediate` English responses. A
-"prefer not to say" age response remains eligible in the current code.
+"prefer not to say" age response remains eligible in the current code. The
+stored reasons are "The participant reported being younger than the minimum
+age of 18." and "The participant reported no English proficiency for the live
+group discussion."
 
 To configure the current custom screening path in Prolific:
 
@@ -299,8 +310,12 @@ screen-out reward, not the full base reward.
 3. Save its URL in **Voluntary withdrawal**.
 
 Before meaningful participation, the app records no compensation. From the
-entry stage onward it records `manual_review`; the researcher decides whether
-additional compensation is due.
+`entry` stage onward it records `manual_review`; the researcher decides whether
+additional compensation is due. Note that the durable `entry` stage is only
+recorded once the whole entry flow (About You, attitudes, ranking task, group
+intro) has been completed, immediately before `waiting`; while the participant
+is still inside those pages the stored stage is `consent`, so a withdrawal
+there records `none`.
 
 ### Group could not be formed
 
@@ -321,11 +336,19 @@ This handles connection timeouts, room-provisioning failures, participant
 dropout, and group aborts. A partial bonus or manual review may be recorded
 depending on the participant's stage.
 
+Fallbacks when this field is empty: `technical_failure`,
+`participant_dropout` and `group_aborted` fall back to the **Group not
+formed** URL, and `connection_timeout` falls back to the **Voluntary
+withdrawal** URL.
+
 ### Important redirect behavior
 
-The app records the terminal outcome before displaying a redirect. Empty URLs
-fail safely: the participant is told to keep the page open and contact the
-researcher instead of receiving an incorrect code.
+The app records the terminal outcome before displaying a redirect. Empty
+early-exit URLs fail safely: the participant is told to keep the page open and
+contact the researcher instead of receiving an incorrect code. The full
+completion page differs: with an empty **Full completion** field it falls
+back to the build-time `VITE_PAYMENT_URL` before showing the not-configured
+message.
 
 The application cannot observe whether a participant actually clicked a
 Prolific redirect or whether Prolific already processed that completion path.
@@ -345,9 +368,11 @@ app outcome with the submission's current state in Prolific.
    - Voluntary withdrawal
    - Group not formed
    - Technical/group failure
-5. Click **Save**.
+5. Click **Save** (enabled once a field has changed).
 6. Reload the page and verify every value remains present.
 
+Each URL must parse and use `https:` (plain `http:` is accepted only for
+localhost); otherwise `PUT /api/settings` answers 400 and nothing is saved.
 These settings are persisted in the research database. There is no environment
 fallback for early-exit paths. The build-time `VITE_PAYMENT_URL` fallback is
 not a substitute for configuring the production Prolific paths.
@@ -359,23 +384,29 @@ Use `infra/.env.example` as the reference. Production values live only in
 
 | Variable | Meaning | Current value |
 | --- | --- | --- |
-| `PROLIFIC_STUDY_ID` | Only this study may claim a Prolific seat | `6a69fc8742750ae81af3d24a` |
-| `PROLIFIC_API_TOKEN` | Server-only full-permission researcher credential | configured secret |
-| `PROLIFIC_REQUIRE_VALIDATION` | Fail startup unless study ID and API token are configured; validate claimed submissions | `true` |
-| `WAITING_TIMEOUT_MINUTES` | Deadline from creation of the forming lobby | `5` |
-| `PARTICIPANT_RECONNECT_GRACE_SECONDS` | Missing-heartbeat grace before terminal disconnect | `30` |
+| `PROLIFIC_STUDY_ID` | Only this study may claim a Prolific seat (the check is skipped when empty) | `6a69fc8742750ae81af3d24a` |
+| `PROLIFIC_API_TOKEN` | Server-only full-permission researcher credential. Its presence is what switches API-backed validation on | configured secret |
+| `PROLIFIC_REQUIRE_VALIDATION` | Production boot check only: with `GDM_ENV=production` the Session Manager refuses to start unless study ID and API token are configured. It does not itself enable or disable validation | `true` |
+| `WAITING_TIMEOUT_MINUTES` | Deadline from creation of the forming lobby (floored at 1) | `5` |
+| `PARTICIPANT_RECONNECT_GRACE_SECONDS` | Missing-heartbeat grace before terminal disconnect (floored at 5) | `30` |
 | `PARTIAL_PAYMENT_PENCE_PER_MINUTE` | Partial amount per started elapsed minute; minimum enforced by code is 10p | `10` |
-| `PARTIAL_PAYMENT_MAX_PENCE` | Maximum queued partial amount | `508` |
-| `PROLIFIC_AUTO_RETURN_DISCONNECTS` | Call Prolific's request-return API after connection timeout | `true` |
-| `PROLIFIC_PAYMENT_AUTOMATION` | Automatically process all due returns and bonuses every 30 seconds | `false` |
+| `PARTIAL_PAYMENT_MAX_PENCE` | Maximum queued partial amount (floored at 10p) | `508` |
+| `PROLIFIC_AUTO_RETURN_DISCONNECTS` | Call Prolific's request-return API after connection timeout; a failed call is stored as `failed` with a retry in 5 minutes (retried only if automation is on) | `true` |
+| `PROLIFIC_PAYMENT_AUTOMATION` | Every 30 seconds process up to 20 due rows (compensation status `pending` or `failed`, fewer than 5 attempts, retry time reached) | `false` |
 
 Keep `PROLIFIC_PAYMENT_AUTOMATION=false` unless automatic payment has been
 explicitly approved and tested. With it off, compensation actions remain in
-the admin queue. `PROLIFIC_AUTO_RETURN_DISCONNECTS=true` is narrower: it only
-requests a return for the specific connection-timeout path and never pays a
-bonus.
+the admin queue. **With it on, the loop requests a return for every
+non-`completed` outcome that has none yet — including `ineligible` and
+`declined_consent` rows — and then prepares and pays the bonus for `partial`
+rows.** That conflicts with the screened-out design above (Prolific's
+screen-out path is meant to approve and pay the screen-out reward), which is
+a further reason to keep automation off. `PROLIFIC_AUTO_RETURN_DISCONNECTS=true`
+is narrower: it only requests a return for the specific connection-timeout
+path and never pays a bonus.
 
-Production refuses to start with validation enabled but no study ID/API token.
+Production refuses to start with validation required but no study ID/API
+token, and also when `PROLIFIC_PAYMENT_AUTOMATION=true` without an API token.
 If Prolific's API is unavailable, API-backed admission fails closed with a
 temporary validation error rather than admitting an unverified submission.
 
@@ -384,30 +415,42 @@ temporary validation error rather than admitting an unverified submission.
 ### Browser behavior
 
 - All three identifiers must be present.
-- The browser stores the identity in `sessionStorage` for same-tab refresh and
-  removes the identifiers from the address bar with `history.replaceState`.
-- The internal tracking token contains the study and submission IDs but not the
-  participant PID.
+- The browser stores the identity in `sessionStorage` (key
+  `gdm-prolific-identity`; the tracking token under `gdm-tracking-token`) for
+  same-tab refresh and removes the identifiers from the address bar with
+  `history.replaceState`.
+- The internal tracking token (`prolific:<STUDY_ID>:<SESSION_ID>`) contains
+  the study and submission IDs but not the participant PID.
 - Closing the tab clears the browser's Prolific identity; reopening the
   original Prolific link re-establishes and resumes it from the server record.
 
 ### Server validation
 
-With current production settings the server:
+With current production settings (API token configured) the server:
 
-1. requires 24-character alphanumeric PID, study ID, and submission ID;
-2. requires `STUDY_ID` to equal `PROLIFIC_STUDY_ID`;
-3. calls `GET https://api.prolific.com/api/v1/submissions/{SESSION_ID}/`;
-4. requires the returned submission ID, study ID, and participant ID to match;
-5. accepts active/resumable statuses (`RESERVED`, `ACTIVE`,
-   `AWAITING_REVIEW`, and `APPROVED`), with terminal statuses accepted only by
-   the terminal-outcome resume path;
-6. caches a successful match for 60 seconds; and
-7. enforces a unique `(STUDY_ID, SESSION_ID)` database record and PID match.
+1. requires 24-character alphanumeric PID, study ID, and submission ID
+   (`/^[a-z0-9]{24}$/i`; without an API token a 12–23-character preview-style
+   submission ID is also accepted);
+2. requires `STUDY_ID` to equal `PROLIFIC_STUDY_ID` (when set);
+3. rejects a second PID for an already recorded `(STUDY_ID, SESSION_ID)`;
+4. calls `GET https://api.prolific.com/api/v1/submissions/{SESSION_ID}/`;
+5. requires the returned submission ID, study ID, and participant ID to match;
+6. accepts active/resumable statuses (`RESERVED`, `ACTIVE`,
+   `AWAITING_REVIEW`, and `APPROVED`; a missing status also passes). The
+   terminal statuses `RETURNED`, `TIMED_OUT`, `SCREENED_OUT` and `REJECTED`
+   are accepted only by the resume path and the outcome poll, so a returned
+   participant can still see their stored exit state;
+7. caches a successful match for 60 seconds (keyed by study, submission and
+   PID; at most 5 000 entries); and
+8. enforces a unique `(STUDY_ID, SESSION_ID)` database record on both the
+   arrival and the participant table.
 
-The Prolific request timeout is five seconds. A 404 is treated as an unknown
-submission; a mismatched PID/study is rejected; other API failures return a
-temporary service-unavailable response.
+The Prolific request timeout is five seconds for submission checks (eight
+seconds for the admin/automation calls). A 404 is treated as an unknown
+submission; invalid identifiers, a wrong study, an identity mismatch, or a
+non-accepted status answer HTTP 400; a PID that conflicts with a stored
+arrival or seat answers HTTP 409; other API failures return a temporary
+service-unavailable (503) response.
 
 ## 8. Lifecycle, reconnects, and matching
 
@@ -419,8 +462,18 @@ arrived → consent → entry → waiting → chat → exit → done
 ```
 
 - The frontend sends a heartbeat/progress update immediately on a relevant
-  stage and every 10 seconds while active.
-- The backend checks expired lobbies and stale participants every 5 seconds.
+  stage change, whenever the tab becomes visible again, and every 10 seconds
+  while active.
+  The heartbeat reports `consent` for the whole entry flow, then `waiting`,
+  `chat` and `exit`; `entry` is sent once when the entry survey is completed,
+  and nothing is sent on `done`. Stages only advance forward; a later
+  heartbeat cannot regress the stored stage, and any outcome freezes it. The
+  heartbeat also polls the stored outcome and switches to the exit page if a
+  terminal outcome other than `completed` exists.
+- The backend checks expired lobbies and stale participants every 5 seconds
+  (stale participants: up to 100 per sweep, only in stages `arrived` … `exit`;
+  direct participants are never swept). Expired lobbies are additionally
+  aborted synchronously whenever a seat is reserved.
 - The waiting deadline starts when the forming session is created, which is
   effectively when its first participant joins after completing the entry
   flow. Time spent completing the entry survey does not consume the five-minute
@@ -428,8 +481,11 @@ arrived → consent → entry → waiting → chat → exit → done
 - A refresh/reconnect within 30 seconds resumes the existing stage and seat.
 - After 30 seconds without a heartbeat, `connection_timeout` becomes terminal.
 - In a waiting lobby, the stale seat is removed. In a provisioning/running
-  group, the group is aborted and Matrix members are removed so the remaining
-  participants are not stranded in an invalid task.
+  group, the group is aborted, the other Prolific members are terminated with
+  `participant_dropout`, and all Matrix members are removed so the remaining
+  participants are not stranded in an invalid task. A voluntary withdrawal
+  from a provisioning/running group aborts the group in the same way (without
+  the Matrix kick).
 - The same submission cannot join another group after receiving a terminal
   outcome. Reopening the link shows the stored exit/debrief state.
 - A full group provisions the Matrix room in the background and starts the live
@@ -446,14 +502,16 @@ marked `direct` in exports.
 | `completed` | Exit survey persisted and participant marked complete | `full`; normal base reward handled by Prolific path/review | Full completion |
 | `declined_consent` | Consent not granted | `none` | Consent declined |
 | `ineligible` | Under 18 or English proficiency `None` | `none` in the app; Prolific screen-out path pays its configured reward | Ineligible |
-| `voluntary_withdrawal` | Participant chooses to stop | `none` before entry; `manual_review` from entry/wait/chat/exit | Voluntary withdrawal |
-| `connection_timeout` | No heartbeat beyond 30-second grace | `none` at arrival/consent; `manual_review` at entry; time-based `partial` at waiting/chat/exit | Technical/group failure, falling back to withdrawal |
+| `voluntary_withdrawal` | Participant chooses to stop (from a live group this also aborts the group) | `none` before entry; `manual_review` from entry/wait/chat/exit | Voluntary withdrawal |
+| `connection_timeout` | No heartbeat beyond 30-second grace | `none` at arrival/consent; `manual_review` at entry; time-based `partial` at waiting/chat/exit | Technical/group failure, falling back to Voluntary withdrawal |
 | `unmatched` | Group not full after five minutes | time-based `partial` | Group not formed |
-| `technical_failure` | Room provisioning/session failure | time-based `partial` | Technical/group failure |
-| `participant_dropout` | Another participant leaves/disconnects during group | time-based `partial` for affected Prolific group members | Technical/group failure |
-| `group_aborted` | Group invalidated or waiting round closed | time-based `partial` | Technical/group failure |
+| `technical_failure` | Lobby still provisioning its room when the waiting deadline passed | time-based `partial` | Technical/group failure, falling back to Group not formed |
+| `participant_dropout` | Another participant leaves/disconnects during group | time-based `partial` for affected Prolific group members | Technical/group failure, falling back to Group not formed |
+| `group_aborted` | A new study round was started while the participant was in a waiting lobby | time-based `partial` | Technical/group failure, falling back to Group not formed |
 
-Time-based partial compensation is calculated from the persisted arrival time:
+Time-based partial compensation is calculated from the persisted arrival time
+(falling back to the session's creation time when no arrival row exists;
+elapsed time is floored at one second):
 
 ```text
 amount = min(maximum, max(10p, ceil(elapsed_seconds / 60) × pence_per_minute))
@@ -469,17 +527,30 @@ eligibility screen-outs do not show that debrief.
 
 ## 10. Admin compensation workflow
 
-Open **Admin dashboard → Prolific**. Each row shows submission ID, stage/outcome,
-elapsed time, compensation decision/amount, Prolific action state, and errors.
+Open **Admin dashboard → Prolific** (section "Prolific outcomes and
+compensation"). Each row shows the submission ID (first 8 characters; the full
+id in the tooltip), stage/outcome with reason, elapsed time, compensation
+decision/amount, Prolific action state with any error, and the action buttons.
+Actions are only offered for rows whose outcome is not `completed`.
 
-Available actions:
+Available actions (all `POST /api/admin/prolific/outcomes/:id/actions/<action>`):
 
-- **Request return** calls Prolific's submission request-return endpoint.
-- **Prepare bonus** requests a return if the app has not recorded one, then
-  creates a Prolific bulk-bonus batch for the exact queued amount.
-- **Pay bonus** submits the prepared batch for payment.
-- **Resolve manually** records that the researcher reconciled the case outside
-  the automated workflow.
+- **Request return** (`request-return`, confirmation dialog) calls Prolific's
+  `POST /submissions/{SESSION_ID}/request-return/`.
+- **Prepare bonus** (`prepare-bonus`) requests a return if the app has not
+  recorded one, then creates a Prolific bulk-bonus batch
+  (`POST /submissions/bonus-payments/`) for the exact queued amount.
+- **Pay bonus** (`pay-bonus`, confirmation dialog) submits the prepared batch
+  (`POST /bulk-bonus-payments/{batchId}/pay/`). The button only appears, and
+  the server only accepts it, while the row is in state `bonus_prepared`.
+- **Resolve manually** (`resolve-manually`) records that the researcher
+  reconciled the case outside the automated workflow.
+
+Prolific action states: `not_required` (full completion), `pending`,
+`return_requested`, `bonus_prepared`, `payment_in_progress`,
+`payment_uncertain`, `payment_submitted`, `resolved_manually`, and `failed`
+(carries the error and a retry time 5 minutes later; automation retries up to
+5 attempts).
 
 Recommended manual process while `PROLIFIC_PAYMENT_AUTOMATION=false`:
 
@@ -510,14 +581,17 @@ Admin/API sources:
 | Source | Purpose |
 | --- | --- |
 | Admin **Prolific** tab | Live outcome and compensation queue |
-| `GET /api/export/prolific-arrivals` | Every validated arrival, including pre-seat exits |
-| `GET /api/export/prolific-outcomes` | Terminal lifecycle/compensation records |
-| `GET /api/export/linkage.csv` | Identifying pseudonym-to-Prolific/Matrix linkage |
-| `participants.csv` and raw exports | Include `recruitment_source` for direct/Prolific separation |
+| `GET /api/export/prolific-arrivals` | JSON array of every validated arrival (raw PID, study and submission ids, stage, outcome, compensation), including pre-seat exits; no filters |
+| `GET /api/export/prolific-outcomes` | JSON `{ outcomes }` with the same data plus return/bonus/payment fields; no filters |
+| `GET /api/export/linkage.csv` | Pseudonym → internal UUIDs, `tracking_token` (`prolific:<STUDY_ID>:<SESSION_ID>`), `recruitment_source`, Matrix id. It does **not** contain the PID |
+| `participants.csv`, `surveys` exports, full JSON dump | Carry `recruitment_source`; the surveys exports and the full JSON dump also carry the three raw Prolific ids |
+| `research_data.zip` (Overview tab) | Its `results.csv` has a raw `prolific_id` column — identifying |
 
-The normal pseudonymized research ZIP deliberately excludes `linkage.csv` and
-does not expose Prolific IDs. Store the linkage export with appropriately
-restricted access and follow the approved retention/deletion plan.
+The pseudonymized research bundle (`research.zip`) deliberately excludes
+`linkage.csv` and does not expose Prolific IDs. Store the linkage export,
+the surveys exports, the full JSON dump and the Overview-tab research-data zip
+with appropriately restricted access and follow the approved
+retention/deletion plan.
 
 Reconcile using `SESSION_ID` first because it identifies the Prolific
 submission. `PROLIFIC_PID` identifies the participant and `STUDY_ID` identifies
@@ -537,7 +611,9 @@ the production integration is correct.
 Use preview to inspect the study listing and resulting URL shape. For an
 end-to-end admission/completion test, run a small real pilot submission in the
 draft/pilot study, or test in a non-production environment with validation
-disabled. Do not disable production validation while a study is open.
+disabled (`PROLIFIC_API_TOKEN` empty — only then are the shorter preview
+submission ids accepted). Do not disable production validation while a study
+is open.
 
 ### Minimum live pilot
 
@@ -562,6 +638,7 @@ ssh masterproject 'cd ~/gdm-platform/infra && docker compose ps'
 ssh masterproject \
   'cd ~/gdm-platform/infra && docker compose logs --since=10m session-manager \
     | grep -E "Prolific|openSession|completed|terminated|P2024|ERROR"'
+# (P2024 is Prisma's connection-pool timeout code, not an application log line)
 
 curl -fsS https://gdmproject.ifi.uzh.ch/api/health/ready
 ```
@@ -616,13 +693,13 @@ access tokens, or raw linkage data into a shared terminal transcript.
 | Symptom | Likely cause / check |
 | --- | --- |
 | "This Prolific study link is incomplete" | One or two standard parameters are missing or renamed. Confirm all three uppercase names in the final URL. |
-| "We could not validate your Prolific study link" | Check `STUDY_ID`, real submission status, API token, Prolific API availability, and Session Manager logs. Preview synthetic IDs are not accepted in production. |
-| `openSession failed: 400` | Inspect backend logs for invalid/unexpected study, identity mismatch, ended submission, inactive/full conditions, or request validation. |
+| "We could not validate your Prolific study link. Please return to Prolific and try again." | Shown for any failure while entering the study (validation, 409 conflicts, network errors, 503). Check `STUDY_ID`, real submission status, API token, Prolific API availability, and Session Manager logs. Preview synthetic IDs are not accepted in production. |
+| `openSession failed: 400` (Waiting Room error) | 400 covers invalid identifiers, an unexpected study, an unknown submission, an identity mismatch, a non-accepted Prolific status, or request-shape validation. Full/inactive conditions, an already-ended participation, a PID conflict, and an aborted waiting attempt answer 409 instead. |
 | Direct visitors cannot enter | No-parameter links should work. Check active conditions/goals and general service health rather than Prolific settings. |
 | Participant gets a second lobby/seat | The same Prolific submission should be idempotent. Check whether a different `SESSION_ID` or a direct link was used. |
 | Participant cannot rejoin after 30 seconds | The outcome is intentionally terminal after reconnect grace. Reopening shows the recorded exit path, not a new group. |
-| Return button disabled | The participant must acknowledge the debrief, except for no-consent/screen-out paths. |
-| "Return link is not configured" | The matching URL is empty in Admin → Settings. Record is safe; add the correct path and reconcile manually. |
+| Return button disabled | The participant must acknowledge the debrief, except for no-consent/screen-out paths on the exit page. On the full-completion page acknowledgement is always required (direct participants too). |
+| "The return link is not configured. Please keep this page open and contact the researcher through Prolific." (exit page) / "The Prolific completion link has not been configured yet…" (completion page) | The matching URL is empty in Admin → Settings. Record is safe; add the correct path and reconcile manually. |
 | Submission returned but admin still offers Request return | The participant probably followed the Prolific completion path; the app cannot observe that click. Verify in Prolific, then resolve manually. |
 | Bonus is `payment_uncertain` | Check the exact batch/payment in Prolific. Do not click/pay again until reconciled. |
 | Group does not form | Confirm active condition capacity, release sizes, participant dropouts, and five-minute deadline. Process unmatched partial bonuses. |
