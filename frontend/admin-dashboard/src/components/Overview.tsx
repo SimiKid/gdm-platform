@@ -18,12 +18,6 @@ const STATUS_LABEL: Record<SessionStatus, string> = {
   aborted: "aborted",
 };
 
-const INDIVIDUAL_EXPORTS = [
-  { key: "messages", label: "Chat logs" },
-  { key: "interventions", label: "Nudge events" },
-  { key: "surveys", label: "Survey responses" },
-  { key: "contributions", label: "Contributions & behavioral telemetry" },
-] as const;
 
 
 interface Props {
@@ -178,35 +172,22 @@ function ExportCard() {
     <section className="section">
       <h2>Export Data</h2>
       <div className="download-primary">
-        <AuthenticatedDownloadLink className="link-button secondary" path="/export/sessions" filename="detailed_data.json">
-          Full Data (JSON)
-        </AuthenticatedDownloadLink>
-        <AuthenticatedDownloadLink className="link-button" path="/export/sessions.csv" filename="overview.csv">
-          Overview (CSV)
-        </AuthenticatedDownloadLink>
-      </div>
-      <div className="download-primary">
-        <AuthenticatedDownloadLink className="link-button" path="/export/sessions-detailed.csv" filename="detailed_overview.csv">
-          Detailed Overview (CSV)
+        <AuthenticatedDownloadLink className="link-button" path="/export/research-data.zip" filename="research_data.zip">
+          Research Data (CSV)
         </AuthenticatedDownloadLink>
       </div>
       <details className="export-advanced">
-        <summary>Individual datasets</summary>
+        <summary>Advanced</summary>
         <table className="export-table">
           <tbody>
-            {INDIVIDUAL_EXPORTS.map(({ key, label }) => (
-              <tr key={key}>
-                <td>{label}</td>
-                <td>
-                  <AuthenticatedDownloadLink className="link-button" path={`/export/${key}`} filename={`${key}.json`}>
-                    JSON
-                  </AuthenticatedDownloadLink>
-                  <AuthenticatedDownloadLink className="link-button" path={`/export/${key}.csv`} filename={`${key}.csv`}>
-                    CSV
-                  </AuthenticatedDownloadLink>
-                </td>
-              </tr>
-            ))}
+            <tr>
+              <td>Full data dump</td>
+              <td>
+                <AuthenticatedDownloadLink className="link-button" path="/export/sessions" filename="full_data.json">
+                  JSON
+                </AuthenticatedDownloadLink>
+              </td>
+            </tr>
           </tbody>
         </table>
       </details>
