@@ -147,6 +147,21 @@ export class ReportsController {
     const zip = await this.reports.bundleZip(researchFilter(conditionIds, roundIds));
     return new StreamableFile(zip);
   }
+
+  /** results.csv + messages.csv in one zip (Overview tab download). */
+  @Get("export/research-data.zip")
+  @UseGuards(AdminGuard)
+  @Header("Content-Type", "application/zip")
+  @Header("Content-Disposition", 'attachment; filename="research_data.zip"')
+  async exportResearchDataZip(
+    @Query("conditionIds") conditionIds?: string,
+    @Query("roundIds") roundIds?: string,
+  ): Promise<StreamableFile> {
+    const zip = await this.reports.bundleResearchDataZip(
+      researchFilter(conditionIds, roundIds),
+    );
+    return new StreamableFile(zip);
+  }
 }
 
 function researchFilter(conditionIds?: string, roundIds?: string) {

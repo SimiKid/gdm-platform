@@ -594,6 +594,190 @@ export class ReportsService {
   // ── bundle ───────────────────────────────────────────────────────
 
   /** All research CSVs + the codebook, zipped. Excludes linkage.csv. */
+  // ── research-data exports (Overview tab) ──────────────────────────
+
+  async exportResultsCsv(
+    filter: ResearchFilter = {},
+    snapshot?: Session[],
+  ): Promise<string> {
+    const sessions = snapshot ?? (await this.sessions(filter));
+    return toCsv([
+      [
+        "prolific_id",
+        "group_id",
+        "member_id",
+        "condition",
+        "session_status",
+        "age",
+        "gender",
+        "education",
+        "english",
+        ...Array.from({ length: 10 }, (_, i) => `gaais${i + 1}`),
+        ...Array.from({ length: 10 }, (_, i) => `person${i + 1}`),
+        "team",
+        "text",
+        "space",
+        "survival",
+        "rank_true",
+        "rank_init",
+        "rank_fin",
+        "rank_group",
+        "rank_completed",
+        "confidence",
+        "groupcoh1",
+        "groupcoh2",
+        "groupcoh3",
+        "groupcoh4",
+        "groupcoh5",
+        "psysafe1",
+        "psysafe2",
+        "psysafe3",
+        "psysafe4",
+        "psysafe5",
+        "psysafe6",
+        "attention1",
+        "attention2",
+        "feedback",
+        "message_count",
+        "character_count",
+        "intervention_count",
+        "intervention_id",
+      ],
+      ...sessions.flatMap((session) =>
+        session.participants.map((participant, index) => {
+          const row = participantRow(session, participant);
+          const nudges = session.interventions.filter((intervention) =>
+            intervention.targets.some(
+              (target) => target.userId === participant.matrixUserId,
+            ),
+          );
+          // groupDynamics order: [groupConsidered, groupBalanced, attentionCheck1,
+          //   groupDominated, feltTeam, comfortableAgain]
+          // psychSafety order: [safeSpeakUp, raiseConcerns, contradicted,
+          //   attentionCheck2, contributionSerious, contributionInfluenced, heldBack]
+          return [
+            participant.prolific?.participantId ?? "",
+            session.id,
+            String(index + 1),
+            session.condition.name,
+            session.status,
+            cell(row.age),
+            cell(row.gender),
+            cell(row.education),
+            cell(row.englishProficiency),
+            ...row.gaais.map(cell),
+            ...row.tipi.map(cell),
+            cell(row.teamworkFrequency),
+            cell(row.chatComfort),
+            cell(row.spaceflightFamiliarity),
+            cell(row.survivalFamiliarity),
+            expertRankingOrder(),
+            rankingAnswer(participant.entrySurvey, "individualRanking")?.join("|") ?? "",
+            rankingAnswer(participant.exitSurvey, "finalRanking")?.join("|") ?? "",
+            session.ranking.order.join("|"),
+            cell(row.individualRankingCompleted),
+            cell(row.taskConfidence),
+            cell(row.groupDynamics[0]), // groupConsidered
+            cell(row.groupDynamics[1]), // groupBalanced
+            cell(row.groupDynamics[3]), // groupDominated
+            cell(row.groupDynamics[4]), // feltTeam
+            cell(row.groupDynamics[5]), // comfortableAgain
+            cell(row.psychSafety[0]),   // safeSpeakUp
+            cell(row.psychSafety[1]),   // raiseConcerns
+            cell(row.psychSafety[2]),   // contradicted
+            cell(row.psychSafety[4]),   // contributionSerious
+            cell(row.psychSafety[5]),   // contributionInfluenced
+            cell(row.psychSafety[6]),   // heldBack
+            cell(row.groupDynamics[2]), // attentionCheck1
+            cell(row.psychSafety[3]),   // attentionCheck2
+            cell(row.debriefFeedback),
+            String(row.messageCount),
+            String(row.characterCount),
+            String(nudges.length),
+            nudges.map((n) => n.id).join("|"),
+          ];
+        }),
+      ),
+    ]);
+  }
+
+  async exportMessagesFlatCsv(
+    filter: ResearchFilter = {},
+    snapshot?: Session[],
+  ): Promise<string> {
+    const sessions = snapshot ?? (await this.sessions(filter));
+    return toCsv([
+      [
+        "session_id",
+        "group_id",
+        "condition",
+        "message_id",
+        "timestamp",
+        "member_id",
+        "sender_is_bot",
+        "intervention_id",
+        "text",
+        "word_count",
+      ],
+      ...sessions.flatMap((session) => {
+        const memberIndex = new Map<string, number>();
+        session.participants.forEach((p, i) => {
+          if (p.matrixUserId) memberIndex.set(p.matrixUserId, i + 1);
+        });
+        const interventionByMessage = new Map<string, string>();
+        for (const intervention of session.interventions) {
+          interventionByMessage.set(
+            `${intervention.timestamp}|${intervention.message}`,
+            intervention.id,
+          );
+        }
+        return session.chat.messages.map((message) => {
+          const isBotMsg = isServiceUser(message.senderId);
+          const memberId = isBotMsg
+            ? ""
+            : String(memberIndex.get(message.senderId) ?? "");
+          const interventionId = isBotMsg
+            ? interventionByMessage.get(
+                `${message.timestamp}|${message.text}`,
+              ) ?? ""
+            : "";
+          return [
+            session.id,
+            session.id,
+            session.condition.name,
+            message.id,
+            message.timestamp,
+            memberId,
+            isBotMsg ? "true" : "false",
+            interventionId,
+            message.text,
+            String(countWords(message.text)),
+          ];
+        });
+      }),
+    ]);
+  }
+
+  async bundleResearchDataZip(filter: ResearchFilter = {}): Promise<Buffer> {
+    const snapshot = await this.sessions(filter);
+    const [results, messages] = await Promise.all([
+      this.exportResultsCsv(filter, snapshot),
+      this.exportMessagesFlatCsv(filter, snapshot),
+    ]);
+    const archive = archiver("zip", { zlib: { level: 6 } });
+    const chunks: Buffer[] = [];
+    archive.on("data", (chunk: Buffer) => chunks.push(chunk));
+    const finished = new Promise<void>((resolve, reject) => {
+      archive.on("end", () => resolve());
+      archive.on("error", reject);
+    });
+    archive.append(results, { name: "results.csv" });
+    archive.append(messages, { name: "messages.csv" });
+    await archive.finalize();
+    await finished;
+    return Buffer.concat(chunks);
+  }
+
   bundleZip(filter: ResearchFilter = {}): Promise<Buffer> {
     const key = bundleFilterKey(filter);
     const current = this.bundleInFlight.get(key);
@@ -659,6 +843,18 @@ function bundleFilterKey(filter: ResearchFilter): string {
     conditionIds: [...(filter.conditionIds ?? [])].sort(),
     roundIds: [...(filter.roundIds ?? [])].sort((a, b) => a - b),
   });
+}
+
+// ── ranking helpers ─────────────────────────────────────────────────
+
+/** Expert ranking as pipe-separated item IDs, best → worst. */
+const EXPERT_ORDER = Object.entries(MOON_SURVIVAL_EXPERT_RANKING)
+  .sort(([, a], [, b]) => a - b)
+  .map(([id]) => id)
+  .join("|");
+
+function expertRankingOrder(): string {
+  return EXPERT_ORDER;
 }
 
 // ── row builders ───────────────────────────────────────────────────
