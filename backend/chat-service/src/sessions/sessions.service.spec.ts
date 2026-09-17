@@ -48,16 +48,10 @@ function makeBot() {
     botUserId: "@bot:localhost",
     onTimelineEvent: (h: (e: TimelineEvent) => void) => handlers.push(h),
     join: vi.fn(async () => undefined),
-    joinAs: vi.fn(async () => undefined),
     start: vi.fn(),
     stop: vi.fn(),
     ensureReady: vi.fn(async () => undefined),
-    comparisonBotUserIds: vi.fn(async () => [
-      "@gdm_bot_a_x:localhost",
-      "@gdm_bot_b_x:localhost",
-    ]),
     sendText: vi.fn(async () => undefined),
-    sendTextAs: vi.fn(async () => undefined),
     getJoinedMemberIds: vi.fn(async () => ["@u:localhost", "@u2:localhost"]),
     roomHistory: vi.fn(async () => []),
   };
@@ -95,51 +89,6 @@ describe("SessionsService (chat-service)", () => {
   it("startSession joins the room", async () => {
     await svc.startSession(note);
     expect(bot.join).toHaveBeenCalledWith("!r");
-    expect(bot.joinAs).not.toHaveBeenCalled();
-  });
-
-  it("startSession also joins both comparison bots when the condition asks for it", async () => {
-    await svc.startSession({
-      ...note,
-      condition: {
-        ...condition,
-        config: { ...condition.config, comparisonMode: true },
-      },
-    });
-    expect(bot.join).toHaveBeenCalledWith("!r");
-    expect(bot.joinAs).toHaveBeenCalledWith("a", "!r");
-    expect(bot.joinAs).toHaveBeenCalledWith("b", "!r");
-  });
-
-  it("a failed comparison-bot join never kills the takeover — recording continues", async () => {
-    (bot.joinAs as ReturnType<typeof vi.fn>).mockRejectedValue(
-      new Error("bot join failed (403)"),
-    );
-    await svc.startSession({
-      ...note,
-      condition: {
-        ...condition,
-        config: { ...condition.config, comparisonMode: true },
-      },
-    });
-
-    // The runtime was registered despite the join failure: messages record.
-    emit({
-      roomId: "!r",
-      type: "m.room.message",
-      sender: "@u:localhost",
-      eventId: "m1",
-      ts: 1000,
-      content: { body: "hi" },
-    });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(rules.onEvent).toHaveBeenCalled();
-
-    (bot.joinAs as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-    await vi.advanceTimersByTimeAsync(5000);
-    // Both identities were attempted initially and again on the bounded
-    // background retry; recording never stopped while they recovered.
-    expect(bot.joinAs).toHaveBeenCalledTimes(4);
   });
 
   it("does not start the same room twice", async () => {

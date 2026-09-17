@@ -26,14 +26,12 @@ describe("matchmaking & lifecycle (integration)", () => {
   afterEach(() => t.close());
   afterAll(closeHarness);
 
-  it("seeds the five study conditions into Postgres", async () => {
+  it("seeds the three study conditions into Postgres", async () => {
     const res = await request(t.http).get("/api/conditions").expect(200);
     const conditions = res.body as Condition[];
     expect(conditions.map((c) => c.id)).toEqual([
       "baseline",
-      "public-rule",
       "public-llm",
-      "private-rule",
       "private-llm",
     ]);
     expect(conditions[0]).toMatchObject({
@@ -106,7 +104,7 @@ describe("matchmaking & lifecycle (integration)", () => {
     await fillSession(t, "baseline");
 
     const fourth = await openSession(t, "Dora");
-    expect(fourth.session.condition.id).toBe("public-rule");
+    expect(fourth.session.condition.id).toBe("public-llm");
     expect(fourth.session.status).toBe("waiting");
 
     // The next unforced participant joins that forming session instead of

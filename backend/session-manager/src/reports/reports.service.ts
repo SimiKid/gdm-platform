@@ -321,7 +321,6 @@ export class ReportsService {
           round: session.roundId,
           interventionMode: interventionModeOf(session),
           llmMode: evaluation.llmMode,
-          arm: evaluation.arm,
           windowIndex: evaluation.windowIndex,
           windowStart: evaluation.windowStart,
           windowEnd: evaluation.windowEnd,
@@ -368,7 +367,6 @@ export class ReportsService {
           String(session.roundId),
           interventionModeOf(session),
           evaluation.llmMode,
-          evaluation.arm,
           String(evaluation.windowIndex),
           evaluation.windowStart,
           evaluation.windowEnd,
@@ -409,7 +407,6 @@ export class ReportsService {
         "round",
         "intervention_mode",
         "llm_mode",
-        "arm",
         "window_index",
         "window_start",
         "window_end",
@@ -1327,15 +1324,15 @@ Generated: ${generatedAt}
 
 Group decision-making sessions on the NASA "Survival on the Moon" ranking
 task. A turn-taking bot evaluates contribution dominance at the end of every
-contribution window and may nudge the most dominant member. Arms differ on
-two axes:
+contribution window and may nudge the most dominant member. Arms differ only
+in **delivery** (\`intervention_mode\`): \`baseline\` (bot never posts),
+\`public\` (nudge visible to the whole group), \`private\` (nudge rendered
+only to the target).
 
-- **Delivery** (\`intervention_mode\`): \`baseline\` (bot never posts),
-  \`public\` (nudge visible to the whole group), \`private\` (nudge rendered
-  only to the target).
-- **Detection** (\`llm_mode\`): \`off\` (rule-based contribution share) or
-  \`active\` (composite dominance = 0.90 × share + 0.10 × LLM-scored
-  meaningfulness).
+\`llm_mode\` records the detection used to score dominance: \`active\` in
+both nudging arms (composite dominance = 0.90 × share + 0.10 × LLM-scored
+meaningfulness) and \`off\` in the baseline (raw contribution share; the
+classifier is not called). It is not a study axis.
 
 All exports accept \`?conditionIds=a,b,c\` to restrict to specific arms and
 \`?roundIds=1,2\` to restrict to specific study rounds. Sessions from
@@ -1356,7 +1353,7 @@ Sessions are \`S-xxxxxxxx\`, participants \`P-xxxxxxxx\` — the first 8 hex
 chars of SHA-256 over the internal UUID (never the Prolific token). The same
 entity has the same pseudonym in every file and every re-download.
 Pseudonyms are not ordered; sort by \`started_at\`. Bot senders appear as
-\`BOT\` (or \`BOT-A\`/\`BOT-B\` in pilot comparison sessions).
+\`BOT\`.
 
 The separate \`linkage.csv\` export (deliberately NOT in this bundle) maps
 pseudonyms to Prolific tracking tokens and Matrix ids for compensation and
@@ -1398,7 +1395,7 @@ exclusions. Treat it as identifying data; keep it out of analysis folders.
 | debrief_feedback | Free-text feedback from the debriefing page (optional) |
 | message_count, word_count, character_count | This participant's chat activity (bot messages never count) |
 | contribution_share | Share of the session's total contribution score (messages × ${DEFAULT_INTERVENTION_CONFIG.scoreWeights.messages} + words × ${DEFAULT_INTERVENTION_CONFIG.scoreWeights.words}, weights from the condition snapshot) |
-| meaningfulness_score_mean / classified_message_count | LLM classifier aggregates (llm arms only) |
+| meaningfulness_score_mean / classified_message_count | LLM classifier aggregates (nudging arms only; empty in baseline) |
 | nudges_received_total / _public / _private | Bot nudges targeting this participant |
 | typing_duration_ms, tab_hidden_count, ranking_move_count | Behavioral telemetry aggregates |
 
@@ -1416,8 +1413,7 @@ means rather than counted as 0.
 
 ### windows.csv — one row per evaluated window × participant (long format)
 
-Every contribution-window boundary produces exactly one evaluation per
-engine (\`arm\` = \`primary\`, or \`a\`/\`b\` in pilot comparison sessions).
+Every contribution-window boundary produces exactly one evaluation.
 \`outcome\` glossary:
 
 - \`nudged\` — a nudge fired (\`intervention_fired\` = true; \`was_nudged\`

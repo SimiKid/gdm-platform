@@ -1,5 +1,4 @@
 export {
-  botLabel,
   buildIdentities,
   identityFor,
   isBot,

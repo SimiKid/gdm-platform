@@ -250,7 +250,6 @@ describe("chat-service ↔ real Synapse (integration)", () => {
     expect(call.body.windowEvaluations![0]).toMatchObject({
       outcome: "nudged",
       interventionId: logged.id,
-      arm: "primary",
     });
   });
 
@@ -284,80 +283,5 @@ describe("chat-service ↔ real Synapse (integration)", () => {
       audience: "private",
       targets: [expect.objectContaining({ userId: alice.userId })],
     });
-  });
-
-  it("comparison mode: Assistant A and Assistant B both nudge in an invite-only room like production", async () => {
-    const alice = await registerUser("alice");
-    const berta = await registerUser("berta");
-    const condition = testCondition("public");
-    condition.config.comparisonMode = true;
-    condition.config.contributionWindowMinutes = 0.2;
-
-    // Mirror the Session Manager's production provisioning: an invite-only
-    // room (invite PL 100) where every bot must be invited before it can
-    // join — an uninvited bot's join is rejected with 403.
-    const roomId = await createInviteOnlyRoom(alice, `GDM it · ${condition.id}-cmp`);
-    await inviteUser(alice, roomId, berta.userId);
-    await joinRoom(berta, roomId);
-    const bots = (await request(t.http).get("/internal/bot").expect(200)).body as {
-      userId: string;
-      comparisonUserIds: string[];
-    };
-    expect(bots.comparisonUserIds).toHaveLength(2);
-    await inviteUser(alice, roomId, bots.userId);
-    for (const botUserId of bots.comparisonUserIds) {
-      await inviteUser(alice, roomId, botUserId);
-    }
-
-    const sessionId = randomUUID();
-    await request(t.http)
-      .post("/internal/sessions/start")
-      .send({ sessionId, roomId, condition, durationMinutes: 10 })
-      .expect(201);
-    await until(
-      async () => (await joinedMembers(alice, roomId)).includes(bots.userId),
-      "the bot to join the room",
-    );
-
-    // One dominant message triggers both detection arms (without an API key
-    // the LLM arm falls back to 0.9 × share, still above the threshold).
-    await sendText(
-      alice,
-      roomId,
-      "My extensive oxygen plan covers rations suits water and every possible route across the lunar surface for the whole crew.",
-    );
-
-    const nudges = await until(async () => {
-      const events = (await roomMessages(alice, roomId)).filter(
-        (ev) => ev.type === "m.room.message" && /_bot_[ab]_/.test(ev.sender),
-      );
-      return events.length >= 2 ? events : undefined;
-    }, "both comparison bots to nudge", 40_000);
-
-    const senders = nudges.map((ev) => ev.sender);
-    expect(senders.some((sender) => /_bot_a_/.test(sender))).toBe(true);
-    expect(senders.some((sender) => /_bot_b_/.test(sender))).toBe(true);
-    for (const nudge of nudges) {
-      expect(nudge.content.body).toContain("a lot of energy");
-      // Comparison nudges are always public.
-      expect(nudge.content[GDM_RECIPIENT_KEY]).toBeUndefined();
-    }
-
-    await t.moduleRef.get(SessionsService).endSession(roomId);
-    const call = await finalizeFor(sessionId, 10_000);
-    expect(call.body.interventions).toHaveLength(2);
-    expect(call.body.interventions!.map((item) => item.llmMode).sort()).toEqual([
-      "active",
-      "off",
-    ]);
-    // The comparison bots' own nudges are recorded for the research log but
-    // never count toward contribution: Alice's message plus both bot nudges.
-    const senderIds = call.body.messages.map((m) => m.senderId);
-    expect(senderIds[0]).toBe(alice.userId);
-    expect(senderIds.filter((id) => /_bot_[ab]_/.test(id))).toHaveLength(2);
-    // Both arms evaluated the boundary independently.
-    expect(
-      call.body.windowEvaluations?.map((item) => item.arm).sort(),
-    ).toEqual(["a", "b"]);
   });
 });

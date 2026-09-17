@@ -2,7 +2,7 @@
  * Demo data generator: drives 9 real browser participants through the FULL
  * study flow (consent → entry survey → individual ranking → chat → exit
  * survey → debriefing) as 3 parallel groups of 3, one per study arm:
- * baseline, public-llm, private-llm.
+ * baseline, public-llm, private-llm (the full condition set).
  *
  * Uses the real pilot links and the arms' REAL parameters (10-minute
  * discussion, 3-minute warm-up), so expect a total runtime of ~13 minutes.

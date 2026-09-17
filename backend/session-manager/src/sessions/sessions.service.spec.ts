@@ -69,13 +69,7 @@ describe("SessionsService (session-manager)", () => {
         ok: true,
         json: async () =>
           String(url).includes("/internal/bot")
-            ? {
-                userId: "@bot:localhost",
-                comparisonUserIds: [
-                  "@gdm_bot_a_x:localhost",
-                  "@gdm_bot_b_x:localhost",
-                ],
-              }
+            ? { userId: "@bot:localhost" }
             : {},
       })),
     );
@@ -542,48 +536,6 @@ describe("SessionsService (session-manager)", () => {
     );
   });
 
-  it("invites the comparison bots when provisioning a two-bot condition", async () => {
-    const baseline = (await store.listConditions())[0];
-    await store.upsertCondition({
-      ...baseline,
-      id: "compare",
-      name: "Compare",
-      config: { ...baseline.config, comparisonMode: true },
-    });
-    const first = await svc.openSession({ ...open(), conditionId: "compare" });
-    await svc.openSession({ ...open(), conditionId: "compare" });
-    await svc.openSession({ ...open(), conditionId: "compare" });
-    await waitForStatus(svc, first.session.id, "running");
-
-    // Rooms are invite-only: without these invites the comparison bots'
-    // joins are rejected with 403 (the prod incident this guards against).
-    expect(matrix.invite).toHaveBeenCalledWith("!room:localhost", "@bot:localhost");
-    expect(matrix.invite).toHaveBeenCalledWith(
-      "!room:localhost",
-      "@gdm_bot_a_x:localhost",
-    );
-    expect(matrix.invite).toHaveBeenCalledWith(
-      "!room:localhost",
-      "@gdm_bot_b_x:localhost",
-    );
-  });
-
-  it("regular conditions never invite the comparison bots", async () => {
-    const first = await svc.openSession(open());
-    await svc.openSession(open());
-    await svc.openSession(open());
-    await waitForStatus(svc, first.session.id, "running");
-
-    expect(matrix.invite).not.toHaveBeenCalledWith(
-      "!room:localhost",
-      "@gdm_bot_a_x:localhost",
-    );
-    expect(matrix.invite).not.toHaveBeenCalledWith(
-      "!room:localhost",
-      "@gdm_bot_b_x:localhost",
-    );
-  });
-
   it("auto-off: assigns the next condition once one reaches its goal", async () => {
     const cond1 = (await store.listConditions())[0];
     for (let i = 0; i < 5; i++) {
@@ -592,7 +544,7 @@ describe("SessionsService (session-manager)", () => {
       await store.saveSession(session);
     }
     const res = await svc.openSession(open());
-    expect(res.session.condition.id).toBe("public-rule");
+    expect(res.session.condition.id).toBe("public-llm");
   });
 
   it("throws ConflictException when the whole study is full", async () => {
@@ -818,7 +770,7 @@ describe("SessionsService (session-manager)", () => {
   it("exports sessions as JSON bundle and CSV summary", async () => {
     await svc.openSession(open());
     expect((await svc.exportBundle()).sessions).toHaveLength(1);
-    expect((await svc.exportBundle({ conditionIds: ["private-rule"] })).sessions).toHaveLength(0);
+    expect((await svc.exportBundle({ conditionIds: ["private-llm"] })).sessions).toHaveLength(0);
 
     const csv = await svc.exportCsv();
     expect(csv).toContain("session_id,condition_id");
@@ -838,12 +790,11 @@ describe("SessionsService (session-manager)", () => {
     expect(cells[0]).toBe(res.session.id);
     // Standard dot decimals for the configuration numbers.
     expect(cells).toContain("0.4"); // contribution_threshold
-    expect(cells).toContain("FALSE"); // comparison_mode
     // Retired tone suffixes fold onto the canonical axis.
     expect(cells).toContain("baseline"); // intervention_mode
 
     // Condition filter applies like every other export.
-    expect(await svc.exportDetailedCsv({ conditionIds: ["private-rule"] })).toBe(
+    expect(await svc.exportDetailedCsv({ conditionIds: ["private-llm"] })).toBe(
       csv.split("\n")[0],
     );
   });
@@ -906,11 +857,11 @@ describe("SessionsService (session-manager)", () => {
     });
 
     // Condition filter applies to every data set.
-    expect((await svc.exportMessages({ conditionIds: ["private-rule"] })).messages).toHaveLength(0);
+    expect((await svc.exportMessages({ conditionIds: ["private-llm"] })).messages).toHaveLength(0);
     expect(
-      (await svc.exportInterventions({ conditionIds: ["private-rule"] })).interventions,
+      (await svc.exportInterventions({ conditionIds: ["private-llm"] })).interventions,
     ).toHaveLength(0);
-    expect((await svc.exportSurveys({ conditionIds: ["private-rule"] })).surveys).toHaveLength(0);
+    expect((await svc.exportSurveys({ conditionIds: ["private-llm"] })).surveys).toHaveLength(0);
 
     // CSV variants: headers, escaping, serialized details.
     const messagesCsv = await svc.exportMessagesCsv();

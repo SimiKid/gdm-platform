@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Session } from "@gdm/shared";
-import { botKindLabel, pseudonymize, senderPseudonym } from "./pseudonym";
+import { pseudonymize, senderPseudonym } from "./pseudonym";
 
 const session = {
   participants: [
@@ -36,21 +36,12 @@ describe("senderPseudonym", () => {
 
   it("labels bot senders without hashing them", () => {
     expect(senderPseudonym(session, "@gdm_bot:localhost")).toBe("BOT");
-    expect(senderPseudonym(session, "@gdm_bot_a_x:localhost")).toBe("BOT-A");
-    expect(senderPseudonym(session, "@gdm_bot_b_x:localhost")).toBe("BOT-B");
+    expect(senderPseudonym(session, "@gdm_bot_x1:localhost")).toBe("BOT");
   });
 
   it("hashes unknown senders instead of leaking the raw id", () => {
     const result = senderPseudonym(session, "@stranger:localhost");
     expect(result).toMatch(/^P-[0-9a-f]{8}$/);
     expect(result).not.toContain("stranger");
-  });
-});
-
-describe("botKindLabel", () => {
-  it("distinguishes the comparison arms", () => {
-    expect(botKindLabel("@gdm_bot:x")).toBe("BOT");
-    expect(botKindLabel("@gdm_bot_a_1:x")).toBe("BOT-A");
-    expect(botKindLabel("@gdm_bot_b_1:x")).toBe("BOT-B");
   });
 });

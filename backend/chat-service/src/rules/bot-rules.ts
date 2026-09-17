@@ -77,28 +77,16 @@ interface PendingClassification {
   request: Promise<void>;
 }
 
-/** Tuning knobs for one rule-engine instance (used by the comparison mode). */
-export interface RuleEngineOptions {
-  /** Where this engine keeps its reset/grace state on the runtime. */
-  stateKey?: string;
-  /** Force the detection arm, overriding condition config and env. */
-  forceLlmMode?: LlmMode;
-  /**
-   * Deliver nudges publicly as this named comparison bot ("a" / "b") instead
-   * of the primary bot, ignoring the condition's delivery audience.
-   */
-  deliverAs?: string;
-}
-
 /**
  * Turn-equalization logic for the current study design.
  *
  * The bot evaluates at the end of every contribution window (every
  * `contributionWindowMinutes`): a participant dominates once their dominance
  * score over that window crosses the condition threshold, and at most one
- * nudge is sent per window. Rule-based detection scores message count + word
- * count; with `llmMode: "active"` the score becomes the composite `0.90 ×
- * contribution share + 0.10 × mean meaningfulness` (study protocol).
+ * nudge is sent per window. Both nudging arms run `llmMode: "active"`: the
+ * score is the composite `0.90 × contribution share + 0.10 × mean
+ * meaningfulness` (study protocol). With `llmMode: "off"` (the silent
+ * baseline) the score is the raw share of message count + word count.
  * Detection is identical across delivery conditions — only public vs. private
  * delivery differs.
  */
@@ -110,7 +98,6 @@ export class ContributionBotRules implements BotRules {
     @Optional()
     @Inject(CONTRIBUTION_CLASSIFIER)
     private readonly classifier?: ContributionClassifier,
-    private readonly options: RuleEngineOptions = {},
     private readonly messageGenerator?: NudgeMessageGenerator,
   ) {}
 
@@ -118,10 +105,10 @@ export class ContributionBotRules implements BotRules {
     if (event.type !== "m.room.message") return;
 
     const config = normalizeConfig(runtime.condition.config);
-    const llmMode = this.options.forceLlmMode ?? resolveLlmMode(config);
+    const llmMode = resolveLlmMode(config);
     if (llmMode === "off" || !this.classifier) return;
     const participantIds = await this.getParticipantIds(runtime);
-    const state = getRuleState(runtime, this.options.stateKey ?? STATE_KEY);
+    const state = getRuleState(runtime, STATE_KEY);
     await this.classifyMessage(runtime, event, config, llmMode, participantIds, state);
   }
 
@@ -131,10 +118,10 @@ export class ContributionBotRules implements BotRules {
     windowEndMs: number,
   ): Promise<void> {
     const config = normalizeConfig(runtime.condition.config);
-    const llmMode = this.options.forceLlmMode ?? resolveLlmMode(config);
-    // Every boundary leaves exactly one evaluation record per engine, so the
-    // research record covers quiet windows and baseline sessions — not just
-    // fired nudges. Recording is purely additive; firing behavior unchanged.
+    const llmMode = resolveLlmMode(config);
+    // Every boundary leaves exactly one evaluation record, so the research
+    // record covers quiet windows and baseline sessions — not just fired
+    // nudges. Recording is purely additive; firing behavior unchanged.
     const record = (
       outcome: WindowOutcome,
       extras: Partial<WindowEvaluation> = {},
@@ -143,7 +130,6 @@ export class ContributionBotRules implements BotRules {
         id: randomUUID(),
         sessionId: runtime.sessionId,
         conditionId: runtime.condition.id,
-        arm: this.options.deliverAs ?? "primary",
         windowIndex: windowIndex(runtime, config, windowEndMs),
         windowStart: new Date(
           windowEndMs - config.contributionWindowMinutes * 60_000,
@@ -171,7 +157,7 @@ export class ContributionBotRules implements BotRules {
       record("too-few-participants");
       return;
     }
-    const state = getRuleState(runtime, this.options.stateKey ?? STATE_KEY);
+    const state = getRuleState(runtime, STATE_KEY);
 
     // Warm-up messages never count, even if a window overlaps the warm-up
     // (the timer grid normally starts at warm-up end; this is the backstop
@@ -215,29 +201,18 @@ export class ContributionBotRules implements BotRules {
       return;
     }
 
-    const mode = config.interventionMode;
-    // Comparison bots follow the condition's delivery audience too — a
-    // private 2-bot test must stay private (only the target sees A and B).
-    const audience = audienceForMode(mode);
+    const audience = audienceForMode(config.interventionMode);
     if (audience === "none") {
       record("baseline-suppressed", evaluated);
       return;
     }
     const target = targets[0];
     const quietMembers = quietestMembers(split, target, config.contributionThreshold);
-    // Keep a per-arm index for the operational fallback variants.
-    const nudgeIndex = runtime.interventions.filter(
-      (item) => item.llmMode === llmMode,
-    ).length;
+    // Rotate the operational fallback variants across the session's nudges.
+    const nudgeIndex = runtime.interventions.length;
     const message = await this.buildMessage(runtime, split, target, nudgeIndex);
 
-    if (this.options.deliverAs) {
-      await runtime.postAs(
-        this.options.deliverAs,
-        message,
-        audience === "private" ? target.userId : undefined,
-      );
-    } else if (audience === "public") {
+    if (audience === "public") {
       await runtime.post(message);
     } else {
       await runtime.postPrivate(target.userId, message);
@@ -584,22 +559,14 @@ function toTarget(entry: ContributionShare): InterventionTarget {
 }
 
 /**
- * The rules implementation wired into the Chat Service. Normal sessions run a
- * single engine that follows the condition config. When a condition sets
- * `comparisonMode: true` (pilot/user-testing only), BOTH detection arms run
- * side by side with independent reset/grace state:
- *
- *   - "Assistant A" (`gdm_bot_a_…`) — rule-based detection
- *   - "Assistant B" (`gdm_bot_b_…`) — rule-based + LLM meaningfulness
- *
- * Both follow the condition's delivery audience: public conditions show A and
- * B to everyone, private conditions show both only to the nudged member.
+ * The rules implementation wired into the Chat Service: one
+ * `ContributionBotRules` engine that follows the condition config, plus a
+ * short, bounded wait at each window boundary so classifications still in
+ * flight for the closed window are counted rather than treated as missing.
  */
 @Injectable()
 export class StudyBotRules implements BotRules {
-  private readonly single: ContributionBotRules;
-  private readonly ruleArm: ContributionBotRules;
-  private readonly llmArm: ContributionBotRules;
+  private readonly engine: ContributionBotRules;
   private readonly pending = new WeakMap<
     SessionRuntime,
     Map<string, PendingClassification>
@@ -613,36 +580,14 @@ export class StudyBotRules implements BotRules {
     @Inject(NUDGE_MESSAGE_GENERATOR)
     messageGenerator?: NudgeMessageGenerator,
   ) {
-    this.single = new ContributionBotRules(classifier, {}, messageGenerator);
-    this.ruleArm = new ContributionBotRules(
-      classifier,
-      {
-        stateKey: `${STATE_KEY}:A`,
-        forceLlmMode: "off",
-        deliverAs: "a",
-      },
-      messageGenerator,
-    );
-    this.llmArm = new ContributionBotRules(
-      classifier,
-      {
-        stateKey: `${STATE_KEY}:B`,
-        forceLlmMode: "active",
-        deliverAs: "b",
-      },
-      messageGenerator,
-    );
+    this.engine = new ContributionBotRules(classifier, messageGenerator);
   }
 
   async onEvent(runtime: SessionRuntime, event: TimelineEvent): Promise<void> {
-    const engine =
-      runtime.condition.config.comparisonMode === true
-        ? this.llmArm
-        : this.single;
     const entries =
       this.pending.get(runtime) ?? new Map<string, PendingClassification>();
     this.pending.set(runtime, entries);
-    const request = engine.onEvent(runtime, event).finally(() => {
+    const request = this.engine.onEvent(runtime, event).finally(() => {
       if (entries.get(event.eventId)?.request === request) {
         entries.delete(event.eventId);
       }
@@ -655,18 +600,8 @@ export class StudyBotRules implements BotRules {
     runtime: SessionRuntime,
     windowEndMs: number,
   ): Promise<void> {
-    if (runtime.condition.config.comparisonMode === true) {
-      // Evaluate Assistant A first at the boundary. Assistant B then gets a
-      // short, bounded chance to include classifications still in flight for
-      // this closed window. Wording generation is bounded separately and has
-      // a fixed fallback for either arm.
-      await this.ruleArm.onWindowElapsed(runtime, windowEndMs);
-      await this.waitForWindowClassifications(runtime, windowEndMs);
-      await this.llmArm.onWindowElapsed(runtime, windowEndMs);
-      return;
-    }
     await this.waitForWindowClassifications(runtime, windowEndMs);
-    await this.single.onWindowElapsed(runtime, windowEndMs);
+    await this.engine.onWindowElapsed(runtime, windowEndMs);
   }
 
   private async waitForWindowClassifications(

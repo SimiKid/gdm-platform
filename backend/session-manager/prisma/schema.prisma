@@ -241,7 +241,6 @@ model WindowEvaluationRecord {
   id          String        @id
   sessionId   String        @map("session_id")
   conditionId String        @map("condition_id")
-  arm         String
   windowIndex Int           @map("window_index")
   windowStart DateTime      @map("window_start")
   windowEnd   DateTime      @map("window_end")

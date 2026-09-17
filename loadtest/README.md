@@ -20,8 +20,12 @@ The harness exercises:
   tune with `LOADTEST_REACTION_MIN/MAX_SECONDS`);
 - Chat Service checkpoints and both PostgreSQL databases.
 
-It does not need application dependencies. It uses a local `k6` binary when
-available and otherwise runs the pinned official k6 Docker image.
+It does not need the application's npm dependencies installed. The runner
+requires `node` and `curl`, uses `git` for the commit stamp when available,
+needs `ssh` whenever `LOADTEST_SSH_TARGET` is set, and either a local
+`k6` binary or Docker, in which case it runs the pinned official k6 image
+(`grafana/k6:1.7.1`, override with `LOADTEST_K6_IMAGE`). The optional browser
+canary additionally needs `pnpm` and the installed `e2e` workspace.
 
 ## One-time setup
 
@@ -35,8 +39,10 @@ Edit `loadtest/.env`:
 2. Verify `LOADTEST_SSH_TARGET=masterproject`.
 3. Leave `LOADTEST_BROWSER_CANARY=0` for the first protocol-only smoke run;
    enable it for the diagnostic run if Playwright is installed.
-4. For production only, set the exact confirmation value documented in the
-   example file after scheduling a maintenance window.
+4. For production only, set
+   `LOADTEST_CONFIRM_PRODUCTION=I_UNDERSTAND_THIS_WILL_CREATE_REAL_LOAD`
+   after scheduling a maintenance window (the runner prints this value when it
+   refuses to start without it).
 
 Before a production test:
 
@@ -59,13 +65,17 @@ From the repository root:
 The command:
 
 1. verifies the API, Matrix endpoint, SSH access, and absence of running
-   sessions, and records the server file-descriptor limits;
+   sessions (refusing to start if *any* session is running — test residue
+   included — unless
+   `LOADTEST_IGNORE_RUNNING_SESSIONS=I_CONFIRMED_THEY_ARE_TEST_SESSIONS`),
+   and records the server file-descriptor limits;
 2. creates a unique `e2e-load-*` condition with baseline rules and LLM disabled;
-3. starts the system dashboard at <http://127.0.0.1:5666>;
-4. starts the k6 dashboard at <http://127.0.0.1:5665>;
-5. executes the selected profile;
-6. writes all results below `loadtest/results/<run-id>/`;
-7. deactivates the condition even if the test fails or is interrupted.
+3. starts the system dashboard at <http://127.0.0.1:5666> and, if enabled,
+   the browser-canary loop;
+4. executes the selected profile, with the k6 dashboard at
+   <http://127.0.0.1:5665>;
+5. writes all results below `loadtest/results/<run-id>/`;
+6. deactivates the condition even if the test fails or is interrupted.
 
 After the smoke test passes, acknowledge it in `.env`:
 
@@ -80,9 +90,10 @@ For the infrastructure evidence requested by the system administrator, run:
 ```
 
 This profile ramps to and holds 30, 99 and 249 participants, then stops. It
-continues collecting after ordinary SLO failures so the report contains the
-resource state at the point of degradation. A separate 25% protocol-failure
-emergency threshold still aborts a broad platform collapse.
+(like `intermediate`) continues collecting after ordinary SLO failures so the
+report contains the resource state at the point of degradation. A separate
+25% protocol-failure emergency threshold still aborts a broad platform
+collapse.
 
 To narrow the capacity boundary between the validated 99-user stage and the
 degraded 249-user stage, run the group-aligned intermediate profile:
@@ -101,12 +112,16 @@ Use `step` only when intentionally testing beyond 249 participants:
 ./loadtest/run.sh step
 ```
 
-The 498/798-user profiles refuse to start if Caddy or Synapse still has fewer
-than 4,096 file descriptors. Raising the deployment to 65,535 is recommended;
-the refusal can be overridden only with the explicit value printed by the
-runner when intentionally testing the known ceiling. The 249-user diagnostic
-profile records the existing limit in its evidence bundle and emits a warning,
-but deliberately preserves the current VM configuration for the baseline.
+The 498/798-user profiles (`step`, `spike`, `soak`) refuse to start if Caddy
+or Synapse still has fewer than 4,096 file descriptors. The compose files
+already request a 65536 `nofile` limit for Caddy, Synapse, Session Manager
+and Chat Service; if the host does not honour it, raise it there. The refusal
+can be overridden only with
+`LOADTEST_IGNORE_LOW_FD_LIMIT=I_ACCEPT_THE_DESCRIPTOR_CEILING` (printed by the
+runner) when intentionally testing the known ceiling. The `smoke`,
+`diagnostic` and `intermediate` profiles record the existing limit in their
+evidence bundle and emit a warning, but deliberately preserve the current VM
+configuration for the baseline.
 
 Available profiles:
 
@@ -125,7 +140,8 @@ participants remain indefinitely in a partial group.
 ## Dashboards and results
 
 The system dashboard samples the deployment over SSH at the configured
-interval (ten seconds is recommended for diagnostic runs):
+interval (`LOADTEST_MONITOR_INTERVAL_SECONDS`; the code default is 5 s, the
+example file sets 10 s, which is recommended for diagnostic runs):
 
 - host and per-core CPU (user/system/busy/idle/I/O-wait/steal), Linux load,
   memory, swap, Pressure Stall Information, network rates and TCP connections;
@@ -155,18 +171,21 @@ Each run directory contains:
 - `k6-report.html`
 - `server-metrics.jsonl`
 - `system-dashboard.log`
-- optional `browser-canary-*.log`
-- `file-descriptor-preflight.txt` (on SSH-enabled runs)
+- `load-generator-preflight.txt` and `traffic-started-at.txt`
+- optional `browser-canary-<n>.log` (numbered per canary iteration)
+- `file-descriptor-preflight.txt` and `diagnostic-preflight.txt` (on
+  SSH-enabled runs)
 
 At the end of every monitored run, `scripts/report.mjs` also generates:
 
 - `diagnostic-report.html` — the primary report to send or print to PDF;
 - `diagnostic-report.md` — a text-friendly equivalent;
 - `diagnostic-summary.json` — all derived stage summaries;
-- stage, CPU-core, container, process, disk and database CSV files;
+- `stage-summary.csv`, `cpu-core-summary.csv`, `container-summary.csv`,
+  `process-summary.csv`, `disk-summary.csv` and `database-summary.csv`;
 - `share-with-admin/` — a self-contained evidence bundle containing the
-  reports, CSVs, raw k6/system metrics, preflight configuration, canary logs
-  and SHA-256 checksums.
+  reports, CSVs, raw k6/system metrics, preflight configuration, canary logs,
+  a README and `SHA256SUMS.txt`.
 - `gdm-diagnostic-evidence-<run-id>.tar.gz` — the same evidence bundle as one
   attachment suitable for sending to the system administrator.
 
@@ -189,6 +208,10 @@ The most important custom metrics are:
 - `protocol_failure_rate`
 - `http_429_count`
 - `http_5xx_count`
+
+(`gdm_api_latency_ms`, tagged per endpoint and carrying the session-poll p95
+threshold, and the counters `messages_sent`, `messages_observed` and
+`matrix_events_sent` are also recorded.)
 
 Matrix `/sync` is a deliberate long-poll. Its HTTP duration is not used as a
 responsiveness threshold; message delivery time is measured from a timestamped
@@ -233,8 +256,16 @@ Stop it with `Ctrl-C`.
 - The condition is deactivated after the run.
 - `e2e-*` sessions are excluded from research exports by the application.
 - Load sessions are stamped with the currently open **study round** like any
-  other session. They never appear in exports (previous point), but they are
-  visible in the rounds' session counts on a live study dashboard.
+  other session. They never appear in exports (previous point), and the
+  rounds' session counts exclude `e2e-` conditions too; they are only visible
+  in the dashboard's E2E test-residue section and the raw session list.
+- Further tunables (all `LOADTEST_*`, see the comments in `loadtest/.env.example`
+  and `loadtest/run.sh`): `LOADTEST_MONITOR`, `LOADTEST_OPEN_DASHBOARD`,
+  `LOADTEST_SYSTEM_DASHBOARD_PORT`, `LOADTEST_ENV_FILE`, `LOADTEST_RUN_ID`,
+  `LOADTEST_CONDITION_ID`, `LOADTEST_RESULT_DIR`, `LOADTEST_BASE_URL`,
+  `LOADTEST_K6_IMAGE`, `LOADTEST_GROUP_SIZE`, `LOADTEST_SYNC_TIMEOUT_MS`,
+  `LOADTEST_MESSAGE_*`, `LOADTEST_CURSOR_SECONDS`, `LOADTEST_RANKING_*`,
+  `LOADTEST_CANARY_*` and the `LOADTEST_SLO_*` thresholds.
 - Rooms and Matrix users remain as test residue. Use a disposable staging
   database for repeated high-load runs.
 - `LOADTEST_SESSION_MINUTES` controls when the server-side Chat Service

@@ -78,7 +78,7 @@ const SESSION_INCLUDE = {
     orderBy: { timestamp: "asc" },
   },
   windowEvaluations: {
-    orderBy: [{ windowIndex: "asc" }, { arm: "asc" }],
+    orderBy: { windowIndex: "asc" },
   },
 } satisfies Prisma.SessionRecordInclude;
 
@@ -2058,7 +2058,6 @@ export class StoreService implements OnModuleInit {
           id: evaluation.id,
           sessionId,
           conditionId: evaluation.conditionId,
-          arm: evaluation.arm,
           windowIndex: evaluation.windowIndex,
           windowStart: toDate(evaluation.windowStart),
           windowEnd: toDate(evaluation.windowEnd),
@@ -2405,9 +2404,9 @@ export function shuffleRankingOrder(
 }
 
 /**
- * The study's 2×2 + baseline design: delivery (public/private) × detection
- * (rule-based / rule-based + LLM meaningfulness). Detection is carried by
- * `llmMode` ("off" = rule-based, "active" = rule + LLM).
+ * The study's delivery-only design: a silent baseline plus public and
+ * private nudge delivery. Both nudging arms use rule + LLM detection
+ * (`llmMode: "active"`); the baseline never posts and skips the classifier.
  */
 function seedConditions(): Condition[] {
   const arms: {
@@ -2417,9 +2416,7 @@ function seedConditions(): Condition[] {
     llmMode: "off" | "active";
   }[] = [
     { id: "baseline", name: "Baseline", mode: "baseline", llmMode: "off" },
-    { id: "public-rule", name: "Public × Rule-based", mode: "public", llmMode: "off" },
     { id: "public-llm", name: "Public × Rule+LLM", mode: "public", llmMode: "active" },
-    { id: "private-rule", name: "Private × Rule-based", mode: "private", llmMode: "off" },
     { id: "private-llm", name: "Private × Rule+LLM", mode: "private", llmMode: "active" },
   ];
 

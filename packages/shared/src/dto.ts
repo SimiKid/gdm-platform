@@ -334,8 +334,6 @@ export interface RuntimeCheckpoint {
 
 export interface RecoverSessionsRequest {
   botUserId: string;
-  /** Comparison-mode bot users (Assistant A/B) to re-invite where needed. */
-  comparisonBotUserIds?: string[];
 }
 
 /**
