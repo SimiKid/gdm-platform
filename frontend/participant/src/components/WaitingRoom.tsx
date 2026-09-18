@@ -5,6 +5,7 @@ import type { ProlificIdentity, PublicSession, Survey } from "@gdm/shared";
 import { httpSessionManager } from "../study/sessionClient";
 import { saveProgress } from "../study/progress";
 import StudyShell from "./StudyShell";
+import DinoGame from "./DinoGame";
 
 interface Props {
   trackingToken: string;
@@ -238,6 +239,7 @@ export default function WaitingRoom({
           {count}
           {groupSize ? ` / ${groupSize}` : ""} people joined
         </p>
+        <DinoGame />
         {secondsRemaining !== null && (
           <p className="action-hint" role="timer">
             If a complete group cannot be formed, waiting ends in {Math.floor(secondsRemaining / 60)}:
