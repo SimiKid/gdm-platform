@@ -24,11 +24,12 @@ const DISCUSSION_MINUTES = 1;
 const GROUP_SIZE = 3;
 const TEST_PROLIFIC = (() => {
   if (process.env.E2E_FAKE_PROLIFIC !== "1") return undefined;
-  const suffix = Date.now().toString(36).padStart(23, "0").slice(-23);
+  // Match the identity returned by infra/local-mocks.cjs.
+  const suffix = Date.now().toString(16).padStart(24, "0");
   return {
-    participantId: `p${suffix}`,
-    studyId: `s${suffix}`,
-    sessionId: `r${suffix}`,
+    participantId: suffix,
+    studyId: "aaaaaaaaaaaaaaaaaaaaaaaa",
+    sessionId: suffix,
   };
 })();
 

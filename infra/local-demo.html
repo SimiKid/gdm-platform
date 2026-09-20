@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>GDM local demo</title>
+<style>body{font:18px system-ui;max-width:760px;margin:60px auto;padding:24px;background:#f4f7fa;color:#172b4d}a{color:#075fc4}li{margin:20px 0}section{background:white;padding:24px;border-radius:12px}</style>
+<h1>GDM local demo</h1><section>
+<p>Anthropic and Prolific are simulated. No real AI requests or payments are made.</p>
+<p><a href="http://localhost:3003" target="_blank" rel="noopener">Researcher dashboard</a> · <a href="/" target="_blank" rel="noopener">Direct participant entry</a></p>
+<p>Open each mock Prolific participant in its own tab. Complete all three entry flows to start a group.</p>
+<ul id="links"></ul><button onclick="location.reload()">Generate a fresh group</button>
+<p>Mock AI uses simple text heuristics. Results are demonstration data, not research judgments.</p>
+<p id="complete"></p></section>
+<script>
+for(let i=1;i<=3;i++){
+ const id=crypto.randomUUID().replaceAll('-','').slice(0,24);
+ const link=document.createElement('a');
+ link.href='/?conditionId=public-llm&PROLIFIC_PID='+id+'&STUDY_ID=aaaaaaaaaaaaaaaaaaaaaaaa&SESSION_ID='+id;
+ link.target='_blank';link.rel='noopener';link.textContent='Mock participant '+i;
+ const li=document.createElement('li');li.append(link);document.querySelector('#links').append(li);
+}
+if(location.search.includes('complete'))document.querySelector('#complete').textContent='Mock completion received. No external submission or payment was made.';
+</script></html>

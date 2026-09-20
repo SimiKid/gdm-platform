@@ -1,0 +1,40 @@
+# Use with the base file ONLY, not docker-compose.override.yml or production.
+services:
+  synapse:
+    ports: ["127.0.0.1:8010:8008"]
+  research-db:
+    ports: ["127.0.0.1:5433:5432"]
+  session-manager:
+    ports: ["127.0.0.1:3001:3001"]
+    volumes:
+      - ./local-mocks.cjs:/app/local-mocks.cjs:ro
+    environment:
+      GDM_ENV: development
+      NODE_OPTIONS: --require=/app/local-mocks.cjs
+      ADMIN_API_TOKEN: ""
+      INTERNAL_API_TOKEN: ""
+      MATRIX_PUBLIC_URL: http://localhost:3000
+      PROLIFIC_API_TOKEN: local-mock-token
+      PROLIFIC_STUDY_ID: aaaaaaaaaaaaaaaaaaaaaaaa
+      PROLIFIC_REQUIRE_VALIDATION: "true"
+      PROLIFIC_PAYMENT_AUTOMATION: "false"
+      PROLIFIC_AUTO_RETURN_DISCONNECTS: "false"
+  chat-service:
+    ports: ["127.0.0.1:3002:3002"]
+    volumes:
+      - ./local-mocks.cjs:/app/local-mocks.cjs:ro
+    environment:
+      GDM_ENV: development
+      NODE_OPTIONS: --require=/app/local-mocks.cjs
+      INTERNAL_API_TOKEN: ""
+      ANTHROPIC_API_KEY: local-mock-key
+      ANTHROPIC_MODEL: local-mock
+  participant:
+    ports: ["127.0.0.1:3000:80"]
+    volumes:
+      - ./local-demo.html:/usr/share/nginx/html/local-demo.html:ro
+  admin-dashboard:
+    ports: ["127.0.0.1:3003:80"]
+    build:
+      args:
+        VITE_PARTICIPANT_URL: http://localhost:3000

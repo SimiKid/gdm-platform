@@ -14,6 +14,7 @@ const RESEARCH_EXPORTS = [
   { key: "sessions-analysis", file: "sessions_analysis", label: "Sessions (derived analysis measures)" },
   { key: "windows", file: "windows", label: "Contribution windows (fired or not)" },
   { key: "rankings", file: "rankings", label: "Rankings (raw orders + group edit history)" },
+  { key: "etherpad", file: "etherpad", label: "Etherpad (raw entry, group and exit text)" },
 ] as const;
 
 /**

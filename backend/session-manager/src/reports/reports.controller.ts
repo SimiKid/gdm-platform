@@ -98,6 +98,21 @@ export class ReportsController {
     return this.reports.exportWindowsCsv(researchFilter(conditionIds, roundIds));
   }
 
+  @Get("export/etherpad")
+  @UseGuards(AdminGuard)
+  @Header("Content-Disposition", 'attachment; filename="etherpad.json"')
+  exportEtherpad(@Query("conditionIds") conditionIds?: string, @Query("roundIds") roundIds?: string) {
+    return this.reports.exportEtherpad(researchFilter(conditionIds, roundIds));
+  }
+
+  @Get("export/etherpad.csv")
+  @UseGuards(AdminGuard)
+  @Header("Content-Type", "text/csv; charset=utf-8")
+  @Header("Content-Disposition", 'attachment; filename="etherpad.csv"')
+  exportEtherpadCsv(@Query("conditionIds") conditionIds?: string, @Query("roundIds") roundIds?: string) {
+    return this.reports.exportEtherpadCsv(researchFilter(conditionIds, roundIds));
+  }
+
   /** Raw ranking orders: entry/exit individual + group edit history. */
   @Get("export/rankings")
   @UseGuards(AdminGuard)

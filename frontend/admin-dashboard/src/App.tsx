@@ -4,6 +4,7 @@ import type {
   ParticipationOutcomeRecord,
   RoundsResponse,
   SessionSummary,
+  EtherpadStatus,
 } from "@gdm/shared";
 import Overview from "./components/Overview";
 import Results from "./components/Results";
@@ -26,6 +27,23 @@ export default function App() {
   const [rounds, setRounds] = useState<RoundsResponse | null>(null);
   const [outcomes, setOutcomes] = useState<ParticipationOutcomeRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [etherpad, setEtherpad] = useState<EtherpadStatus | null>(null);
+  const [switching, setSwitching] = useState(false);
+  const switchEpoch = useRef(0);
+  const toggleEtherpad = async (enabled: boolean) => {
+    switchEpoch.current += 1;
+    const previous = etherpad;
+    setEtherpad(current => current ? { ...current, enabled, state: enabled ? "starting" : "draining" } : current);
+    setSwitching(true);
+    try {
+      const res = await apiFetch("/admin/etherpad", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.message ?? "Could not change Etherpad mode");
+      setEtherpad(body);
+      setError(null);
+    } catch (err) { setEtherpad(previous); setError(err instanceof Error ? err.message : "Could not change Etherpad mode"); }
+    finally { switchEpoch.current += 1; setSwitching(false); }
+  };
   // The backend rejected our admin token (or we don't have one yet).
   const [needsToken, setNeedsToken] = useState(false);
   const loadInFlight = useRef(false);
@@ -33,12 +51,14 @@ export default function App() {
   const load = useCallback(async () => {
     if (loadInFlight.current) return;
     loadInFlight.current = true;
+    const epoch = switchEpoch.current;
     try {
-      const [progressRes, sessionsRes, roundsRes, outcomesRes] = await Promise.all([
+      const [progressRes, sessionsRes, roundsRes, outcomesRes, etherpadRes] = await Promise.all([
         apiFetch("/conditions/progress"),
         apiFetch("/sessions"),
         apiFetch("/rounds"),
         apiFetch("/admin/prolific/outcomes"),
+        apiFetch("/admin/etherpad"),
       ]);
       if (
         progressRes.status === 401 ||
@@ -62,6 +82,10 @@ export default function App() {
       setRows((await progressRes.json()) as ConditionProgress[]);
       setSessions((await sessionsRes.json()) as SessionSummary[]);
       setRounds((await roundsRes.json()) as RoundsResponse);
+      if (etherpadRes.ok) {
+        const status = await etherpadRes.json();
+        if (epoch === switchEpoch.current) setEtherpad(status);
+      }
       if (outcomesRes.ok) {
         const body = (await outcomesRes.json()) as {
           outcomes: ParticipationOutcomeRecord[];
@@ -86,8 +110,12 @@ export default function App() {
     return <TokenGate onSubmit={() => void load()} />;
   }
 
+  const locked = switching || etherpad?.state === "starting" || etherpad?.state === "stopping";
+
   return (
     <main className="shell">
+      {locked && <div className="workspace-busy" role="status" aria-live="polite"><span className="workspace-spinner" />{etherpad?.state === "stopping" ? "Stopping Etherpad…" : "Starting Etherpad…"} Settings are temporarily locked.</div>}
+      <fieldset className="dashboard-controls" disabled={locked} aria-busy={locked}>
       <header className="topbar">
         <div>
           <h1>Study Admin</h1>
@@ -144,6 +172,8 @@ export default function App() {
           onSaved={() => void load()}
           rounds={rounds}
           lobbyCount={sessions.filter((s) => s.status === "waiting").length}
+          etherpad={etherpad}
+          onToggleEtherpad={enabled => void toggleEtherpad(enabled)}
         />
       )}
       {view === "prolific" && (
@@ -156,6 +186,7 @@ export default function App() {
           onSaved={() => void load()}
         />
       )}
+      </fieldset>
     </main>
   );
 }

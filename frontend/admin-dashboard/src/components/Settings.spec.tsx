@@ -40,6 +40,8 @@ describe("Settings", () => {
     settingsApi();
     render(
       <Settings
+        etherpad={null}
+        onToggleEtherpad={vi.fn()}
         rows={[progress({}, 1), progress({ id: "e2e-1", name: "E2E" })]}
         onSaved={vi.fn()}
         rounds={rounds}
@@ -60,7 +62,7 @@ describe("Settings", () => {
     const user = userEvent.setup();
     const onSaved = vi.fn();
     const fetchMock = settingsApi({ "/rounds": (init: RequestInit | undefined) => ({ round: { number: 2 }, abortedWaitingSessions: init ? 2 : 0 }) });
-    render(<Settings rows={[progress({})]} onSaved={onSaved} rounds={rounds} lobbyCount={2} />);
+    render(<Settings etherpad={null} onToggleEtherpad={vi.fn()} rows={[progress({})]} onSaved={onSaved} rounds={rounds} lobbyCount={2} />);
 
     await user.type(screen.getByLabelText("Label for Round 2"), "  threshold 35%  ");
     await user.click(screen.getByRole("button", { name: "Start Round 2" }));
@@ -83,7 +85,7 @@ describe("Settings", () => {
   it("reports a failed round start", async () => {
     const user = userEvent.setup();
     settingsApi({ "/rounds": { status: 500 } });
-    render(<Settings rows={[progress({})]} onSaved={vi.fn()} rounds={rounds} lobbyCount={0} />);
+    render(<Settings etherpad={null} onToggleEtherpad={vi.fn()} rows={[progress({})]} onSaved={vi.fn()} rounds={rounds} lobbyCount={0} />);
     await user.click(screen.getByRole("button", { name: "Start Round 2" }));
     expect(screen.getByText("Start Round 2?")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Confirm" }));
@@ -92,7 +94,7 @@ describe("Settings", () => {
 
   it("renders nothing for the rounds card until rounds are loaded", async () => {
     settingsApi();
-    render(<Settings rows={[]} onSaved={vi.fn()} rounds={null} lobbyCount={0} />);
+    render(<Settings etherpad={null} onToggleEtherpad={vi.fn()} rows={[]} onSaved={vi.fn()} rounds={null} lobbyCount={0} />);
     expect(screen.queryByRole("heading", { name: "Study Rounds" })).toBeNull();
     await settingsLoaded();
   });
@@ -130,7 +132,7 @@ describe("SharedParamsCard", () => {
         config: { ...progress({}).condition.config, contributionThreshold: 0.35 },
       }),
     ];
-    render(<Settings rows={rows} onSaved={onSaved} rounds={null} lobbyCount={0} />);
+    render(<Settings etherpad={null} onToggleEtherpad={vi.fn()} rows={rows} onSaved={onSaved} rounds={null} lobbyCount={0} />);
 
     expect(screen.getByLabelText(/Discussion time/)).toHaveValue(10);
     expect(screen.getByLabelText(/Trigger at/)).toHaveValue(40);
@@ -168,7 +170,7 @@ describe("SharedParamsCard", () => {
       },
     });
     const rows = [progress({}), progress({ id: "public-llm", name: "Public" })];
-    render(<Settings rows={rows} onSaved={onSaved} rounds={null} lobbyCount={0} />);
+    render(<Settings etherpad={null} onToggleEtherpad={vi.fn()} rows={rows} onSaved={onSaved} rounds={null} lobbyCount={0} />);
     expect(screen.getByText("✓ All 2 arms share these values.")).toBeInTheDocument();
     const params = screen.getByRole("heading", { name: "Session & Bot Parameters" }).closest("section")!;
     const apply = within(params).getByRole("button", { name: "Apply to all study arms" });
@@ -195,7 +197,7 @@ describe("SharedParamsCard", () => {
   it("reports a partial failure and keeps the draft dirty", async () => {
     const user = userEvent.setup();
     settingsApi({ "/conditions/baseline": { status: 500 } });
-    render(<Settings rows={[progress({})]} onSaved={vi.fn()} rounds={null} lobbyCount={0} />);
+    render(<Settings etherpad={null} onToggleEtherpad={vi.fn()} rows={[progress({})]} onSaved={vi.fn()} rounds={null} lobbyCount={0} />);
     const groupSize = screen.getByLabelText(/Group size/);
     await user.clear(groupSize);
     await user.type(groupSize, "4");
@@ -208,64 +210,33 @@ describe("SharedParamsCard", () => {
 });
 
 describe("WorkspaceCard", () => {
-  it("switches every arm to the external workspace and warns when no provider is configured", async () => {
+  it("toggles the global writing mode and describes draining participants", async () => {
     const user = userEvent.setup();
-    const onSaved = vi.fn();
-    const puts: Array<{ id: string; config: { workspaceMode?: string } }> = [];
-    settingsApi({
-      "/conditions/baseline": (init: RequestInit | undefined) => {
-        const { condition } = JSON.parse(String(init?.body));
-        puts.push(condition);
-        return condition;
-      },
-      "/conditions/public-llm": (init: RequestInit | undefined) => {
-        const { condition } = JSON.parse(String(init?.body));
-        puts.push(condition);
-        return condition;
-      },
-    });
-    const rows = [
-      progress({}),
-      progress({
-        id: "public-llm",
-        name: "Public",
-        config: { ...progress({}).condition.config, workspaceMode: "external" },
-      }),
-    ];
-    render(<Settings rows={rows} onSaved={onSaved} rounds={null} lobbyCount={0} />);
-
-    const group = screen.getByRole("radiogroup", { name: "Shared workspace" });
-    const ranking = within(group).getByRole("radio", { name: /Structured ranking/ });
-    const external = within(group).getByRole("radio", { name: /External iframe/ });
-    expect(ranking).toBeChecked();
-    expect(screen.getByText(/1 study arm do\s*not match the shared workspace setting/)).toBeInTheDocument();
-    expect(screen.getByText(/no provider is configured/)).toBeInTheDocument();
-    const apply = within(group.closest("section")!).getByRole("button", { name: "Apply to all study arms" });
-    expect(apply).toBeDisabled();
-
-    await user.click(external);
-    expect(apply).toBeEnabled();
-    await user.click(apply);
-    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
-    expect(puts.map((c) => c.config.workspaceMode)).toEqual(["external", "external"]);
-    expect(screen.getByText("Saved — applies to newly formed sessions")).toBeInTheDocument();
-
-    // Until the dashboard poll delivers the saved arms, the card shows the
-    // polled majority again (still "ranking" here) and is clean.
-    expect(ranking).toBeChecked();
-    expect(apply).toBeDisabled();
-    await user.click(external);
-    expect(apply).toBeEnabled();
+    settingsApi();
+    const onToggle = vi.fn();
+    const props = { rows: [progress({})], onSaved: vi.fn(), rounds: null, lobbyCount: 0, onToggleEtherpad: onToggle };
+    const { rerender } = render(<Settings {...props} etherpad={{ enabled: false, state: "stopped", activeParticipants: 0 }} />);
+    await user.click(screen.getByRole("switch", { name: "Enable Etherpad" }));
+    expect(onToggle).toHaveBeenCalledWith(true);
+    rerender(<Settings {...props} etherpad={{ enabled: true, state: "ready", activeParticipants: 2 }} />);
+    expect(screen.getByRole("switch")).toBeChecked();
+    await user.click(screen.getByRole("switch"));
+    expect(onToggle).toHaveBeenLastCalledWith(false);
+    rerender(<Settings {...props} etherpad={{ enabled: false, state: "draining", activeParticipants: 2 }} />);
+    expect(screen.getByText(/2 existing writing participant/)).toBeInTheDocument();
   });
 
-  it("reports a failed workspace save", async () => {
+  it("disables an unloaded switch and retries a failed startup", async () => {
     const user = userEvent.setup();
-    settingsApi({ "/conditions/baseline": { status: 500 } });
-    render(<Settings rows={[progress({})]} onSaved={vi.fn()} rounds={null} lobbyCount={0} />);
-    const group = screen.getByRole("radiogroup", { name: "Shared workspace" });
-    await user.click(within(group).getByRole("radio", { name: /External iframe/ }));
-    await user.click(within(group.closest("section")!).getByRole("button", { name: "Apply to all study arms" }));
-    expect(await screen.findByText("Error — not all arms saved")).toBeInTheDocument();
+    settingsApi();
+    const onToggle = vi.fn();
+    const props = { rows: [], onSaved: vi.fn(), rounds: null, lobbyCount: 0, onToggleEtherpad: onToggle };
+    const { rerender } = render(<Settings {...props} etherpad={null} />);
+    expect(screen.getByRole("switch")).toBeDisabled();
+    rerender(<Settings {...props} etherpad={{ enabled: true, state: "error", activeParticipants: 0, error: "Startup failed" }} />);
+    expect(screen.getByText("Startup failed")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onToggle).toHaveBeenCalledWith(true);
   });
 });
 
@@ -289,7 +260,7 @@ describe("CompensationCard", () => {
         };
       },
     });
-    render(<Settings rows={[]} onSaved={vi.fn()} rounds={null} lobbyCount={0} />);
+    render(<Settings etherpad={null} onToggleEtherpad={vi.fn()} rows={[]} onSaved={vi.fn()} rounds={null} lobbyCount={0} />);
     const card = screen.getByRole("heading", { name: "Prolific completion and exit paths" }).closest("section")!;
     const save = within(card).getByRole("button", { name: "Save" });
     const inputs = within(card).getAllByRole("textbox");

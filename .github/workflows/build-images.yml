@@ -1,4 +1,4 @@
-# Builds the four service images and pushes them to GHCR. The production VM
+# Builds the five service images and pushes them to GHCR. The production VM
 # cannot be reached from GitHub-hosted runners, so deployment is a separate
 # manual step: ssh to the VM and run infra/deploy.sh, which pulls these images.
 #
@@ -44,6 +44,7 @@ jobs:
       # Unit tests with the per-package coverage thresholds (80 % lines,
       # 70 % branches) — a drop below the gate fails the job.
       - run: pnpm test:cov
+      - run: node --test infra/etherpad/policy.test.cjs
       - name: Security audit (advisory)
         run: pnpm audit --prod --audit-level high
         continue-on-error: true
@@ -62,6 +63,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - service: etherpad
+            dockerfile: infra/etherpad/Dockerfile
           - service: session-manager
             dockerfile: backend/session-manager/Dockerfile
           - service: chat-service

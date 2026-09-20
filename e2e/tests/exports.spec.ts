@@ -221,7 +221,7 @@ test("@exports every researcher export is downloadable, authenticated and exclud
           page.waitForEvent("download"),
           jsonLink.click(),
         ]);
-        expect(download.suggestedFilename()).toBe("detailed_data.json");
+        expect(download.suggestedFilename()).toBe("full_data.json");
         const path = await download.path();
         expect(path).not.toBeNull();
         const downloaded = JSON.parse(await readFile(path!, "utf8")) as {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Likert from "./Likert";
 import LikertMatrix from "./LikertMatrix";
 
@@ -8,6 +8,8 @@ export interface AttitudesAnswers {
 
 interface Props {
   onContinue: (answers: AttitudesAnswers) => void;
+  expired?: boolean;
+  onTimeout?: (answers: AttitudesAnswers) => void;
 }
 
 const AI_ITEMS = [
@@ -87,13 +89,14 @@ const SURVIVAL_OPTIONS = [
 ];
 
 /** Page 3 — Attitudes & personality (before the individual task). */
-export default function AttitudesPage({ onContinue }: Props) {
+export default function AttitudesPage({ onContinue, expired, onTimeout }: Props) {
   const [aiValues, setAiValues] = useState<Record<string, string>>({});
   const [personalityValues, setPersonalityValues] = useState<Record<string, string>>({});
   const [teamwork, setTeamwork] = useState("");
   const [chatComfort, setChatComfort] = useState("");
   const [spaceflightFamiliarity, setSpaceflightFamiliarity] = useState("");
   const [survivalFamiliarity, setSurvivalFamiliarity] = useState("");
+  const timeoutHandled = useRef(false);
 
   const aiComplete = AI_ITEMS.every((item) => aiValues[item.key]);
   const personalityComplete = PERSONALITY_ITEMS.every(
@@ -107,21 +110,26 @@ export default function AttitudesPage({ onContinue }: Props) {
     spaceflightFamiliarity &&
     survivalFamiliarity;
 
-  function submit() {
-    const answers: AttitudesAnswers = {
-      teamworkFrequency: teamwork,
-      chatComfort: Number(chatComfort),
-      spaceflightFamiliarity: Number(spaceflightFamiliarity),
-      survivalFamiliarity: Number(survivalFamiliarity),
-    };
+  function collectAnswers(): AttitudesAnswers {
+    const answers: AttitudesAnswers = {};
+    if (teamwork) answers.teamworkFrequency = teamwork;
+    if (chatComfort) answers.chatComfort = Number(chatComfort);
+    if (spaceflightFamiliarity) answers.spaceflightFamiliarity = Number(spaceflightFamiliarity);
+    if (survivalFamiliarity) answers.survivalFamiliarity = Number(survivalFamiliarity);
     for (const item of AI_ITEMS) {
-      answers[item.key] = Number(aiValues[item.key]);
+      if (aiValues[item.key]) answers[item.key] = Number(aiValues[item.key]);
     }
     for (const item of PERSONALITY_ITEMS) {
-      answers[item.key] = Number(personalityValues[item.key]);
+      if (personalityValues[item.key]) answers[item.key] = Number(personalityValues[item.key]);
     }
-    onContinue(answers);
+    return answers;
   }
+
+  useEffect(() => {
+    if (!expired || timeoutHandled.current) return;
+    timeoutHandled.current = true;
+    onTimeout?.(collectAnswers());
+  });
 
   return (
     <div className="study-card">
@@ -186,7 +194,7 @@ export default function AttitudesPage({ onContinue }: Props) {
           type="button"
           className="btn btn-primary"
           disabled={!ready}
-          onClick={submit}
+          onClick={() => onContinue(collectAnswers())}
         >
           Continue
         </button>

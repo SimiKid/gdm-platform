@@ -8,6 +8,22 @@ import {
 } from "./request-validation";
 
 describe("request validation", () => {
+  it("accepts timed-out partial questionnaires without inventing answers or a complete ranking", () => {
+    const expected = MOON_SURVIVAL.items.map((item) => item.id);
+    for (const kind of ["entry", "exit"] as const) {
+      const answers: Record<string, string | number | boolean | string[]> = kind === "entry"
+        ? { entryQuestionnaireTimedOut: true, consentAdult: true, age: 30 }
+        : { exitQuestionnaireTimedOut: true, finalRankingTimedOut: true,
+            finalRankingCompleted: false, finalRankingPartial: expected.slice(0, 2), taskConfidence: 4 };
+      const request = {
+        sessionId: "s", participantId: "p", kind,
+        survey: { submittedAt: "2026-09-18T12:00:00.000Z", answers },
+      };
+      expect(() => validateSurveyRequest(request)).not.toThrow();
+      expect(() => validateSurveyAnswers(request, expected)).not.toThrow();
+    }
+  });
+
   it("accepts the existing generic admission shape and bounds identifiers", () => {
     expect(() =>
       validateOpenSessionRequest({

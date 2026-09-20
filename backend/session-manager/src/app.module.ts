@@ -14,6 +14,10 @@ import { AdminGuard } from "./auth/admin.guard";
 import { InternalGuard } from "./auth/internal.guard";
 import { ParticipantGuard } from "./auth/participant.guard";
 import { ProlificActionsService } from "./prolific/prolific-actions.service";
+import { EtherpadService } from "./etherpad/etherpad.service";
+import { EtherpadRepository } from "./etherpad/etherpad.repository";
+import { EtherpadController } from "./etherpad/etherpad.controller";
+import { WorkspaceMutationGuard } from "./etherpad/workspace-mutation.guard";
 
 @Module({
   imports: [
@@ -27,12 +31,15 @@ import { ProlificActionsService } from "./prolific/prolific-actions.service";
     ]),
   ],
   controllers: [
+    EtherpadController,
     HealthController,
     SessionsController,
     ReportsController,
     RoundsController,
   ],
   providers: [
+    EtherpadService,
+    EtherpadRepository,
     SessionsService,
     ReportsService,
     MatrixService,
@@ -43,6 +50,7 @@ import { ProlificActionsService } from "./prolific/prolific-actions.service";
     ParticipantGuard,
     ProlificActionsService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: WorkspaceMutationGuard },
   ],
 })
 export class AppModule {}

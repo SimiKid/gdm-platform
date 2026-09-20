@@ -117,7 +117,7 @@ describe("Results", () => {
     expect(await screen.findByText("No study sessions yet.")).toBeInTheDocument();
     const datasets = screen.getByText("Individual research datasets").closest("details")!;
     const links = within(datasets).getAllByRole("link");
-    expect(links).toHaveLength(8);
+    expect(links).toHaveLength(10);
     expect(links.map((link) => link.getAttribute("href"))).toContain(
       `${API_BASE}/export/windows.csv`,
     );
@@ -131,6 +131,8 @@ describe("Results", () => {
       "windows.csv",
       "rankings.json",
       "rankings.csv",
+      "etherpad.json",
+      "etherpad.csv",
     ]);
   });
 

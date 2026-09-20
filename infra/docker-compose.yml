@@ -10,6 +10,51 @@ x-default-logging: &default-logging
     max-file: "5"
 
 services:
+  etherpad-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      POSTGRES_DB: etherpad
+      POSTGRES_USER: etherpad
+      POSTGRES_PASSWORD: ${ETHERPAD_DB_PASSWORD:-gdm-local-etherpad-db}
+    volumes:
+      - etherpad-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U etherpad -d etherpad"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  etherpad:
+    build:
+      context: ..
+      dockerfile: infra/etherpad/Dockerfile
+    restart: unless-stopped
+    logging: *default-logging
+    stop_grace_period: 30s
+    environment:
+      DB_TYPE: postgres
+      DB_HOST: etherpad-db
+      DB_NAME: etherpad
+      DB_USER: etherpad
+      DB_PASS: ${ETHERPAD_DB_PASSWORD:-gdm-local-etherpad-db}
+      ETHERPAD_CONTROL_TOKEN: ${ETHERPAD_CONTROL_TOKEN:-gdm-local-etherpad-control-token}
+      DEFAULT_PAD_TEXT: ""
+      EDIT_ONLY: "true"
+      PAD_OPTIONS_SHOW_CHAT: "false"
+      PAD_OPTIONS_SHOW_CONTROLS: "false"
+      DISABLE_IP_LOGGING: "true"
+      ENABLE_PAD_WIDE_SETTINGS: "false"
+      SOCKETIO_MAX_HTTP_BUFFER_SIZE: "16384"
+      IMPORT_MAX_FILE_SIZE: "1"
+      AUTHENTICATION_METHOD: apikey
+      UPDATES_TIER: "off"
+      PRIVACY_UPDATE_CHECK: "false"
+      TRUST_PROXY: "true"
+    depends_on:
+      etherpad-db:
+        condition: service_healthy
   # ── Matrix Synapse ────────────────────────────────────
   synapse:
     # Pin the version currently validated in production/integration tests;
@@ -88,6 +133,9 @@ services:
     stop_grace_period: 45s
     environment:
       GDM_ENV: ${GDM_ENV:-development}
+      ETHERPAD_INTERNAL_URL: http://etherpad:9001
+      ETHERPAD_CONTROL_URL: http://etherpad:9002
+      ETHERPAD_CONTROL_TOKEN: ${ETHERPAD_CONTROL_TOKEN:-gdm-local-etherpad-control-token}
       PORT: "3001"
       MATRIX_INTERNAL_URL: http://synapse:8008
       MATRIX_PUBLIC_URL: ${MATRIX_PUBLIC_URL:-http://localhost:3000}
@@ -198,6 +246,7 @@ services:
         condition: service_healthy
 
 volumes:
+  etherpad-db-data:
   synapse-data:
   synapse-db-data:
   research-db-data:

@@ -3,6 +3,7 @@ import request from "supertest";
 import type { InterventionLog, Message, Ranking } from "@gdm/shared";
 import { SessionsService } from "../../src/sessions/sessions.service";
 import { PrismaService } from "../../src/prisma/prisma.service";
+import { EtherpadRepository } from "../../src/etherpad/etherpad.repository";
 import {
   closeHarness,
   createTestApp,
@@ -28,6 +29,23 @@ describe("persistence & exports (integration)", () => {
 
   afterEach(() => t.close());
   afterAll(closeHarness);
+
+  it("persists workspace admissions, control and raw Unicode snapshots across a restart", async () => {
+    const repo = t.app.get(EtherpadRepository);
+    await repo.put("control", { enabled: false, state: "stopped" });
+    await repo.put("admission:test", { mode: "ranking", owner: "test", expiresAt: 0 });
+    await repo.put("pad:gdm-test", { id: "gdm-test", phase: "entry", state: "captured", text: '=raw, "quoted"\n🌕', revision: 3, deadline: "2026-09-18T12:00:00Z" });
+    await t.close(); t = await createTestApp();
+    const restored = t.app.get(EtherpadRepository);
+    expect(await restored.get("control")).toEqual({ enabled: false, state: "stopped" });
+    expect(await restored.list("admission:")).toHaveLength(1);
+    const exported = await request(t.http).get("/api/export/etherpad").expect(200);
+    expect(exported.body.pads[0]).toMatchObject({ text: '=raw, "quoted"\n🌕', state: "captured", revision: 3 });
+    const csv = await request(t.http).get("/api/export/etherpad.csv").expect(200);
+    expect(csv.text).toContain("'=raw");
+    const raw = await t.app.get(SessionsService).exportBundle();
+    expect(raw.etherpads?.[0].text).toBe('=raw, "quoted"\n🌕');
+  });
 
   it("round-trips a finalized session across an app restart", async () => {
     const responses = await fillSession(t, "baseline");

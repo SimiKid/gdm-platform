@@ -262,3 +262,11 @@ model StudySettingRecord {
 
   @@map("study_settings")
 }
+// Isolated workspace bookkeeping; ranking records and their exports stay unchanged.
+model EtherpadRecord {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("etherpad_records")
+}

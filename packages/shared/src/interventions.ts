@@ -8,7 +8,7 @@ export type InterventionMode = "baseline" | "public" | "private";
 export type InterventionAudience = "none" | "public" | "private";
 
 /** Shared artifact shown beside the group chat. */
-export type WorkspaceMode = "ranking" | "external";
+export type WorkspaceMode = "ranking" | "external" | "etherpad";
 
 /**
  * Future provider-owned workspace embedded beside the chat.

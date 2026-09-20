@@ -333,6 +333,7 @@ export class SessionsService
         break;
       }
       case MATRIX_EVENT_TYPES.ranking: {
+        if (runtime.condition.config.workspaceMode === "etherpad") break;
         const order = event.content.order;
         if (Array.isArray(order)) {
           const ranking = {
