@@ -374,9 +374,14 @@ export interface ContributionAggregate {
   reactionCount: number;
   rankingMoveCount: number;
   typingDurationMs: number;
-  respondsToPriorCount: number;
-  referencesTaskItemCount: number;
-  hasDiscussionStructureCount: number;
+  /**
+   * Mean relevance rating (1..5) across this participant's classified
+   * messages; `null` when no message carries a rating (baseline sessions,
+   * or records from the pre-v2 boolean classifier).
+   */
+  relevanceMean: number | null;
+  /** Mean coherence rating (1..5); `null` under the same conditions. */
+  coherenceMean: number | null;
   invitesParticipationCount: number;
   /** Mean meaningfulnessScore across this participant's classified messages. */
   meaningfulnessScoreMean: number;

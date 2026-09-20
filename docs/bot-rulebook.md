@@ -306,30 +306,41 @@ Without an API key in a nudging arm, every message is recorded as a
 `missing-api-key` failure, meaningfulness is 0 for everyone (so `dominance =
 0.9 × share`), the invite grace period can never activate, and nudges use
 the fixed fallback wording; in production the chat service refuses to start
-without the key. Per message, the classifier judges four structural
-indicators (each `true`/`false` plus a one-sentence reason), following the
-study protocol:
+without the key. Per message, the classifier rates two graded dimensions
+(each an integer `1`–`5` plus a one-sentence justification), asked in this
+order — the ordering is intentional:
 
-- `respondsToPrior` — addresses, reacts to, builds on, or directly refers to a
-  specific prior message or group member;
-- `referencesTaskItem` — explicitly names one or more ranking-task items;
-- `hasDiscussionStructure` — explicit stance, proposal, or structured
-  discourse move (agree/disagree, "X at position Y", counterproposal);
-- `invitesParticipation` — explicitly invites another (named or unnamed)
-  member to contribute. **Tracked separately** — it will feed the dominant
-  contributor's self-correction grace period, never the score.
+1. `relevance` — how much of the message contributes content relevant to the
+   ranking task (naming items, stating stances, making proposals).
+   `5` = fully task-focused, `1` = entirely off-topic.
+2. `coherence` — how well the message connects to and builds on the ongoing
+   discussion. `5` = clearly addresses or extends prior messages or members,
+   `1` = stands alone with no connection.
 
-The mean of the first three indicators is stored as `meaningfulnessScore`
-(0..1). It feeds the composite dominance score (`0.90 × contribution share +
-0.10 × meaningfulness`, see Gate 3) and `invitesParticipation` drives the
-invite grace period. Each classification also records the model ID, prompt
-version (`meaningfulness-v1`), the exact prompt, and the raw JSON output for
+A third, binary indicator is judged in the same call but kept outside the
+score:
+
+- `invitesParticipation` (`true`/`false` plus a reason) — explicitly invites
+  another (named or unnamed) member to contribute. **Tracked separately** — it
+  feeds the dominant contributor's self-correction grace period, never the
+  score.
+
+The score is `meaningfulnessScore = (mean(relevance, coherence) − 1) / 4`,
+continuous in 0..1 (`1/1` → 0, `3/3` → 0.5, `5/5` → 1). It feeds the
+composite dominance score (`0.90 × contribution share + 0.10 ×
+meaningfulness`, see Gate 3) and `invitesParticipation` drives the invite
+grace period. A rating that is missing, not an integer, or outside `1`–`5`
+is treated like malformed JSON: the message is stored as a
+`ClassificationFailure` (error text `invalid rating for <dimension>: …`) and
+never receives a score. Each classification also records the model ID, prompt
+version (`meaningfulness-v2`), the exact prompt, and the raw JSON output for
 auditability.
 
 The prompt contains the message, the sender's pseudonym, the immediately
 preceding 3 messages, the ranking-task item list, and the group member list
 with the member count.
-Classifications and participant aggregates (per-indicator counts and the mean
+Classifications and participant aggregates (mean relevance and coherence
+ratings, the invitation count and the mean
 meaningfulness score) are available from `/api/export/contributions` and
 `/api/export/contributions.csv`.
 

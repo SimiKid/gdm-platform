@@ -7,16 +7,32 @@ globalThis.fetch = async () => { forwarded++; return Response.json({ internal: t
 require('./local-mocks.cjs');
 const post = body => ({ method: 'POST', body: JSON.stringify(body) });
 
-test('AI response contains usable classifier indicators without external fetch', async () => {
+const classify = async text => {
   const response = await fetch('https://api.anthropic.com/v1/messages', post({
-    messages: [{ content: 'Text: "I agree, oxygen should rank first because we need it. Any thoughts?"\n\nPRECEDING CONTEXT:' }],
-    output_config: { format: { schema: { properties: { responds_to_prior: {} } } } },
+    messages: [{ content: `Text: "${text}"\n\nPRECEDING CONTEXT:` }],
+    output_config: { format: { schema: { properties: { relevance: {}, coherence: {}, invites_participation: {} } } } },
   }));
-  const result = JSON.parse((await response.json()).content[0].text);
-  assert.equal(result.responds_to_prior.value, true);
-  assert.equal(result.references_task_item.value, true);
-  assert.equal(result.has_discussion_structure.value, true);
+  return JSON.parse((await response.json()).content[0].text);
+};
+
+test('AI response contains graded classifier ratings without external fetch', async () => {
+  const result = await classify('I agree, oxygen should rank first because we need it. Any thoughts?');
+  assert.deepEqual(Object.keys(result), ['relevance', 'coherence', 'invites_participation']);
+  assert.equal(result.relevance.rating, 5);
+  assert.equal(result.coherence.rating, 3);
   assert.equal(result.invites_participation.value, true);
+  for (const dimension of ['relevance', 'coherence']) {
+    assert.ok(Number.isInteger(result[dimension].rating));
+    assert.ok(result[dimension].rating >= 1 && result[dimension].rating <= 5);
+    assert.equal(typeof result[dimension].reason, 'string');
+  }
+});
+
+test('off-topic text gets the lowest ratings and no invitation', async () => {
+  const result = await classify('Calibration phrase: purple rectangle, violin, tram 741.');
+  assert.equal(result.relevance.rating, 1);
+  assert.equal(result.coherence.rating, 1);
+  assert.equal(result.invites_participation.value, false);
 });
 
 test('nudge addresses requested target and percentage', async () => {

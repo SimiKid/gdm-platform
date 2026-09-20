@@ -3,7 +3,12 @@ import { SessionsService } from "./sessions.service";
 import { StoreService } from "../store/store.service";
 import type { MatrixService } from "../matrix/matrix.service";
 import { ProlificActionsService } from "../prolific/prolific-actions.service";
-import type { Ranking, Session, SessionStatus } from "@gdm/shared";
+import type {
+  ContributionClassification,
+  Ranking,
+  Session,
+  SessionStatus,
+} from "@gdm/shared";
 
 function fakeMatrix(): MatrixService {
   let n = 0;
@@ -669,13 +674,25 @@ describe("SessionsService (session-manager)", () => {
           messageId: "m1",
           senderId: "@u1:localhost",
           classifiedAt: "2026-01-01T00:00:02.000Z",
-          respondsToPrior: { value: false, reason: "opens the discussion" },
-          referencesTaskItem: { value: true, reason: "names oxygen" },
-          hasDiscussionStructure: { value: true, reason: "proposes a ranking" },
+          relevance: { rating: 5, reason: "names oxygen and proposes a ranking" },
+          coherence: { rating: 1, reason: "opens the discussion" },
           invitesParticipation: { value: false, reason: "no invitation" },
-          meaningfulnessScore: 2 / 3,
+          meaningfulnessScore: 0.5,
           model: "test",
-          promptVersion: "v1",
+          promptVersion: "meaningfulness-v2",
+          prompt: "prompt",
+          rawOutput: "{}",
+        },
+        {
+          messageId: "m2",
+          senderId: "@u1:localhost",
+          classifiedAt: "2026-01-01T00:00:03.000Z",
+          relevance: { rating: 3, reason: "partly on task" },
+          coherence: { rating: 3, reason: "loosely connected" },
+          invitesParticipation: { value: true, reason: "asks the group" },
+          meaningfulnessScore: 0.5,
+          model: "test",
+          promptVersion: "meaningfulness-v2",
           prompt: "prompt",
           rawOutput: "{}",
         },
@@ -691,12 +708,83 @@ describe("SessionsService (session-manager)", () => {
       participantId: "@u1:localhost",
       messageCount: 1,
       typingDurationMs: 1200,
-      respondsToPriorCount: 0,
-      referencesTaskItemCount: 1,
-      hasDiscussionStructureCount: 1,
-      invitesParticipationCount: 0,
-      meaningfulnessScoreMean: 2 / 3,
+      relevanceMean: 4,
+      coherenceMean: 2,
+      invitesParticipationCount: 1,
+      meaningfulnessScoreMean: 0.5,
     });
+    const csv = await svc.exportContributionsCsv();
+    expect(csv.split("\n")[0]).toContain("relevance_mean,coherence_mean,invites_participation_count");
+  });
+
+  it("skips pre-v2 boolean classifications in the rating means but not in the score mean", async () => {
+    const res = await svc.openSession(open());
+    await svc.checkpointSession(res.session.id, {
+      messages: [],
+      rankingHistory: [],
+      contributionClassifications: [
+        {
+          messageId: "m1",
+          senderId: "@u1:localhost",
+          classifiedAt: "2026-01-01T00:00:02.000Z",
+          relevance: { rating: 5, reason: "on task" },
+          coherence: { rating: 5, reason: "builds on Red" },
+          invitesParticipation: { value: false, reason: "" },
+          meaningfulnessScore: 1,
+          model: "test",
+          promptVersion: "meaningfulness-v2",
+          prompt: "prompt",
+          rawOutput: "{}",
+        },
+        // Legacy shape as persisted by the v1 classifier (JSONB, no migration).
+        {
+          messageId: "m0",
+          senderId: "@u1:localhost",
+          classifiedAt: "2026-01-01T00:00:01.000Z",
+          respondsToPrior: { value: false, reason: "" },
+          referencesTaskItem: { value: false, reason: "" },
+          hasDiscussionStructure: { value: false, reason: "" },
+          invitesParticipation: { value: false, reason: "" },
+          meaningfulnessScore: 0,
+          model: "test",
+          promptVersion: "meaningfulness-v1",
+          prompt: "prompt",
+          rawOutput: "{}",
+        } as unknown as ContributionClassification,
+      ],
+    });
+
+    const [aggregate] = (await svc.exportContributions()).contributions;
+    expect(aggregate).toMatchObject({
+      participantId: "@u1:localhost",
+      relevanceMean: 5,
+      coherenceMean: 5,
+      meaningfulnessScoreMean: 0.5,
+    });
+    const rows = (await svc.exportContributionsCsv()).split("\n");
+    expect(rows[1]).toContain(",5,5,0,0.5");
+  });
+
+  it("exports empty rating means when nothing carries a rating", async () => {
+    const res = await svc.openSession(open());
+    await svc.checkpointSession(res.session.id, {
+      messages: [
+        {
+          id: "m1",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          senderId: "@u1:localhost",
+          text: "hello",
+          reactions: [],
+        },
+      ],
+      rankingHistory: [],
+      contributionClassifications: [],
+    });
+
+    const [aggregate] = (await svc.exportContributions()).contributions;
+    expect(aggregate).toMatchObject({ relevanceMean: null, coherenceMean: null });
+    const rows = (await svc.exportContributionsCsv()).split("\n");
+    expect(rows[1]).toMatch(/,0,,,0,0$/);
   });
 
   it("returns running checkpoints even when a bot re-invite is transiently rejected", async () => {
