@@ -7,7 +7,9 @@ async function request<T>(path: string, token: string, body = {}): Promise<T> {
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.message || "The writing workspace is unavailable. Please retry.");
+    throw Object.assign(new Error(error.message || "The writing workspace is unavailable. Please retry."), {
+      code: error.code,
+    });
   }
   return response.json();
 }

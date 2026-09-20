@@ -5,6 +5,12 @@ const MAX_CHARS = 1000;
 const MAX_REVISIONS = 10000;
 const rawText = text => text.endsWith('\n') ? text.slice(0, -1) : text;
 exports.rawText = rawText;
+// Identity is server-signed: browser preferences cannot change study colours.
+exports.applyIdentity = (message, grant) => {
+  const identity = { name: grant.authorName || 'Participant', colorId: /^#[a-f0-9]{6}$/i.test(grant.authorColor || '') ? grant.authorColor : '#000000' };
+  if (message.type === 'CLIENT_READY') message.userInfo = identity;
+  if (message.type === 'COLLABROOM' && message.data?.type === 'USERINFO_UPDATE') message.data.userInfo = identity;
+};
 exports.trackWrite = (id, write) => {
   const result = write();
   const writes = pending.get(id) || new Set();

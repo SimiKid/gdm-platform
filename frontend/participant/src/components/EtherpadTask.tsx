@@ -11,6 +11,7 @@ export default function EtherpadTask({ phase, sessionId, onComplete }: Props) {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const [waitingForDiscussion, setWaitingForDiscussion] = useState(false);
   const inFlight = useRef(false);
   const frame = useRef<HTMLIFrameElement>(null);
   const completed = useRef(false);
@@ -20,13 +21,24 @@ export default function EtherpadTask({ phase, sessionId, onComplete }: Props) {
 
   useEffect(() => {
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
     setError("");
     void workspaceClient.pad(token, phase, sessionId).then(value => {
       if (cancelled) return;
+      setWaitingForDiscussion(false);
       setPad(value);
       if (value.state === "captured" && !completed.current) { completed.current = true; callback.current?.(value); }
-    }).catch(e => { if (!cancelled) setError(String(e.message)); });
-    return () => { cancelled = true; };
+    }).catch(e => {
+      if (cancelled) return;
+      if (phase === "exit" && e.code === "DISCUSSION_PENDING") {
+        setWaitingForDiscussion(true);
+        retryTimer = setTimeout(() => setAttempt(n => n + 1), 1000);
+      } else {
+        setWaitingForDiscussion(false);
+        setError(String(e.message));
+      }
+    });
+    return () => { cancelled = true; clearTimeout(retryTimer); };
   }, [token, phase, sessionId, attempt]);
 
   const finish = useCallback(async () => {
@@ -46,10 +58,10 @@ export default function EtherpadTask({ phase, sessionId, onComplete }: Props) {
     <section className="etherpad-task">
       {pad && phase !== "group" && pad.state !== "captured" && <StudyCountdown deadline={Date.parse(pad.deadline)} label="Writing time remaining" onExpire={() => void finish()} />}
       <div className="study-card">
-        <h2>{phase === "group" ? "Group workspace" : phase === "entry" ? "Your initial response" : "Your final response"}</h2>
-        <p>{phase === "group" ? "Use this shared space to record your group's decision. Discuss ideas in the chat." : "Write your own response to the Moon Survival task. Explain which items matter most and why. This pad is private to you."} Maximum 1,000 characters, including spaces and line breaks.</p>
+        {phase !== "group" && <h2>{phase === "entry" ? "Your initial response" : "Your final response"}</h2>}
+        <p>{phase === "group" ? "Use this shared Etherpad to make your ranking." : "Write your own response to the Moon Survival task. Explain which items matter most and why. This pad is private to you. Maximum 1,000 characters, including spaces and line breaks."}</p>
         <details open={phase === "entry"}><summary>Moon Survival task and available items</summary><div dangerouslySetInnerHTML={{ __html: MOON_SURVIVAL_BRIEFING.html }} /><ul>{MOON_SURVIVAL.items.map(item => <li key={item.id}>{item.label}</li>)}</ul></details>
-        {!pad && !error && <p role="status">Opening your writing workspace…</p>}
+        {!pad && !error && <p role="status">{waitingForDiscussion ? "The discussion is ending. Your final writing workspace will open automatically…" : "Opening your writing workspace…"}</p>}
         {error && <p className="error" role="alert">{error}</p>}
         {error && <button className="btn btn-primary" disabled={saving} onClick={() => pad ? void finish() : setAttempt(n => n + 1)}>Try again</button>}
         {pad?.embedUrl && <iframe ref={frame} className="etherpad-frame" src={pad.embedUrl} title={`${phase} writing workspace`} referrerPolicy="no-referrer" sandbox="allow-scripts allow-same-origin" />}

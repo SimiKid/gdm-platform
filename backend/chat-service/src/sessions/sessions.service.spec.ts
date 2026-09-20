@@ -82,6 +82,7 @@ describe("SessionsService (chat-service)", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -274,6 +275,41 @@ describe("SessionsService (chat-service)", () => {
     await svc.endSession("!r");
     await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
     expect(rules.onWindowElapsed).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [1 / 6, 0],
+    [1 / 6, 1],
+    [0.1666666666666667, 0],
+    [0.1666666666666667, 1],
+  ])("evaluates short windows once with duration %s and clock offset %s", async (windowMinutes, clockOffset) => {
+    const startedAt = Date.now();
+    await svc.startSession({
+      ...note,
+      startedAt: new Date(startedAt).toISOString(),
+      condition: {
+        ...condition,
+        config: {
+          ...condition.config,
+          protectedStartMinutes: 1,
+          contributionWindowMinutes: windowMinutes,
+        },
+      },
+    });
+    // Exercise exact and early callbacks, including fractional-minute rounding.
+    vi.spyOn(Date, "now").mockImplementation(() => new Date().getTime() - clockOffset);
+    await vi.advanceTimersByTimeAsync(70_000);
+    expect(rules.onWindowElapsed).toHaveBeenCalledTimes(clockOffset ? 0 : 1);
+    await vi.advanceTimersByTimeAsync(clockOffset);
+    expect(rules.onWindowElapsed).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(rules.onWindowElapsed.mock.calls.map((call) => call[1])).toEqual([
+      startedAt + 70_000,
+      startedAt + 80_000,
+      startedAt + 90_000,
+      startedAt + 100_000,
+    ]);
+    await svc.endSession("!r");
   });
 
   it("does not delay a window boundary behind slow per-message rule work", async () => {

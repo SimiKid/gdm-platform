@@ -58,6 +58,8 @@ test("private entry/exit pads, shared capped text, exports and a draining switch
       expect((await editor(pages[1]).innerText()).trim()).toBe("");
       await editor(pages[0]).fill("Alice entry 🌕\nKeep this raw text.");
       await editor(pages[1]).fill("Bob entry: oxygen first.");
+      await expect(editor(pages[1]).getByText("Bob entry: oxygen first.", { exact: true })).toHaveCSS("color", "rgb(0, 0, 0)");
+      await expect(editor(pages[1]).locator('span[class*="author-"]').first()).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       await Promise.all(pages.map(p => p.getByRole("button", { name: "Submit my response" }).click()));
       await Promise.all(pages.map(p => expect(p.getByRole("heading", { name: "You are now ready to join the group discussion!" })).toBeVisible()));
       for (const page of pages) { await page.getByRole("checkbox").check(); await page.getByRole("button", { name: "Join chat" }).click(); }
@@ -71,6 +73,18 @@ test("private entry/exit pads, shared capped text, exports and a draining switch
       expect((await editor(pages[0]).innerText()).trim()).toBe("");
       await editor(pages[0]).fill("Shared group response");
       await expect(editor(pages[1])).toHaveText("Shared group response");
+      await expect(pages[0].getByRole("heading", { name: "Group workspace" })).toHaveCount(0);
+      await expect(pages[0].getByText("Use this shared Etherpad to make your ranking.", { exact: true })).toBeVisible();
+      await expect(pages[0].locator(".etherpad-task details")).not.toHaveAttribute("open", "");
+      const colors = await Promise.all(pages.map(p => p.locator('.user-dot').evaluate(el => getComputedStyle(el).backgroundColor)));
+      await editor(pages[1]).press("Control+End");
+      await editor(pages[1]).press("Enter");
+      await pages[1].keyboard.insertText("Second author response");
+      for (const page of pages) {
+        await expect(editor(page).getByText("Shared group response", { exact: true })).toHaveCSS("color", colors[0]);
+        await expect(editor(page).getByText("Second author response", { exact: true })).toHaveCSS("color", colors[1]);
+        await expect(editor(page).locator('span[class*="author-"]').first()).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      }
       await editor(pages[0]).fill("x".repeat(990));
       await expect(editor(pages[1])).toHaveText("x".repeat(990));
       await Promise.all(pages.map(p => editor(p).press("Control+End")));
@@ -96,6 +110,8 @@ test("private entry/exit pads, shared capped text, exports and a draining switch
         expect((await editor(page).innerText()).trim()).toBe("");
       }
       await editor(pages[0]).fill("Alice final response"); await editor(pages[1]).fill("Bob final response");
+      await expect(editor(pages[0]).getByText("Alice final response", { exact: true })).toHaveCSS("color", "rgb(0, 0, 0)");
+      await expect(editor(pages[0]).locator('span[class*="author-"]').first()).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       await Promise.all(pages.map(p => p.getByRole("button", { name: "Submit my response" }).click()));
       await expect.poll(async () => (await status(request)).state, { timeout: 30000 }).toBe("stopped");
     });

@@ -193,7 +193,7 @@ export class SessionsService
     this.scheduleWindowTick(runtime);
   }
 
-  private scheduleWindowTick(runtime: SessionRuntime): void {
+  private scheduleWindowTick(runtime: SessionRuntime, previousBoundary = 0): void {
     const config = runtime.condition.config;
     const windowMs =
       (config.contributionWindowMinutes ??
@@ -210,11 +210,13 @@ export class SessionsService
     const gridStartMs = runtime.startedAtMs + warmupMs;
     const now = Date.now();
     const elapsed = Math.max(0, now - gridStartMs);
-    const nextBoundary =
-      gridStartMs + (Math.floor(elapsed / windowMs) + 1) * windowMs;
+    const nextBoundary = Math.max(
+      gridStartMs + (Math.floor(elapsed / windowMs) + 1) * windowMs,
+      previousBoundary + windowMs,
+    );
     this.windowTimers.set(
       runtime.roomId,
-      setTimeout(() => this.onWindowBoundary(runtime, nextBoundary), nextBoundary - now),
+      setTimeout(() => this.onWindowBoundary(runtime, nextBoundary), Math.ceil(nextBoundary - now)),
     );
   }
 
@@ -226,6 +228,16 @@ export class SessionsService
       this.finalizingRooms.has(runtime.roomId) ||
       this.runtimes.get(runtime.roomId) !== runtime
     ) {
+      return;
+    }
+    // Timer delays may be rounded down or fire before the wall-clock deadline.
+    // Do not evaluate an unfinished window or schedule that same boundary again.
+    const remaining = windowEndMs - Date.now();
+    if (remaining > 0) {
+      this.windowTimers.set(
+        runtime.roomId,
+        setTimeout(() => this.onWindowBoundary(runtime, windowEndMs), Math.ceil(remaining)),
+      );
       return;
     }
     const previous = this.windowRequests.get(runtime.roomId) ?? Promise.resolve();
@@ -242,7 +254,7 @@ export class SessionsService
       runtime.roomId,
       request,
     );
-    this.scheduleWindowTick(runtime);
+    this.scheduleWindowTick(runtime, windowEndMs);
   }
 
   private handleEvent(event: TimelineEvent): void {
