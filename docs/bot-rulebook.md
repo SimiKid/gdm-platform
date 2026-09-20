@@ -231,16 +231,17 @@ All parameters are stored in the condition's `config` object (plus the
 session-level `durationMinutes`, `groupSize`, and recruiting `goal` on the
 condition itself). The admin dashboard (Settings → Session & Bot Parameters)
 edits **six of them as one shared form applied to all study arms** —
-duration, group size, warm-up (minutes), protected end (entered in seconds),
-window length (entered in seconds), and threshold (entered in %) — and shows
+duration, group size, warm-up (entered in seconds), protected end (entered
+in seconds), window length (entered in seconds), and threshold (entered in %) — and shows
 a drift warning when an arm deviates from the shared values. A separate
 Settings → Shared Workspace card applies `workspaceMode` to all arms in the
 same way. The delivery mode (`interventionMode`) is displayed as a read-only
 badge per arm. The remaining fields (`llmMode`, score/dominance weights,
 invite grace) are fixed study design: they are not shown in the dashboard at
-all and can only be changed via `PUT /api/conditions/:id`. Protected end and
-window length may be fractional minutes (e.g. `1.5` = 90 seconds); the
-protected end also drives the participant timer's red "wrap up!" cue.
+all and can only be changed via `PUT /api/conditions/:id`. Warm-up, protected
+end and window length are stored as minutes and may be fractional (e.g. `1.5`
+= 90 seconds); the protected end also drives the participant timer's red
+"wrap up!" cue.
 
 The session manager clamps admin input on save: `contributionThreshold` to
 0.01–1, `contributionWindowMinutes` to 0.1–240, `protectedStartMinutes` to

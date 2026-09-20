@@ -413,7 +413,7 @@ function RecruitingRow({
 interface ParamValues {
   durationMinutes: number;
   groupSize: number;
-  warmupMinutes: number;
+  warmupSeconds: number;
   wrapupSeconds: number;
   windowSeconds: number;
   triggerPercent: number;
@@ -441,9 +441,9 @@ const PARAM_FIELDS: Array<{
     why: "Participants per session. The waiting room fills to this number.",
   },
   {
-    key: "warmupMinutes",
+    key: "warmupSeconds",
     label: "Warm-up",
-    unit: "minutes",
+    unit: "seconds",
     min: 0,
     why: "Arrival phase: nobody is counted or nudged until it ends.",
   },
@@ -478,7 +478,7 @@ function valuesOf(condition: Condition): ParamValues {
   return {
     durationMinutes: condition.durationMinutes,
     groupSize: condition.groupSize,
-    warmupMinutes: condition.config.protectedStartMinutes,
+    warmupSeconds: Math.round(condition.config.protectedStartMinutes * 60),
     wrapupSeconds: Math.round(condition.config.protectedEndMinutes * 60),
     windowSeconds: Math.round(condition.config.contributionWindowMinutes * 60),
     triggerPercent: Math.round(condition.config.contributionThreshold * 100),
@@ -492,7 +492,7 @@ function withValues(condition: Condition, values: ParamValues): Condition {
     groupSize: values.groupSize,
     config: {
       ...condition.config,
-      protectedStartMinutes: values.warmupMinutes,
+      protectedStartMinutes: values.warmupSeconds / 60,
       protectedEndMinutes: values.wrapupSeconds / 60,
       contributionWindowMinutes: values.windowSeconds / 60,
       contributionThreshold: values.triggerPercent / 100,
