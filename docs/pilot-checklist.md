@@ -116,12 +116,12 @@ In the admin dashboard:
       split, message text) is present in the nudge-events export
       (`/api/export/interventions`) or the full JSON dump — the dashboard
       itself only shows counts
-- [ ] Results tab shows the pilot session in the per-condition descriptives
+- [ ] `GET /api/reports/summary` (with the admin token) lists the pilot session in the per-condition descriptives
 - [ ] Overview-tab downloads work: **Research Data (CSV)** zip and, under
       Advanced, the **Full data dump** JSON
-- [ ] Research exports download (Results tab: participants/sessions-analysis/windows/rankings CSVs and the ZIP bundle with codebook)
-- [ ] `linkage.csv` downloads from the Identifying Data section (and stays out of the bundle)
-- [ ] Round filter chips appear once more than one round exists and rewrite the download links
+- [ ] Research exports download by URL with the admin token (participants/sessions-analysis/windows/rankings CSVs and `research.zip` with codebook)
+- [ ] `linkage.csv` downloads from `/api/export/linkage.csv` (and stays out of the bundle)
+- [ ] `?roundIds=…` on an export URL restricts the file to that round
 - [ ] Data survives a `session-manager` container restart (without `--volumes`)
 
 ## 6. Capture Issues

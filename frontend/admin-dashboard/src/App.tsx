@@ -7,7 +7,6 @@ import type {
   EtherpadStatus,
 } from "@gdm/shared";
 import Overview from "./components/Overview";
-import Results from "./components/Results";
 import Settings from "./components/Settings";
 import Testing from "./components/Testing";
 import ProlificOutcomes from "./components/ProlificOutcomes";
@@ -18,7 +17,7 @@ export { API_BASE, PARTICIPANT_BASE } from "./api";
 /** How often the dashboard refreshes itself (drives the "Live" indicator). */
 const POLL_MS = 5000;
 
-type View = "overview" | "results" | "settings" | "prolific" | "testing";
+type View = "overview" | "settings" | "prolific" | "testing";
 
 export default function App() {
   const [view, setView] = useState<View>("overview");
@@ -138,13 +137,6 @@ export default function App() {
           </button>
           <button
             type="button"
-            className={view === "results" ? "tab active" : "tab"}
-            onClick={() => setView("results")}
-          >
-            Results
-          </button>
-          <button
-            type="button"
             className={view === "settings" ? "tab active" : "tab"}
             onClick={() => setView("settings")}
           >
@@ -165,7 +157,6 @@ export default function App() {
       {view === "overview" && (
         <Overview rows={rows} sessions={sessions} rounds={rounds} />
       )}
-      {view === "results" && <Results rounds={rounds} />}
       {view === "settings" && (
         <Settings
           rows={rows}

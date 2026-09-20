@@ -138,9 +138,9 @@ The default Playwright run covers the complete three-participant journey,
 validation feedback, live typing (and asserting that emoji reactions are
 **absent**, per the turn-taking design), shared ranking and panel resizing,
 behavioral telemetry, both delivery modes (public/private — the detection
-axis is only exercised by the opt-in live spec), the Results dashboard
-(`results-dashboard.spec.ts`: descriptives, round-filter chips rewriting
-every download link, the research-bundle ZIP, and the Study Rounds
+axis is only exercised by the opt-in live spec), the research exports
+(`research-exports.spec.ts`: the research-bundle ZIP by URL, the `roundIds`
+filter on an export URL, the absence of a Results tab, and the Study Rounds
 confirm/cancel step), the admin download, and all JSON/CSV export families
 including `roundIds`×`conditionIds` composition. The 401 guards on
 `linkage.csv`/`research.zip` are asserted only when `E2E_ADMIN_TOKEN` is
@@ -181,7 +181,7 @@ Notes:
   size 2 under a per-spec prefix such as `e2e-exports-…` or
   `e2e-intervention-public-…`, falling back to `e2e-condition-…`; the
   recovery spec uses 3 minutes; the golden path uses `e2e-<timestamp>` with 1
-  minute and group size 3; `results-dashboard.spec.ts` is read-only and
+  minute and group size 3; `research-exports.spec.ts` is read-only and
   creates none), so runs never touch the real study arms and stale sessions
   from an aborted run can't soak up participants. Test rows remain in the research DB; wipe with
   `sh stop.sh --volumes` when you want a clean slate.

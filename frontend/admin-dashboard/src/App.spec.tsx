@@ -20,7 +20,6 @@ function dashboardApi(extra: Record<string, unknown> = {}) {
     "/sessions": [sessionSummary({ status: "waiting" })],
     "/rounds": rounds,
     "/admin/prolific/outcomes": { outcomes: [] },
-    "/reports/summary": { generatedAt: "now", conditions: [] },
     "/settings": {
       compensationUrl: "https://app.prolific.com/submissions/complete?cc=DONE",
       noConsentUrl: "",
@@ -44,8 +43,7 @@ describe("App", () => {
       expect.arrayContaining(["/conditions/progress", "/sessions", "/rounds", "/admin/prolific/outcomes"]),
     );
 
-    await user.click(screen.getByRole("button", { name: "Results" }));
-    expect(await screen.findByRole("heading", { name: "Results by Condition" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Results" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Prolific" }));
     expect(screen.getByText("No Prolific arrivals yet.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Settings" }));
