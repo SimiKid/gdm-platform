@@ -8,6 +8,10 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./src/test-setup.ts"],
     include: ["src/**/*.spec.{ts,tsx}"],
+    // Multi-page userEvent flows under jsdom + coverage instrumentation run
+    // 5-10x slower on the shared CI runner (all packages test in parallel)
+    // than locally; the default 5 s limit flaked there.
+    testTimeout: 30_000,
     coverage: {
       provider: "v8",
       include: ["src/**/*.{ts,tsx}"],

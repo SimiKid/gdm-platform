@@ -13,6 +13,13 @@ const rounds = {
   ],
 };
 
+/** Wait for the compensation card's GET /settings so no state update lands after the test. */
+async function settingsLoaded() {
+  await waitFor(() =>
+    expect(screen.getByLabelText(/Full completion/)).toBeEnabled(),
+  );
+}
+
 /** Routes every card on the Settings view touches on mount. */
 function settingsApi(extra: Record<string, unknown> = {}) {
   return mockApi({
@@ -46,6 +53,7 @@ describe("Settings", () => {
     expect(within(recruiting).queryByText("E2E")).toBeNull();
     expect(within(recruiting).getByText("No nudges")).toBeInTheDocument();
     expect(within(recruiting).getByText("1 / 5 · 4 remaining")).toBeInTheDocument();
+    await settingsLoaded();
   });
 
   it("starts the next round after an explicit confirmation", async () => {
@@ -82,10 +90,11 @@ describe("Settings", () => {
     expect(await screen.findByText("Could not start the round.")).toBeInTheDocument();
   });
 
-  it("renders nothing for the rounds card until rounds are loaded", () => {
+  it("renders nothing for the rounds card until rounds are loaded", async () => {
     settingsApi();
     render(<Settings rows={[]} onSaved={vi.fn()} rounds={null} lobbyCount={0} />);
     expect(screen.queryByRole("heading", { name: "Study Rounds" })).toBeNull();
+    await settingsLoaded();
   });
 });
 
