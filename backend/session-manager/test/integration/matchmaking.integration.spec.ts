@@ -273,6 +273,16 @@ describe("matchmaking & lifecycle (integration)", () => {
       .expect(409);
   });
 
+  it("concurrent initial round reads all return the same open round", async () => {
+    const responses = await Promise.all(Array.from({ length: 8 }, () =>
+      request(t.http).get("/api/rounds").expect(200),
+    ));
+    for (const response of responses) {
+      expect(response.body.currentRound).toBe(1);
+      expect(response.body.rounds).toHaveLength(1);
+    }
+  });
+
   it("study rounds: start aborts lobbies, resets progress, and round-scopes matchmaking", async () => {
     // Lazy Round 1 exists even after a TRUNCATE.
     const initial = (await request(t.http).get("/api/rounds").expect(200))

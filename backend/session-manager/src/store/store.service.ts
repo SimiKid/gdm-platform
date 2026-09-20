@@ -779,10 +779,20 @@ export class StoreService implements OnModuleInit {
     const maxId = await this.db.studyRoundRecord.aggregate({
       _max: { id: true },
     });
-    const created = await this.db.studyRoundRecord.create({
-      data: { id: (maxId._max.id ?? 0) + 1, label: "" },
-    });
-    return roundFromRow(created);
+    try {
+      const created = await this.db.studyRoundRecord.create({
+        data: { id: (maxId._max.id ?? 0) + 1, label: "" },
+      });
+      return roundFromRow(created);
+    } catch (error) {
+      // Concurrent first reads can both observe no open round. The database
+      // constraints pick a winner; return its round to the other reader.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        const winner = await this.db.studyRoundRecord.findFirst({ where: { endedAt: null } });
+        if (winner) return roundFromRow(winner);
+      }
+      throw error;
+    }
   }
 
   /** All rounds, oldest first, with study-session counts (e2e- excluded). */
