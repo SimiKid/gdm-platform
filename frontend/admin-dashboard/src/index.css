@@ -736,3 +736,9 @@ tbody tr:last-child td {
   }
 }
 
+
+.dashboard-controls { border: 0; padding: 0; margin: 0; min-width: 0; }
+.dashboard-controls:disabled { opacity: .6; pointer-events: none; }
+.workspace-busy { position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 12px; padding: 18px; background: #eef5ff; border: 1px solid #8dafde; border-radius: 8px; }
+.workspace-spinner { width: 20px; height: 20px; border: 3px solid #ccd9eb; border-top-color: #2155a3; border-radius: 50%; animation: workspace-spin 1s linear infinite; }
+@keyframes workspace-spin { to { transform: rotate(360deg); } }

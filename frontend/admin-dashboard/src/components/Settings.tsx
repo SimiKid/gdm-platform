@@ -5,7 +5,7 @@ import type {
   RoundsResponse,
   StudyRound,
   StudySettings,
-  WorkspaceMode,
+  EtherpadStatus,
 } from "@gdm/shared";
 import { apiFetch, isTestCondition } from "../api";
 
@@ -19,6 +19,8 @@ interface SettingsProps extends Props {
   rounds: RoundsResponse | null;
   /** Current waiting-room lobbies (shown in the start-round confirm step). */
   lobbyCount: number;
+  etherpad: EtherpadStatus | null;
+  onToggleEtherpad: (enabled: boolean) => void;
 }
 
 type SaveState = "idle" | "saving" | "saved" | "error";
@@ -39,6 +41,8 @@ export default function Settings({
   onSaved,
   rounds,
   lobbyCount,
+  etherpad,
+  onToggleEtherpad,
 }: SettingsProps) {
   const studyRows = rows.filter((row) => !isTestCondition(row.condition.id));
 
@@ -56,7 +60,7 @@ export default function Settings({
         <RecruitingTable rows={studyRows} onSaved={onSaved} />
       </section>
       <SharedParamsCard rows={studyRows} onSaved={onSaved} />
-      <WorkspaceCard rows={studyRows} onSaved={onSaved} />
+      <WorkspaceCard status={etherpad} onToggle={onToggleEtherpad} />
       <CompensationCard />
     </>
   );
@@ -648,134 +652,19 @@ function SharedParamsCard({ rows, onSaved }: Props) {
 
 /* ── Shared participant workspace ──────────────────── */
 
-function workspaceModeOf(condition: Condition): WorkspaceMode {
-  return condition.config.workspaceMode === "external"
-    ? "external"
-    : "ranking";
-}
-
-function majorityWorkspaceMode(rows: ConditionProgress[]): WorkspaceMode {
-  const external = rows.filter(
-    (row) => workspaceModeOf(row.condition) === "external",
-  ).length;
-  return external > rows.length / 2 ? "external" : "ranking";
-}
-
-function WorkspaceCard({ rows, onSaved }: Props) {
-  const shared = useMemo(() => majorityWorkspaceMode(rows), [rows]);
-  const [draft, setDraft] = useState<WorkspaceMode>(shared);
-  const [dirty, setDirty] = useState(false);
-  const [state, setState] = useState<SaveState>("idle");
-
-  useEffect(() => {
-    if (!dirty) setDraft(shared);
-  }, [shared, dirty]);
-
-  const drifted = rows.filter(
-    (row) => workspaceModeOf(row.condition) !== shared,
-  );
-  const providerConfigured = rows.every(
-    (row) => !!row.condition.config.externalWorkspace?.embedUrl?.trim(),
-  );
-
-  async function saveAll() {
-    setState("saving");
-    try {
-      for (const row of rows) {
-        await putCondition({
-          ...row.condition,
-          config: { ...row.condition.config, workspaceMode: draft },
-        });
-      }
-      setDirty(false);
-      setState("saved");
-      onSaved();
-    } catch {
-      setState("error");
-    }
-  }
-
-  if (rows.length === 0) return null;
-
+function WorkspaceCard({ status, onToggle }: { status: EtherpadStatus | null; onToggle: (enabled: boolean) => void }) {
   return (
     <section className="section">
-      <h2>Shared Workspace</h2>
-      <p className="hint">
-        Select what appears beside the group chat. This is applied to all study
-        arms and only affects newly formed sessions. Structured ranking remains
-        the safe default.
-      </p>
-
-      <div className="workspace-options" role="radiogroup" aria-label="Shared workspace">
-        <label className={draft === "ranking" ? "selected" : ""}>
-          <input
-            type="radio"
-            name="workspace-mode"
-            value="ranking"
-            checked={draft === "ranking"}
-            onChange={() => {
-              setDraft("ranking");
-              setDirty(true);
-              setState("idle");
-            }}
-          />
-          <span>
-            <strong>Structured ranking</strong>
-            <small>Current shared ranking panel and research workflow.</small>
-          </span>
-        </label>
-        <label className={draft === "external" ? "selected" : ""}>
-          <input
-            type="radio"
-            name="workspace-mode"
-            value="external"
-            checked={draft === "external"}
-            onChange={() => {
-              setDraft("external");
-              setDirty(true);
-              setState("idle");
-            }}
-          />
-          <span>
-            <strong>External iframe</strong>
-            <small>Extension point for a future Etherpad or other provider.</small>
-          </span>
-        </label>
-      </div>
-
-      {!providerConfigured && (
-        <div className="workspace-warning">
-          External iframe support is prepared, but no provider is configured.
-          Selecting it will show participants a not-configured message instead
-          of an embedded workspace.
-        </div>
-      )}
-
-      {drifted.length > 0 && (
-        <div className="drift">
-          <span>
-            ⚠ {drifted.length} study arm{drifted.length === 1 ? "" : "s"} do
-            not match the shared workspace setting.
-          </span>
-        </div>
-      )}
-
-      <div className="param-foot">
-        <button
-          type="button"
-          onClick={() => void saveAll()}
-          disabled={state === "saving" || !dirty}
-        >
-          {state === "saving" ? "Saving" : "Apply to all study arms"}
-        </button>
-        {state === "saved" && (
-          <span className="ok">Saved — applies to newly formed sessions</span>
-        )}
-        {state === "error" && <span className="bad">Error — not all arms saved</span>}
-        {state === "idle" && !dirty && (
-          <span className="muted">Ranking is unchanged until another mode is saved.</span>
-        )}
-      </div>
+      <h2>Etherpad workspace</h2>
+      <p className="hint">When enabled, new participants use private entry and exit pads and a shared group pad. Each pad allows 1,000 characters. Ranking scores are not calculated for these sessions.</p>
+      <label className="copy-row">
+        <input type="checkbox" role="switch" aria-label="Enable Etherpad" checked={status?.enabled ?? false} disabled={!status} onChange={e => onToggle(e.target.checked)} />
+        Enable Etherpad
+      </label>
+      <p role="status">Server: {status?.state ?? "loading"}</p>
+      {status?.state === "draining" && <p className="hint">New participants use ranking. Etherpad will stop after the {status.activeParticipants} existing writing participant(s) finish or their time expires.</p>}
+      {status?.state === "error" && <div className="error"><p>{status.error}</p><button onClick={() => onToggle(status.enabled)}>Retry</button></div>}
+      <p className="hint">Each participant keeps the mode they started with. Switching off preserves their work, then stops the editor. The server starts automatically when you enable it.</p>
     </section>
   );
 }

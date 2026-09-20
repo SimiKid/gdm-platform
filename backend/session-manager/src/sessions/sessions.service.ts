@@ -6,6 +6,7 @@ import {
   NotFoundException,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
@@ -48,6 +49,7 @@ import {
 } from "../reports/filter";
 import { validateSurveyAnswers } from "../validation/request-validation";
 import { ProlificActionsService } from "../prolific/prolific-actions.service";
+import { EtherpadService } from "../etherpad/etherpad.service";
 
 @Injectable()
 export class SessionsService implements OnModuleInit, OnModuleDestroy {
@@ -96,6 +98,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     private readonly store: StoreService,
     private readonly matrix: MatrixService,
     private readonly prolificActions: ProlificActionsService,
+    @Optional() private readonly etherpad?: EtherpadService,
   ) {}
 
   onModuleInit(): void {
@@ -142,6 +145,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
 
     const seat = await this.queueMatchmaking(() => this.reserveSeat(req));
+    await this.etherpad?.attach(req.trackingToken, seat.session, seat.participant.id);
     const creds = await this.ensureParticipantAccess(
       seat.session,
       seat.participant,
@@ -234,9 +238,15 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       return { ...existing, existing: true };
     }
 
-    const session =
-      (await this.findForming(req.conditionId)) ??
-      (await this.store.createForming(await this.assignCondition(req.conditionId)));
+    const taskMode = await this.etherpad?.modeFor(req.trackingToken);
+    const forming = taskMode
+      ? await this.store.findForming(req.conditionId, taskMode)
+      : await this.findForming(req.conditionId);
+    let condition = forming ? undefined : await this.assignCondition(req.conditionId);
+    if (condition && taskMode) {
+      condition = { ...condition, config: { ...condition.config, workspaceMode: taskMode } };
+    }
+    const session = forming ?? await this.store.createForming(condition!);
 
     const participant: Participant = {
       id: randomUUID(),
@@ -595,9 +605,16 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   async exportBundle(filter: ResearchFilter = {}): Promise<ExportBundle> {
+    const sessions = await this.filteredSessions(filter);
+    const ids = new Set(sessions.filter(s => s.condition.config.workspaceMode === "etherpad").map(s => s.id));
+    const pads = (await this.etherpad?.documents() ?? [])
+      .filter(d => d.sessionId ? ids.has(d.sessionId) : !filter.conditionIds?.length && !filter.roundIds?.length)
+      .map(d => ({ id: d.id, phase: d.phase, deadline: d.deadline, state: d.state, text: d.text, revision: d.revision,
+        capturedAt: d.capturedAt, sessionId: d.sessionId, participantId: d.participantId, conditionId: d.conditionId, roundId: d.roundId, error: d.error }));
     return {
       generatedAt: new Date().toISOString(),
-      sessions: await this.filteredSessions(filter),
+      sessions,
+      ...(pads.length ? { etherpads: pads } : {}),
     };
   }
 
@@ -708,7 +725,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           String(session.condition.groupSize),
           String(session.durationMinutes),
           config.llmMode ?? "off",
-          config.workspaceMode === "external" ? "external" : "ranking",
+          config.workspaceMode ?? "ranking",
           // Fold retired tone suffixes (e.g. "public-neutral") onto the
           // canonical baseline/public/private axis, matching the stored type.
           normalizeInterventionMode(config.interventionMode),
@@ -721,7 +738,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           String(scoreWeights.messages),
           String(dominanceWeights.share),
           String(dominanceWeights.meaningfulness),
-          session.ranking.order.join("|"),
+          config.workspaceMode === "etherpad" ? "" : session.ranking.order.join("|"),
           session.roomId ?? "",
           session.createdAt,
           session.startedAt ?? "",
@@ -1283,6 +1300,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   async submitSurvey(req: SubmitSurveyRequest): Promise<void> {
     const session = await this.getSession(req.sessionId);
+    if (session.condition.config.workspaceMode === "etherpad") {
+      const id = await this.etherpad?.surveyPadId(session.id, req.participantId, req.kind);
+      if (!id) throw new ConflictException("Writing task not saved");
+      const answers = { ...req.survey.answers };
+      for (const key of ["individualRanking", "finalRanking", "finalRankingPartial", "finalRankingCompleted", "finalRankingTimedOut", "rankingCompleted", "rankingSecondsUsed", "exitRankingCompleted", "exitRankingSecondsUsed", "entryEtherpadId", "exitEtherpadId"]) delete answers[key];
+      answers[req.kind === "entry" ? "entryEtherpadId" : "exitEtherpadId"] = id;
+      req = { ...req, survey: { ...req.survey, answers } };
+    }
     validateSurveyAnswers(
       req,
       session.rankingTask.items.map((item) => item.id),

@@ -8,12 +8,14 @@ test("@validation participant forms explain and block incomplete answers", async
   // accidental future join cannot place this browser in a real study arm.
   await page.goto(`/?conditionId=${uniqueId("validation")}`);
   await page.getByRole("button", { name: "Start" }).click();
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: /continue to the consent form/i }).click();
 
   await test.step("consent stays blocked until every declaration is checked", async () => {
     const begin = page.getByRole("button", { name: "Begin study" });
     const boxes = page.getByRole("checkbox");
     await expect(begin).toBeDisabled();
-    await expect(page.getByText("Please tick all three boxes above to begin.")).toBeVisible();
+    await expect(page.getByText(/all boxes of the declaration of consent must be ticked/)).toBeVisible();
     await boxes.nth(0).check();
     await boxes.nth(1).check();
     await expect(begin).toBeDisabled();
@@ -43,7 +45,7 @@ test("@validation participant forms explain and block incomplete answers", async
     ).toBeVisible();
 
     await age.fill("18");
-    await page.getByRole("radio", { name: "Prefer not to say" }).check();
+    await page.getByRole("group", { name: "What is your gender?" }).getByRole("radio", { name: "Prefer not to say" }).check();
     await page.getByRole("radio", { name: "Bachelor's degree" }).check();
     await expect(continueButton).toBeDisabled();
     await page.getByRole("radio", { name: "Fluent (advanced)" }).check();

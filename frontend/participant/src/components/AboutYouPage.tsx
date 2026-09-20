@@ -1,19 +1,21 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Likert from "./Likert";
 
 export interface AboutYouAnswers {
   age?: number;
   agePreferNotToSay?: boolean;
-  gender: string;
+  gender?: string;
   genderCustom?: string;
-  education: string;
+  education?: string;
   educationOther?: string;
-  englishProficiency: string;
+  englishProficiency?: string;
 }
 
 interface Props {
   onContinue: (answers: AboutYouAnswers) => void;
   onIneligible?: (reason: string) => void;
+  expired?: boolean;
+  onTimeout?: (answers: AboutYouAnswers) => void;
 }
 
 const GENDER_OPTIONS = [
@@ -43,7 +45,7 @@ const ENGLISH_OPTIONS = [
 ];
 
 /** Page 2 — About You. */
-export default function AboutYouPage({ onContinue, onIneligible }: Props) {
+export default function AboutYouPage({ onContinue, onIneligible, expired, onTimeout }: Props) {
   const [age, setAge] = useState("");
   const [ageNa, setAgeNa] = useState(false);
   const [gender, setGender] = useState("");
@@ -51,34 +53,45 @@ export default function AboutYouPage({ onContinue, onIneligible }: Props) {
   const [education, setEducation] = useState("");
   const [educationOther, setEducationOther] = useState("");
   const [english, setEnglish] = useState("");
+  const timeoutHandled = useRef(false);
 
   const ageNum = Number(age);
-  const ageValid = ageNa || (age !== "" && ageNum >= 18 && ageNum <= 120);
+  const ageValid = ageNa || (age !== "" && Number.isInteger(ageNum) && ageNum >= 18 && ageNum <= 120);
   const genderValid =
     gender !== "" && (gender !== "self-describe" || genderCustom.trim() !== "");
   const educationValid =
     education !== "" && (education !== "other" || educationOther.trim() !== "");
   const ready = ageValid && genderValid && educationValid && english !== "";
 
-  function submit() {
-    const answers: AboutYouAnswers = {
-      gender,
-      education,
-      englishProficiency: english,
-    };
+  function collectAnswers(): AboutYouAnswers {
+    const answers: AboutYouAnswers = {};
+    if (genderValid) answers.gender = gender;
+    if (educationValid) answers.education = education;
+    if (english) answers.englishProficiency = english;
     if (ageNa) {
       answers.agePreferNotToSay = true;
-    } else {
+    } else if (ageValid) {
       answers.age = ageNum;
     }
-    if (gender === "self-describe") {
+    if (gender === "self-describe" && genderCustom.trim()) {
       answers.genderCustom = genderCustom.trim();
     }
-    if (education === "other") {
+    if (education === "other" && educationOther.trim()) {
       answers.educationOther = educationOther.trim();
     }
-    onContinue(answers);
+    return answers;
   }
+
+  useEffect(() => {
+    if (!expired || timeoutHandled.current) return;
+    timeoutHandled.current = true;
+    // Expiry must not bypass an explicitly reported eligibility failure.
+    if ((!ageNa && age !== "" && ageNum < 18) || english === "none") {
+      onIneligible?.("The participant reported an ineligible age or no English proficiency.");
+      return;
+    }
+    onTimeout?.(collectAnswers());
+  });
 
   return (
     <div className="study-card">
@@ -202,7 +215,7 @@ export default function AboutYouPage({ onContinue, onIneligible }: Props) {
           type="button"
           className="btn btn-primary"
           disabled={!ready}
-          onClick={submit}
+          onClick={() => onContinue(collectAnswers())}
         >
           Continue
         </button>

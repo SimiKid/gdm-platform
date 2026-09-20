@@ -211,11 +211,12 @@ test("@exports every researcher export is downloadable, authenticated and exclud
         await expect(
           page.getByRole("heading", { name: "Study Admin" }),
         ).toBeVisible();
+        await page.getByText("Advanced", { exact: true }).click();
         const [download] = await Promise.all([
           page.waitForEvent("download"),
-          page.getByRole("link", { name: "Full Data (JSON)" }).click(),
+          page.getByRole("row", { name: "Full data dump JSON" }).getByRole("link", { name: "JSON", exact: true }).click(),
         ]);
-        expect(download.suggestedFilename()).toBe("detailed_data.json");
+        expect(download.suggestedFilename()).toBe("full_data.json");
         const path = await download.path();
         expect(path).not.toBeNull();
         const downloaded = JSON.parse(await readFile(path!, "utf8")) as {

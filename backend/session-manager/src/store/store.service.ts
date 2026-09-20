@@ -1451,7 +1451,7 @@ export class StoreService implements OnModuleInit {
   }
 
   /** The oldest active, still-forming CURRENT-ROUND session with a free seat. */
-  async findForming(conditionId?: string): Promise<Session | undefined> {
+  async findForming(conditionId?: string, taskMode?: "ranking" | "etherpad"): Promise<Session | undefined> {
     const current = await this.currentRound();
     const sessions = this.dbEnabled
       ? await this.waitingSessionsFromDb(current.id, conditionId)
@@ -1467,6 +1467,7 @@ export class StoreService implements OnModuleInit {
           );
         });
     return sessions
+      .filter(s => !taskMode || (s.condition.config.workspaceMode === "etherpad" ? "etherpad" : "ranking") === taskMode)
       .filter(
         (s) =>
           s.roundId === current.id &&
@@ -1649,7 +1650,7 @@ export class StoreService implements OnModuleInit {
         taskId: RANKING_TASK.id,
         // Shuffle once when the group session is created. The persisted order
         // is then shared with every participant in that session.
-        order: shuffleRankingOrder(RANKING_TASK.items.map((i) => i.id)),
+        order: condition.config.workspaceMode === "etherpad" ? [] : shuffleRankingOrder(RANKING_TASK.items.map((i) => i.id)),
         updatedAt: now,
         updatedBy: "system",
       },
@@ -1866,6 +1867,7 @@ export class StoreService implements OnModuleInit {
       where: { id: sessionId },
       select: {
         ranking: true,
+        conditionSnapshot: true,
         rankingHistory: {
           select: { position: true, ranking: true },
           orderBy: { position: "asc" },
@@ -1879,6 +1881,7 @@ export class StoreService implements OnModuleInit {
       },
     });
     if (!current) throw new Error(`Unknown session ${sessionId}`);
+    if (fromJson<Condition>(current.conditionSnapshot).config.workspaceMode === "etherpad") checkpoint = withoutRanking(checkpoint);
     const incomingRevision = checkpoint.revision;
     const acceptsMutableState =
       incomingRevision === undefined ||
@@ -2154,6 +2157,7 @@ function mergeCheckpointIntoSession(
   session: Session,
   checkpoint: CheckpointSessionRequest,
 ): void {
+  if (session.condition.config.workspaceMode === "etherpad") checkpoint = withoutRanking(checkpoint);
   const incomingRevision = checkpoint.revision;
   const acceptsMutableState =
     incomingRevision === undefined ||
@@ -2233,6 +2237,10 @@ function mergeCheckpointIntoSession(
         ? checkpoint.rankingHistory!.at(-1)!
         : newestRanking(session.ranking, ...(checkpoint.rankingHistory ?? []));
   }
+}
+
+function withoutRanking(checkpoint: CheckpointSessionRequest): CheckpointSessionRequest {
+  return { ...checkpoint, rankingHistory: [], behavioralEvents: checkpoint.behavioralEvents?.filter(e => e.type !== "ranking-move") };
 }
 
 function mergeMessages(
@@ -2461,7 +2469,7 @@ function normalizeCondition(condition: Condition): Condition {
       // External iframe support is opt-in. Old, missing or malformed values
       // always retain the existing structured ranking workspace.
       workspaceMode:
-        condition.config.workspaceMode === "external" ? "external" : "ranking",
+        condition.config.workspaceMode === "etherpad" ? "etherpad" : condition.config.workspaceMode === "external" ? "external" : "ranking",
       scoreWeights: {
         ...DEFAULT_INTERVENTION_CONFIG.scoreWeights,
         ...condition.config.scoreWeights,

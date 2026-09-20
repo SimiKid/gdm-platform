@@ -13,7 +13,7 @@ import type { Session } from "@gdm/shared";
  * cannot be brute-forced back to a Prolific ID. Tradeoff: not
  * human-orderable; sort by `started_at` instead (documented in the codebook).
  */
-export function pseudonymize(prefix: "S" | "P", id: string): string {
+export function pseudonymize(prefix: "S" | "P" | "D", id: string): string {
   return `${prefix}-${createHash("sha256").update(id).digest("hex").slice(0, 8)}`;
 }
 

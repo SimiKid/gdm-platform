@@ -76,13 +76,13 @@ In each tab:
 
 1. **Recruiting** — click "Start"
 2. **Consent** — accept informed consent (three checkboxes)
-3. **About You** — fill in the demographic questionnaire (age, gender, education, English proficiency)
-4. **About You (attitudes)** — answer the AI-attitude and personality matrices plus teamwork, chat-comfort and topic-familiarity questions
+3. **About You** — fill in the demographic questionnaire (age, gender, education, English proficiency). A shared 5-minute questionnaire countdown starts after consent.
+4. **About You (attitudes)** — answer the AI-attitude and personality matrices plus teamwork, chat-comfort and topic-familiarity questions using the remaining questionnaire time. At expiry, entered answers are kept, unanswered fields remain absent, and the individual ranking task begins.
 5. **Ranking Task** — complete the individual Moon Survival ranking (5-minute timer)
 6. **Group Intro** — read the group discussion explanation, continue
 7. **Waiting Room** — shows "N / 3 people joined" and the remaining lobby time (`WAITING_TIMEOUT_MINUTES`, default 5), waits for all tabs to arrive
 8. **Chat** — once the group is full, a Matrix room is created and all participants enter the chat. A timer counts down based on `durationMinutes`.
-9. **Exit Survey** — after the timer expires, participants complete the three-step post-study questionnaire
+9. **Exit Survey** — after the discussion ends, participants get 2 minutes for their final individual ranking, then a shared 5 minutes for both reflection pages. Ranking expiry keeps the current order and advances; questionnaire expiry submits entered answers automatically. Failed submissions offer a retry without dropping answers.
 10. **Debriefing** — study explanation, optional feedback box, and completion link
 
 ### 4. Observe bot behavior
@@ -191,3 +191,5 @@ The compose setup is split across three files in `infra/`: `docker-compose.yml`
 (services, no host ports), `docker-compose.override.yml` (dev port mappings,
 merged automatically by `docker compose up`) and `docker-compose.prod.yml`
 (reverse proxy, prebuilt images — see [deployment.md](deployment.md)).
+
+For the optional text workspace, see [Etherpad study mode](etherpad.md). It is included in the local Docker stack and starts disabled.

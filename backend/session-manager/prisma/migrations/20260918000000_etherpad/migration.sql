@@ -1,0 +1,5 @@
+CREATE TABLE "etherpad_records" (
+  "key" TEXT PRIMARY KEY,
+  "value" JSONB NOT NULL,
+  "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

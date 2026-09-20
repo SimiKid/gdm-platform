@@ -343,3 +343,7 @@ $C exec -T research-db pg_restore --clean --if-exists --no-owner \
 
 A wrong `SYNAPSE_SERVER_NAME` discovered **before** any real study data:
 `$C down --volumes` (destroys all data), fix `.env`, re-render, redeploy.
+
+## Etherpad workspace
+
+The stack now includes the pinned Etherpad image and its persistent PostgreSQL database. Before deploying this version, configure `ETHERPAD_CONTROL_TOKEN` and `ETHERPAD_DB_PASSWORD` in `infra/.env`. Start/stop is controlled from Admin → Settings. See [Etherpad study mode](etherpad.md) for setup, draining active studies, access control, testing and backup/restore details.

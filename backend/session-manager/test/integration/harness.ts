@@ -121,7 +121,7 @@ export async function resetDatabase(): Promise<void> {
   process.env.DATABASE_URL = inject("databaseUrl");
   prisma ??= new PrismaClient();
   await prisma.$executeRawUnsafe(
-    "TRUNCATE TABLE participation_events, prolific_compensations, prolific_arrivals, reactions, messages, surveys, ranking_history, interventions, window_evaluations, participants, sessions, conditions, study_rounds, study_settings CASCADE",
+    "TRUNCATE TABLE etherpad_records, participation_events, prolific_compensations, prolific_arrivals, reactions, messages, surveys, ranking_history, interventions, window_evaluations, participants, sessions, conditions, study_rounds, study_settings CASCADE",
   );
   chatServiceCalls.length = 0;
 }

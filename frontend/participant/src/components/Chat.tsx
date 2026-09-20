@@ -9,6 +9,7 @@ import { GDM_RECIPIENT_KEY, MATRIX_EVENT_TYPES, protectedEndMs } from "@gdm/shar
 import type { PublicSession } from "@gdm/shared";
 import SharedRanking from "./SharedRanking";
 import ExternalWorkspace from "./ExternalWorkspace";
+import EtherpadTask from "./EtherpadTask";
 import {
   buildIdentities,
   identityFor,
@@ -85,7 +86,7 @@ export default function Chat({ client, session, onTimeUp, onWithdraw }: Props) {
   );
   const [groupOrder, setGroupOrder] = useState<string[]>(session?.ranking.order ?? []);
   const workspaceMode =
-    session?.condition.config.workspaceMode === "external"
+    session?.condition.config.workspaceMode === "etherpad" ? "etherpad" : session?.condition.config.workspaceMode === "external"
       ? "external"
       : "ranking";
   const [messages, setMessages] = useState<Message[]>([]);
@@ -569,7 +570,7 @@ export default function Chat({ client, session, onTimeUp, onWithdraw }: Props) {
                     Welcome to the group discussion! You are in a session with{" "}
                     {session.participants.length - 1} other{" "}
                     {session.participants.length - 1 === 1 ? "person" : "people"}.
-                    Discuss the task and adjust the shared ranking on the right.
+                    {workspaceMode === "etherpad" ? "Discuss the task and write your group's response in the shared workspace on the right." : "Discuss the task and adjust the shared ranking on the right."}
                     <br />
                     <span className="entry-hint">
                       Tip: Use <strong>@</strong> to address people directly.
@@ -758,6 +759,7 @@ export default function Chat({ client, session, onTimeUp, onWithdraw }: Props) {
               config={session.condition.config.externalWorkspace}
             />
           )}
+          {workspaceMode === "etherpad" && session && <EtherpadTask phase="group" sessionId={session.id} />}
         </aside>
       )}
     </div>
