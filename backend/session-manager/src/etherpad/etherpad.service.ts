@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, Logger, OnModuleDestroy, OnModuleInit, UnauthorizedException, ServiceUnavailableException } from "@nestjs/common";
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import type { EtherpadStatus, PadPhase, StudyAdmission, StudyPad, StudyTaskMode, Session } from "@gdm/shared";
+import { buildIdentities, identityFor } from "@gdm/shared";
 import { EtherpadRepository } from "./etherpad.repository";
 import { StoreService } from "../store/store.service";
 
@@ -117,7 +118,10 @@ export class EtherpadService implements OnModuleInit, OnModuleDestroy {
         if (!session || session.condition.config.workspaceMode !== "etherpad") throw new ConflictException("Not a writing session");
         if (phase === "group" && !["running", "completed"].includes(session.status)) throw new ConflictException("Discussion has not started");
         const discussionEnded = session.status === "completed" || (session.status === "running" && session.startedAt && Date.now() >= Date.parse(session.startedAt) + session.durationMinutes * 60_000);
-        if (phase === "exit" && !discussionEnded) throw new ConflictException("Discussion has not finished");
+        if (phase === "exit" && !discussionEnded) throw new ConflictException({
+          message: "Discussion has not finished",
+          code: session.status === "running" ? "DISCUSSION_PENDING" : "DISCUSSION_UNAVAILABLE",
+        });
       }
       const key = `index:${phase}:${phase === "group" ? sessionId : owner}`;
       const existingId = await this.repo.get<string>(key);
@@ -142,8 +146,12 @@ export class EtherpadService implements OnModuleInit, OnModuleDestroy {
       }
       const publicDoc: StudyPad = { id: doc.id, phase, deadline: doc.deadline, state: doc.state, text: doc.text, revision: doc.revision, capturedAt: doc.capturedAt, error: doc.error };
       if (doc.state !== "captured") {
+        const participant = session?.participants.find(p => p.id === admission.participantId);
+        const identity = phase === "group" && participant?.matrixUserId
+          ? identityFor(buildIdentities(session!.participants.flatMap(p => p.matrixUserId ? [p.matrixUserId] : [])), participant.matrixUserId)
+          : { name: "Participant", color: "#000000" };
         const payload = Buffer.from(JSON.stringify({ padId: doc.id, exp: Date.parse(doc.deadline) + 60_000,
-          authorToken: `t.${hash(owner + doc.id)}` })).toString("base64url");
+          authorToken: `t.${hash(owner + doc.id)}`, authorName: identity.name, authorColor: identity.color })).toString("base64url");
         const signature = createHmac("sha256", process.env.ETHERPAD_CONTROL_TOKEN!).update(payload).digest("base64url");
         publicDoc.embedUrl = `/etherpad/p/${doc.id}#gdm=${payload}.${signature}`;
       }

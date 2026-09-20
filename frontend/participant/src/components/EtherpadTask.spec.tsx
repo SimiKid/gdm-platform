@@ -50,4 +50,44 @@ describe("EtherpadTask", () => {
     expect(screen.queryByRole("timer")).toBeNull();
     expect(workspaceClient.finish).not.toHaveBeenCalled();
   });
+  it("automatically waits for the server to finish the discussion before starting the final pad", async () => {
+    vi.useFakeTimers();
+    const pending = Object.assign(new Error("Discussion has not finished"), { code: "DISCUSSION_PENDING" });
+    vi.mocked(workspaceClient.pad)
+      .mockRejectedValueOnce(pending)
+      .mockRejectedValueOnce(pending)
+      .mockImplementation(async () => ({ ...openPad(), phase: "exit", deadline: new Date(Date.now() + 120_000).toISOString() }));
+    render(<EtherpadTask phase="exit" sessionId="session" />);
+    await act(async () => {});
+    expect(screen.getByRole("status")).toHaveTextContent("will open automatically");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(workspaceClient.pad).toHaveBeenCalledTimes(3);
+    expect(screen.getByTitle("exit writing workspace")).toBeInTheDocument();
+    expect(workspaceClient.finish).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(119_000); });
+    expect(workspaceClient.finish).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(workspaceClient.finish).toHaveBeenCalledTimes(1);
+  });
+  it("cancels a pending discussion retry when leaving the screen", async () => {
+    vi.useFakeTimers();
+    vi.mocked(workspaceClient.pad).mockRejectedValue(Object.assign(new Error("Waiting"), { code: "DISCUSSION_PENDING" }));
+    const view = render(<EtherpadTask phase="exit" sessionId="session" />);
+    await act(async () => {});
+    view.unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(workspaceClient.pad).toHaveBeenCalledTimes(1);
+  });
+  it("keeps real opening errors visible instead of retrying indefinitely", async () => {
+    vi.useFakeTimers();
+    vi.mocked(workspaceClient.pad).mockRejectedValue(new Error("Writing study access required"));
+    render(<EtherpadTask phase="exit" sessionId="session" />);
+    await act(async () => {});
+    expect(screen.getByRole("alert")).toHaveTextContent("Writing study access required");
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(workspaceClient.pad).toHaveBeenCalledTimes(1);
+  });
 });

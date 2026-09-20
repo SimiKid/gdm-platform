@@ -95,6 +95,34 @@ describe("Etherpad study lifecycle", () => {
     expect(Date.parse(exit.deadline) - Date.parse(first.deadline)).toBe(-3 * 60_000);
     await expect(service.pad("bob", "group", "another-session")).rejects.toThrow();
   });
+  it("signals a retryable exit transition only until the server's discussion deadline", async () => {
+    await enable(); await entry("alice");
+    const s = await session(["alice"]);
+    const end = Date.parse(s.startedAt!) + s.durationMinutes * 60_000;
+    vi.setSystemTime(end - 1);
+    const error = await service.pad("alice", "exit", s.id).catch(e => e);
+    expect(error.getResponse()).toMatchObject({ code: "DISCUSSION_PENDING" });
+    expect((await repo.list<{ phase: string }>("pad:")).filter(p => p.phase === "exit")).toHaveLength(0);
+    vi.setSystemTime(end);
+    const pad = await service.pad("alice", "exit", s.id);
+    expect(Date.parse(pad.deadline)).toBe(end + 120_000);
+    s.status = "aborted";
+    const aborted = await service.pad("alice", "exit", s.id).catch(e => e);
+    expect(aborted.getResponse()).toMatchObject({ code: "DISCUSSION_UNAVAILABLE" });
+  });
+  it("signs chat identities for the group pad and black text for private pads", async () => {
+    const grant = (pad: { embedUrl?: string }) => JSON.parse(Buffer.from(pad.embedUrl!.split("#gdm=")[1].split(".")[0], "base64url").toString());
+    await enable();
+    expect(grant(await entry("alice"))).toMatchObject({ authorColor: "#000000" });
+    await entry("bob");
+    const s = await session(["alice", "bob"]);
+    s.participants[0].matrixUserId = "@z:test";
+    s.participants[1].matrixUserId = "@a:test";
+    expect(grant(await service.pad("alice", "group", s.id))).toMatchObject({ authorName: "Blue", authorColor: "#1c7ed6" });
+    expect(grant(await service.pad("bob", "group", s.id))).toMatchObject({ authorName: "Red", authorColor: "#e03131" });
+    s.status = "completed";
+    expect(grant(await service.pad("alice", "exit", s.id))).toMatchObject({ authorColor: "#000000" });
+  });
   it("requires a captured entry before matchmaking and authoritative saved pad IDs", async () => {
     await enable(); await service.prepare("alice");
     await expect(service.modeFor("alice")).rejects.toThrow("finish your entry");

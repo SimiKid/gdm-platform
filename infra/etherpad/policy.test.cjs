@@ -25,6 +25,20 @@ function fixture() {
 }
 const id = 'gdm-11111111-1111-4111-8111-111111111111';
 
+test('signed identity overrides browser author preferences on join and update', () => {
+  const { policy } = fixture();
+  const grant = { authorName: 'Red', authorColor: '#e03131' };
+  const ready = { type: 'CLIENT_READY', userInfo: { name: 'Other', colorId: '#ffffff' } };
+  policy.applyIdentity(ready, grant);
+  assert.equal(ready.userInfo.colorId, '#e03131');
+  assert.equal(ready.userInfo.name, 'Red');
+  const update = { type: 'COLLABROOM', data: { type: 'USERINFO_UPDATE', userInfo: {} } };
+  policy.applyIdentity(update, grant);
+  assert.equal(update.data.userInfo.colorId, '#e03131');
+  policy.applyIdentity(ready, {});
+  assert.equal(ready.userInfo.colorId, '#000000');
+});
+
 test('signed grants bind a participant author to one pad and an expiry', () => {
   const { policy } = fixture();
   const sign = value => { const payload = Buffer.from(JSON.stringify(value)).toString('base64url'); return `${payload}.${crypto.createHmac('sha256', 'secret').update(payload).digest('base64url')}`; };
