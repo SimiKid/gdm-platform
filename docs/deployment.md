@@ -18,8 +18,10 @@ VPN + SSH ──► 127.0.0.1:3003 ─► Admin Dashboard     (fallback)
 
 - App images are built by [GitHub Actions](../.github/workflows/build-images.yml)
   and pulled from GHCR — **the VM never builds** (keeps `/var` small). The
-  workflow's `verify` job (lint, build, unit tests, advisory audit,
-  integration tests) must pass before the `build` job pushes images.
+  workflow's `verify` job (lint, build, unit tests with coverage gates,
+  advisory audit, integration tests) must pass before the `build` job pushes
+  images. The same `verify` job runs on pull requests targeting `main`, so a
+  red gate blocks the merge; images are only built and pushed from `main`.
 - Matrix accounts are registered server-side by the Session Manager over the
   internal Docker network; Caddy blocks the public registration, login,
   room-creation and invite endpoints.

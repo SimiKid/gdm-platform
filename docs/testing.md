@@ -57,7 +57,9 @@ Conventions:
   Assert on behavior (what was recorded, posted, returned) — not on request
   URLs or headers; wire formats belong to the integration layer.
 - Coverage gates run via `pnpm test:cov` (80 % lines/functions/statements,
-  70 % branches in both backends). In the session manager, files whose main
+  70 % branches in both backends). CI runs `pnpm test:cov`, not `pnpm test`,
+  on every pull request to `main` and every push to `main`, so a drop below a
+  threshold fails the `verify` job. In the session manager, files whose main
   body is only exercised by another layer are excluded from the unit metrics
   with a comment saying which layer owns them (`store.service.ts` and
   `prisma.service.ts` → integration suite); the chat service only excludes

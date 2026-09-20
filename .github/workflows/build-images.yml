@@ -10,6 +10,10 @@ name: Build & push images
 on:
   push:
     branches: [main]
+  # The verify job also runs on pull requests so a failing gate blocks the
+  # merge, not just the image build. Images are only pushed from main.
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 env:
@@ -37,7 +41,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm build
-      - run: pnpm test
+      # Unit tests with the per-package coverage thresholds (80 % lines,
+      # 70 % branches) — a drop below the gate fails the job.
+      - run: pnpm test:cov
       - name: Security audit (advisory)
         run: pnpm audit --prod --audit-level high
         continue-on-error: true
@@ -47,6 +53,7 @@ jobs:
 
   build:
     needs: verify
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
