@@ -34,12 +34,15 @@
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
-		X-Frame-Options "DENY"
 		Referrer-Policy "no-referrer"
 		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
 		-Server
 		-X-Powered-By
 	}
+	# Keep the global deny rule off the editor response: a global header handler
+	# otherwise overwrites the SAMEORIGIN header added inside its proxy route.
+	@notEtherpad not path /etherpad/*
+	header @notEtherpad X-Frame-Options "DENY"
 	@apiResponses path /api/*
 	header @apiResponses Cache-Control "no-store"
 
