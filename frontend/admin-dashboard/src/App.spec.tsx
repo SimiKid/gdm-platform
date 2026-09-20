@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -19,7 +19,7 @@ function dashboardApi(extra: Record<string, unknown> = {}) {
     "/conditions/progress": [progress({}, 1)],
     "/sessions": [sessionSummary({ status: "waiting" })],
     "/rounds": rounds,
-    "/admin/prolific/outcomes": { outcomes: [] },
+    "/admin/etherpad": { enabled: false, state: "stopped" },
     "/settings": {
       compensationUrl: "https://app.prolific.com/submissions/complete?cc=DONE",
       noConsentUrl: "",
@@ -40,12 +40,14 @@ describe("App", () => {
 
     expect((await screen.findAllByText("Baseline")).length).toBeGreaterThan(0);
     expect(calledPaths(fetchMock)).toEqual(
-      expect.arrayContaining(["/conditions/progress", "/sessions", "/rounds", "/admin/prolific/outcomes"]),
+      expect.arrayContaining(["/conditions/progress", "/sessions", "/rounds", "/admin/etherpad"]),
     );
+    expect(calledPaths(fetchMock)).not.toContain("/admin/prolific/outcomes");
 
+    // The dashboard has exactly three views; Results and Prolific were removed.
     expect(screen.queryByRole("button", { name: "Results" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Prolific" }));
-    expect(screen.getByText("No Prolific arrivals yet.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Prolific" })).toBeNull();
+    expect(within(screen.getByRole("navigation", { name: "Views" })).getAllByRole("button")).toHaveLength(3);
     await user.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByRole("heading", { name: "Study Rounds" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Testing" }));
@@ -79,8 +81,8 @@ describe("App", () => {
     expect(screen.getByRole("heading", { name: "Study Admin" })).toBeInTheDocument();
   });
 
-  it("tolerates a missing outcomes endpoint", async () => {
-    dashboardApi({ "/admin/prolific/outcomes": { status: 500 } });
+  it("tolerates a missing Etherpad status endpoint", async () => {
+    dashboardApi({ "/admin/etherpad": { status: 500 } });
     render(<App />);
     expect((await screen.findAllByText("Baseline")).length).toBeGreaterThan(0);
     await waitFor(() => expect(screen.queryByText(/Could not load/)).toBeNull());

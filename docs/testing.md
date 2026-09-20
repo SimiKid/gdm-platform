@@ -47,7 +47,8 @@ Fast, no network, no containers. They own the pure logic:
   `ExternalWorkspace`, `Recruiting`, `ExitSurvey`, `DebriefingPage`,
   `StudyExitPage`, `RankingBoard`, and the `src/study/` helpers have their
   own specs) and for the admin dashboard (`App` with its token gate,
-  `Overview`, `Results`, `Settings`, `ProlificOutcomes`, `Testing`,
+  `Overview`, `SessionDetail` (plus the pure `session-detail.ts` model),
+  `Settings`, `Testing`,
   `AuthenticatedDownloadLink`, and `api.ts`). Dashboard specs stub `fetch`
   with a path → response table (`src/test-utils.ts`) so each assertion reads
   as "this click sends this request".

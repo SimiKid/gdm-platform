@@ -8,7 +8,7 @@ workspace "GDM Study Platform" "AI-supported group decision-making study" {
 
             group "Frontend" {
                 spa = container "Participant Client" "Survey & chat screens; renders inline private nudges" "React, matrix-js-sdk"
-                admin = container "Admin Dashboard" "Prolific outcomes, study overview, results, settings (rounds, parameters), test links, exports" "React"
+                admin = container "Admin Dashboard" "Study overview with session inspector, settings (rounds, parameters, Prolific exit paths), test links, exports" "React"
             }
 
             group "Backend" {

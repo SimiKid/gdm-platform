@@ -132,9 +132,8 @@ Nginx proxies `/api/` to the session manager and `/_matrix/` to Synapse, so the 
 
 ### Admin Dashboard (`frontend/admin-dashboard`)
 
-React SPA for researchers, gated by `ADMIN_API_TOKEN` (entered once, kept in `localStorage`), split into four tabs in this order:
+React SPA for researchers, gated by `ADMIN_API_TOKEN` (entered once, kept in `localStorage`), split into three tabs in this order:
 
-- **Prolific** — durable participant outcomes and separately audited return/partial-bonus actions.
 - **Overview** — metrics strip (current round, completed/goal, active, in lobby, total), the study link, per-condition progress for the current round, the session list with a per-session inspector (status, timing, participants by chat colour with per-person activity, message/nudge/classifier/behaviour tiles, a nudge response timeline — contribution share per participant per contribution window with nudge markers and message ticks — a before/after table for every nudge measured in the bot's own windows, and a window table), and the Export Data card (Research Data zip, full JSON dump).
 - **Settings** — recruiting table (per-condition active/goal), study rounds management, shared session & bot parameters (applied to all arms, with a drift warning when arms deviate), the shared workspace mode, and the Prolific completion/exit paths.
 - **Testing** — bot test workspace: pilot links per arm and E2E test-condition residue.

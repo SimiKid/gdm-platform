@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ConditionProgress,
-  ParticipationOutcomeRecord,
   RoundsResponse,
   SessionSummary,
   EtherpadStatus,
@@ -9,7 +8,6 @@ import type {
 import Overview from "./components/Overview";
 import Settings from "./components/Settings";
 import Testing from "./components/Testing";
-import ProlificOutcomes from "./components/ProlificOutcomes";
 import { apiFetch, getAdminToken, setAdminToken } from "./api";
 
 export { API_BASE, PARTICIPANT_BASE } from "./api";
@@ -17,14 +15,13 @@ export { API_BASE, PARTICIPANT_BASE } from "./api";
 /** How often the dashboard refreshes itself (drives the "Live" indicator). */
 const POLL_MS = 5000;
 
-type View = "overview" | "settings" | "prolific" | "testing";
+type View = "overview" | "settings" | "testing";
 
 export default function App() {
   const [view, setView] = useState<View>("overview");
   const [rows, setRows] = useState<ConditionProgress[]>([]);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [rounds, setRounds] = useState<RoundsResponse | null>(null);
-  const [outcomes, setOutcomes] = useState<ParticipationOutcomeRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [etherpad, setEtherpad] = useState<EtherpadStatus | null>(null);
   const [switching, setSwitching] = useState(false);
@@ -52,18 +49,16 @@ export default function App() {
     loadInFlight.current = true;
     const epoch = switchEpoch.current;
     try {
-      const [progressRes, sessionsRes, roundsRes, outcomesRes, etherpadRes] = await Promise.all([
+      const [progressRes, sessionsRes, roundsRes, etherpadRes] = await Promise.all([
         apiFetch("/conditions/progress"),
         apiFetch("/sessions"),
         apiFetch("/rounds"),
-        apiFetch("/admin/prolific/outcomes"),
         apiFetch("/admin/etherpad"),
       ]);
       if (
         progressRes.status === 401 ||
         sessionsRes.status === 401 ||
-        roundsRes.status === 401 ||
-        outcomesRes.status === 401
+        roundsRes.status === 401
       ) {
         setNeedsToken(true);
         return;
@@ -84,12 +79,6 @@ export default function App() {
       if (etherpadRes.ok) {
         const status = await etherpadRes.json();
         if (epoch === switchEpoch.current) setEtherpad(status);
-      }
-      if (outcomesRes.ok) {
-        const body = (await outcomesRes.json()) as {
-          outcomes: ParticipationOutcomeRecord[];
-        };
-        setOutcomes(body.outcomes);
       }
       setError(null);
     } catch (err) {
@@ -121,13 +110,6 @@ export default function App() {
           <p>Group decision-making study: tracking, sessions, and exports.</p>
         </div>
         <nav className="tabs" aria-label="Views">
-          <button
-            type="button"
-            className={view === "prolific" ? "tab active" : "tab"}
-            onClick={() => setView("prolific")}
-          >
-            Prolific
-          </button>
           <button
             type="button"
             className={view === "overview" ? "tab active" : "tab"}
@@ -166,9 +148,6 @@ export default function App() {
           etherpad={etherpad}
           onToggleEtherpad={enabled => void toggleEtherpad(enabled)}
         />
-      )}
-      {view === "prolific" && (
-        <ProlificOutcomes outcomes={outcomes} onChanged={() => void load()} />
       )}
       {view === "testing" && (
         <Testing

@@ -35,7 +35,7 @@ For a Prolific participant the application:
    survey, and completion;
 6. stores exactly one terminal outcome when the participant finishes or leaves;
 7. displays the corresponding Prolific completion/return path; and
-8. exposes audited return and partial-bonus actions in the admin dashboard.
+8. exposes audited return and partial-bonus actions through the admin API (see section 10).
 
 The server, not the browser, assigns `recruitment_source`. With an API token
 configured, supplying arbitrary JSON or a generic token cannot make a direct
@@ -352,7 +352,7 @@ message.
 
 The application cannot observe whether a participant actually clicked a
 Prolific redirect or whether Prolific already processed that completion path.
-Before sending a second return request from the admin dashboard, compare the
+Before sending a second return request through the admin API, compare the
 app outcome with the submission's current state in Prolific.
 
 ## 5. Configure completion URLs in the app
@@ -527,22 +527,32 @@ eligibility screen-outs do not show that debrief.
 
 ## 10. Admin compensation workflow
 
-Open **Admin dashboard → Prolific** (section "Prolific outcomes and
-compensation"). Each row shows the submission ID (first 8 characters; the full
-id in the tooltip), stage/outcome with reason, elapsed time, compensation
-decision/amount, Prolific action state with any error, and the action buttons.
-Actions are only offered for rows whose outcome is not `completed`.
+The admin dashboard has no Prolific view (the Prolific console is the source
+of truth for submissions and payments); the app's compensation queue is
+reviewed through the API with the admin token:
 
-Available actions (all `POST /api/admin/prolific/outcomes/:id/actions/<action>`):
+```
+curl -H "Authorization: Bearer $ADMIN_API_TOKEN" \
+  https://gdmproject.ifi.uzh.ch/api/admin/prolific/outcomes
+```
 
-- **Request return** (`request-return`, confirmation dialog) calls Prolific's
+Each `outcomes[]` record carries the session id, stage/outcome with reason,
+elapsed seconds, compensation kind/amount (`compensationAmountPence`),
+`prolificActionStatus` with any `actionError`, and the bookkeeping fields
+`returnRequestedAt`, `bonusBatchId`, `paymentSubmittedAt`. Actions apply only
+to records whose outcome is not `completed`.
+
+Available actions (all `POST /api/admin/prolific/outcomes/:id/actions/<action>`,
+same token header, empty body):
+
+- **Request return** (`request-return`) calls Prolific's
   `POST /submissions/{SESSION_ID}/request-return/`.
 - **Prepare bonus** (`prepare-bonus`) requests a return if the app has not
   recorded one, then creates a Prolific bulk-bonus batch
   (`POST /submissions/bonus-payments/`) for the exact queued amount.
-- **Pay bonus** (`pay-bonus`, confirmation dialog) submits the prepared batch
-  (`POST /bulk-bonus-payments/{batchId}/pay/`). The button only appears, and
-  the server only accepts it, while the row is in state `bonus_prepared`.
+- **Pay bonus** (`pay-bonus`) submits the prepared batch
+  (`POST /bulk-bonus-payments/{batchId}/pay/`). The server only accepts it
+  while the record is in state `bonus_prepared`.
 - **Resolve manually** (`resolve-manually`) records that the researcher
   reconciled the case outside the automated workflow.
 
@@ -561,7 +571,8 @@ Recommended manual process while `PROLIFIC_PAYMENT_AUTOMATION=false`:
 4. For `none`, ensure the correct return or screened-out state is present.
 5. For `manual_review`, decide and document any discretionary payment.
 6. For `partial`, confirm the calculated amount, request/confirm return,
-   prepare the bonus, verify the batch, and only then click **Pay bonus**.
+   prepare the bonus, verify the batch in Prolific, and only then call
+   `pay-bonus`.
 7. Reconcile the resulting Prolific submission/bonus state and mark manually
    resolved where appropriate.
 
@@ -700,7 +711,7 @@ access tokens, or raw linkage data into a shared terminal transcript.
 | Participant cannot rejoin after 30 seconds | The outcome is intentionally terminal after reconnect grace. Reopening shows the recorded exit path, not a new group. |
 | Return button disabled | The participant must acknowledge the debrief, except for no-consent/screen-out paths on the exit page. On the full-completion page acknowledgement is always required (direct participants too). |
 | "The return link is not configured. Please keep this page open and contact the researcher through Prolific." (exit page) / "The Prolific completion link has not been configured yet…" (completion page) | The matching URL is empty in Admin → Settings. Record is safe; add the correct path and reconcile manually. |
-| Submission returned but admin still offers Request return | The participant probably followed the Prolific completion path; the app cannot observe that click. Verify in Prolific, then resolve manually. |
+| Submission returned in Prolific but the outcome record has no `returnRequestedAt` | The participant probably followed the Prolific completion path; the app cannot observe that click. Verify in Prolific, then call `resolve-manually`. |
 | Bonus is `payment_uncertain` | Check the exact batch/payment in Prolific. Do not click/pay again until reconciled. |
 | Group does not form | Confirm active condition capacity, release sizes, participant dropouts, and five-minute deadline. Process unmatched partial bonuses. |
 | Admin says "Could not load conditions" | This is an admin/backend health or authentication issue, not evidence that participant identity validation failed. Check container health and logs. |
