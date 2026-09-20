@@ -67,13 +67,15 @@ export default function Testing({ rows, sessions, onSaved }: Props) {
       <section className="section">
         <h2>E2E Test Conditions</h2>
         <p className="hint">
-          Every automated run creates a temporary condition. It should be
-          inactive after the run; retained rows remain available for debugging.
+          Every automated run creates a temporary condition and switches it off
+          when it finishes. An active test condition would recruit real
+          participants, so it can only be switched off here — not on or
+          edited. Retained rows stay available for debugging.
         </p>
         {testRows.length === 0 ? (
           <p className="empty">No E2E test conditions yet.</p>
         ) : (
-          <RecruitingTable rows={testRows} onSaved={onSaved} />
+          <RecruitingTable rows={testRows} onSaved={onSaved} offOnly />
         )}
       </section>
 
