@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Session } from "@gdm/shared";
 import Overview, { SessionsTable } from "./Overview";
-import { calledPaths, mockApi, progress, sessionSummary } from "../test-utils";
+import { calledPaths, mockApi, progress, session, sessionSummary } from "../test-utils";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -70,20 +70,7 @@ describe("Overview", () => {
 });
 
 describe("SessionsTable", () => {
-  const detail = {
-    id: "11112222-3333-4444-5555-666677778888",
-    roomId: "!room:localhost",
-    condition: { id: "baseline", name: "Baseline", config: { interventionMode: "public" } },
-    participants: [
-      { name: "", trackingToken: "tok-abcdefgh-rest" },
-      { name: "Alice", trackingToken: "tok-2" },
-    ],
-    chat: { messages: [{ text: "hi" }, { text: "there" }] },
-    interventions: [{}],
-    behavioralEvents: [{}, {}, {}],
-    contributionClassifications: [],
-    rankingHistory: undefined,
-  } as unknown as Session;
+  const detail: Session = session();
 
   it("opens a session inspector on click, refreshes it with the poll, and closes on a second click", async () => {
     const user = userEvent.setup();
@@ -97,14 +84,14 @@ describe("SessionsTable", () => {
     expect(within(row).getAllByText("not yet")).toHaveLength(2);
 
     await user.click(row);
-    const facts = await screen.findByText("Bot mode");
-    expect(facts.nextElementSibling).toHaveTextContent("public");
-    expect(screen.getByText("Participants").nextElementSibling).toHaveTextContent("tok-abcd, Alice");
-    expect(screen.getByText("Messages").nextElementSibling).toHaveTextContent("2");
+    const messages = await screen.findByText("Messages");
+    expect(messages.nextElementSibling).toHaveTextContent("6");
+    expect(screen.getByText("bot public")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Participants")).getByText("Red")).toBeInTheDocument();
     expect(screen.getByText("Nudges").nextElementSibling).toHaveTextContent("1");
-    expect(screen.getByText("Behavior events").nextElementSibling).toHaveTextContent("3");
-    expect(screen.getByText("Ranking edits").nextElementSibling).toHaveTextContent("0");
-    expect(screen.getByText("Room").nextElementSibling).toHaveTextContent("!room:localhost");
+    expect(screen.getByText("Ranking edits").nextElementSibling).toHaveTextContent("2");
+    expect(screen.getByText("!room:localhost")).toBeInTheDocument();
+    expect(screen.getByRole("img")).toBeInTheDocument();
     expect(row).toHaveClass("selected");
 
     // A new poll result re-fetches the open detail.

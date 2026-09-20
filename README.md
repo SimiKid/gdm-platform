@@ -12,7 +12,7 @@ backend/session-manager/  Matchmaking, session state, conditions, study rounds, 
 backend/chat-service/     Bot runtime: Matrix sync, message recording, intervention rules, LLM classifier, nudge wording, optional moderation (NestJS)
 backend/export-service/   Empty placeholder for a possible future standalone export service
 frontend/participant/     Participant study flow: recruiting, consent, surveys, ranking task, chat, exit survey, debriefing (React)
-frontend/admin-dashboard/ Researcher dashboard: Prolific outcomes, overview, results, settings (rounds, parameters), bot testing (React)
+frontend/admin-dashboard/ Researcher dashboard: overview with session inspector, settings (rounds, parameters, Prolific exit paths), bot testing (React)
 e2e/                      Playwright end-to-end suite against the compose stack
 loadtest/                 k6 load-test harness (profiles, scripts, monitoring)
 infra/                    Docker Compose stack (dev + prod), Synapse config + render script, Caddyfile, deploy + backup scripts

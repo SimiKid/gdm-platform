@@ -50,7 +50,7 @@ The participant frontend's nginx reverse-proxies `/api/` to the session manager 
 
 ### 1. Open the admin dashboard
 
-Go to http://localhost:3003. The dashboard has five tabs: **Prolific** (participant outcomes and compensation actions), **Overview** (progress, session list, study link, Export Data card), **Results** (descriptives and research exports), **Settings** (recruiting, study rounds, shared parameters, shared workspace, completion/exit paths), and **Testing** (pilot links, E2E residue). Confirm that all three conditions (`baseline`, `public-llm`, `private-llm`) are listed in Settings → Recruiting and at least one is **active** (the toggle lives there, not on Overview). The default group size is **3**, the default discussion length **10 minutes**, and the default recruiting goal **5** completed sessions per arm. The Overview also shows the current **study round** — pilot sessions are stamped into whatever round is open (Round 1 on a fresh stack).
+Go to http://localhost:3003. The dashboard has three tabs: **Overview** (progress, session list with the per-session inspector, study link, Export Data card), **Settings** (recruiting, study rounds, shared parameters, shared workspace, completion/exit paths), and **Testing** (pilot links, E2E residue). Confirm that all three conditions (`baseline`, `public-llm`, `private-llm`) are listed in Settings → Recruiting and at least one is **active** (the toggle lives there, not on Overview). The default group size is **3**, the default discussion length **10 minutes**, and the default recruiting goal **5** completed sessions per arm. The Overview also shows the current **study round** — pilot sessions are stamped into whatever round is open (Round 1 on a fresh stack).
 
 ### 2. Open participant links
 

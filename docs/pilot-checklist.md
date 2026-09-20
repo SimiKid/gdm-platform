@@ -103,20 +103,25 @@ nudging arms — only delivery differs):
 In the admin dashboard:
 
 - [ ] Sessions list updates after refresh
-- [ ] Session detail (Overview → expand a session) shows condition, bot mode,
-      participants (as tracking-token prefixes — no names are collected), room
-      id, and counts of messages, nudges, behavior events, classifications,
-      and ranking edits
+- [ ] Session detail (Overview → expand a session) shows status, round,
+      condition, bot mode, start time and duration, room id, participants by
+      chat colour (Red, Blue, …; token prefix until provisioned — no names are
+      collected) with messages, typing time, tab switches and ranking moves,
+      the tiles (messages, nudges, classifier coverage or "not used", ranking
+      edits, behaviour), the nudge response timeline (one line per participant,
+      a marker per nudge, message ticks; hover or arrow keys read a window),
+      and a before/after table per nudge (share and messages in the triggering
+      window vs. the next window)
 - [ ] The intervention audit (mode, targets, quiet members, contribution
       split, message text) is present in the nudge-events export
       (`/api/export/interventions`) or the full JSON dump — the dashboard
       itself only shows counts
-- [ ] Results tab shows the pilot session in the per-condition descriptives
+- [ ] `GET /api/reports/summary` (with the admin token) lists the pilot session in the per-condition descriptives
 - [ ] Overview-tab downloads work: **Research Data (CSV)** zip and, under
       Advanced, the **Full data dump** JSON
-- [ ] Research exports download (Results tab: participants/sessions-analysis/windows/rankings CSVs and the ZIP bundle with codebook)
-- [ ] `linkage.csv` downloads from the Identifying Data section (and stays out of the bundle)
-- [ ] Round filter chips appear once more than one round exists and rewrite the download links
+- [ ] Research exports download by URL with the admin token (participants/sessions-analysis/windows/rankings CSVs and `research.zip` with codebook)
+- [ ] `linkage.csv` downloads from `/api/export/linkage.csv` (and stays out of the bundle)
+- [ ] `?roundIds=…` on an export URL restricts the file to that round
 - [ ] Data survives a `session-manager` container restart (without `--volumes`)
 
 ## 6. Capture Issues

@@ -231,16 +231,17 @@ All parameters are stored in the condition's `config` object (plus the
 session-level `durationMinutes`, `groupSize`, and recruiting `goal` on the
 condition itself). The admin dashboard (Settings → Session & Bot Parameters)
 edits **six of them as one shared form applied to all study arms** —
-duration, group size, warm-up (minutes), protected end (entered in seconds),
-window length (entered in seconds), and threshold (entered in %) — and shows
+duration, group size, warm-up (entered in seconds), protected end (entered
+in seconds), window length (entered in seconds), and threshold (entered in %) — and shows
 a drift warning when an arm deviates from the shared values. A separate
 Settings → Shared Workspace card applies `workspaceMode` to all arms in the
 same way. The delivery mode (`interventionMode`) is displayed as a read-only
 badge per arm. The remaining fields (`llmMode`, score/dominance weights,
 invite grace) are fixed study design: they are not shown in the dashboard at
-all and can only be changed via `PUT /api/conditions/:id`. Protected end and
-window length may be fractional minutes (e.g. `1.5` = 90 seconds); the
-protected end also drives the participant timer's red "wrap up!" cue.
+all and can only be changed via `PUT /api/conditions/:id`. Warm-up, protected
+end and window length are stored as minutes and may be fractional (e.g. `1.5`
+= 90 seconds); the protected end also drives the participant timer's red
+"wrap up!" cue.
 
 The session manager clamps admin input on save: `contributionThreshold` to
 0.01–1, `contributionWindowMinutes` to 0.1–240, `protectedStartMinutes` to
@@ -286,7 +287,7 @@ Every intervention is recorded as an `InterventionLog` (type in
 
 In addition, the bot records a **`WindowEvaluation` for every window boundary it reaches** — fired or not. Each carries the window's grid index (0-based, computed from the distance to the warm-up end) and time span, the window length and threshold in effect, the detection mode (`llmMode`), the outcome (`nudged`, `no-target`, `grace-suppressed`, `baseline-suppressed`, `warm-up`, `wrap-up`, `too-few-participants`), the full contribution split, the over-threshold candidates *before* grace filtering and the highest dominance score where a split was computed, and a link to the `InterventionLog` when a nudge fired. Baseline sessions therefore carry per-window dominance data comparable to the delivery arms (`baseline-suppressed` marks windows where a nudge *would* have fired) — with the caveat that in the baseline `dominanceScore` equals the raw share and `meaningfulnessScore` is always 0, because the classifier is not called. Failed LLM classification requests are recorded as `ClassificationFailure` entries, so classifier coverage is auditable. Both records are persisted in the research database with their full JSON payload. The bot's own nudge messages are stored in the chat log (with `recipientId` set on private nudges) but never count toward contribution scores.
 
-These records are included in the raw exports (`/api/export/sessions`, `/api/export/interventions`), power the dashboard's **Results** tab, and feed the analysis-ready research exports (`/api/export/windows`, `/api/export/research.zip`) — see `docs/data-export.md`.
+These records are included in the raw exports (`/api/export/sessions`, `/api/export/interventions`), power the per-session nudge response timeline in the dashboard's Overview tab and the monitoring summary (`/api/reports/summary`), and feed the analysis-ready research exports (`/api/export/windows`, `/api/export/research.zip`) — see `docs/data-export.md`.
 
 ## Meaningfulness Classifier (Rule + LLM Detection)
 

@@ -413,7 +413,7 @@ function RecruitingRow({
 interface ParamValues {
   durationMinutes: number;
   groupSize: number;
-  warmupMinutes: number;
+  warmupSeconds: number;
   wrapupSeconds: number;
   windowSeconds: number;
   triggerPercent: number;
@@ -441,9 +441,9 @@ const PARAM_FIELDS: Array<{
     why: "Participants per session. The waiting room fills to this number.",
   },
   {
-    key: "warmupMinutes",
+    key: "warmupSeconds",
     label: "Warm-up",
-    unit: "minutes",
+    unit: "seconds",
     min: 0,
     why: "Arrival phase: nobody is counted or nudged until it ends.",
   },
@@ -478,7 +478,7 @@ function valuesOf(condition: Condition): ParamValues {
   return {
     durationMinutes: condition.durationMinutes,
     groupSize: condition.groupSize,
-    warmupMinutes: condition.config.protectedStartMinutes,
+    warmupSeconds: Math.round(condition.config.protectedStartMinutes * 60),
     wrapupSeconds: Math.round(condition.config.protectedEndMinutes * 60),
     windowSeconds: Math.round(condition.config.contributionWindowMinutes * 60),
     triggerPercent: Math.round(condition.config.contributionThreshold * 100),
@@ -492,7 +492,7 @@ function withValues(condition: Condition, values: ParamValues): Condition {
     groupSize: values.groupSize,
     config: {
       ...condition.config,
-      protectedStartMinutes: values.warmupMinutes,
+      protectedStartMinutes: values.warmupSeconds / 60,
       protectedEndMinutes: values.wrapupSeconds / 60,
       contributionWindowMinutes: values.windowSeconds / 60,
       contributionThreshold: values.triggerPercent / 100,
@@ -652,19 +652,70 @@ function SharedParamsCard({ rows, onSaved }: Props) {
 
 /* ── Shared participant workspace ──────────────────── */
 
-function WorkspaceCard({ status, onToggle }: { status: EtherpadStatus | null; onToggle: (enabled: boolean) => void }) {
+const WORKSPACE_STATE: Record<EtherpadStatus["state"], { label: string; tone: string }> = {
+  stopped: { label: "stopped", tone: "off" },
+  starting: { label: "starting…", tone: "busy" },
+  ready: { label: "ready", tone: "ok" },
+  draining: { label: "draining", tone: "warn" },
+  stopping: { label: "stopping…", tone: "busy" },
+  error: { label: "error", tone: "bad" },
+};
+
+function WorkspaceCard({
+  status,
+  onToggle,
+}: {
+  status: EtherpadStatus | null;
+  onToggle: (enabled: boolean) => void;
+}) {
+  const state = status ? WORKSPACE_STATE[status.state] : { label: "loading…", tone: "off" };
   return (
     <section className="section">
       <h2>Etherpad workspace</h2>
-      <p className="hint">When enabled, new participants use private entry and exit pads and a shared group pad. Each pad allows 1,000 characters. Ranking scores are not calculated for these sessions.</p>
-      <label className="copy-row">
-        <input type="checkbox" role="switch" aria-label="Enable Etherpad" checked={status?.enabled ?? false} disabled={!status} onChange={e => onToggle(e.target.checked)} />
-        Enable Etherpad
-      </label>
-      <p role="status">Server: {status?.state ?? "loading"}</p>
-      {status?.state === "draining" && <p className="hint">New participants use ranking. Etherpad will stop after the {status.activeParticipants} existing writing participant(s) finish or their time expires.</p>}
-      {status?.state === "error" && <div className="error"><p>{status.error}</p><button onClick={() => onToggle(status.enabled)}>Retry</button></div>}
-      <p className="hint">Each participant keeps the mode they started with. Switching off preserves their work, then stops the editor. The server starts automatically when you enable it.</p>
+      <p className="hint">
+        When enabled, new participants write in private entry and exit pads and
+        a shared group pad (1,000 characters each) instead of using the shared
+        ranking. Ranking scores are not calculated for these sessions.
+      </p>
+      <div className="workspace-row">
+        <label className="switch" title="Toggle Etherpad">
+          <input
+            type="checkbox"
+            role="switch"
+            aria-label="Enable Etherpad"
+            checked={status?.enabled ?? false}
+            disabled={!status}
+            onChange={(e) => onToggle(e.target.checked)}
+          />
+          <span className="knob" />
+        </label>
+        <div className="workspace-copy">
+          <strong>Enable Etherpad</strong>
+          <span className="hint">
+            Each participant keeps the mode they started with. The server starts
+            automatically when you enable it; switching off preserves their work,
+            then stops the editor.
+          </span>
+        </div>
+        <span className={`status workspace-state ${state.tone}`} role="status">
+          Server {state.label}
+        </span>
+      </div>
+      {status?.state === "draining" && (
+        <p className="workspace-warning">
+          New participants use the ranking again. Etherpad stops after the{" "}
+          {status.activeParticipants} existing writing participant(s) finish or
+          their time expires.
+        </p>
+      )}
+      {status?.state === "error" && (
+        <div className="error workspace-error">
+          <span>{status.error}</span>
+          <button type="button" onClick={() => onToggle(status.enabled)}>
+            Retry
+          </button>
+        </div>
+      )}
     </section>
   );
 }

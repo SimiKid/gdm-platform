@@ -137,11 +137,12 @@ C="docker compose --env-file .env -f docker-compose.yml -f docker-compose.prod.y
    - Confirm the completion code in Prolific exactly matches the completion
      URL stored in Admin → Settings. Keep submission processing on manual
      review and keep `PROLIFIC_PAYMENT_AUTOMATION=false` until the exit-path
-     pilot and admin compensation queue have both been checked.
+     pilot and the compensation queue (`GET /api/admin/prolific/outcomes`,
+     see the Prolific runbook) have both been checked.
    - Verify the participant can refresh within 30 seconds, while a longer
      disconnect records `connection_timeout`, releases/kicks the participant,
-     requests a Prolific return, and leaves any partial amount in the admin
-     queue without paying it automatically.
+     requests a Prolific return, and leaves any partial amount in the
+     compensation queue without paying it automatically.
 
 ## Smoke test (e2e against production)
 

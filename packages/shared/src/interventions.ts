@@ -74,7 +74,9 @@ export interface InterventionConfig {
   contributionThreshold: number;
   /**
    * Warm-up while people arrive: nothing is counted and no interventions
-   * fire. The first contribution window opens when the warm-up ends.
+   * fire. The first contribution window opens when the warm-up ends. May be
+   * fractional (the admin dashboard edits it in seconds), so `1.5` means 90
+   * seconds.
    */
   protectedStartMinutes: number;
   /**

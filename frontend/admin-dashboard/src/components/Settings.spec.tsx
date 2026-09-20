@@ -137,6 +137,8 @@ describe("SharedParamsCard", () => {
     expect(screen.getByLabelText(/Discussion time/)).toHaveValue(10);
     expect(screen.getByLabelText(/Trigger at/)).toHaveValue(40);
     expect(screen.getByLabelText(/Wrap-up/)).toHaveValue(30);
+    // Warm-up is edited in seconds, like wrap-up (fixture: 1 minute).
+    expect(screen.getByLabelText(/Warm-up/)).toHaveValue(60);
     const drift = screen
       .getByText(/differs: Discussion time is 15 min there, shared value is 10 min; Trigger at is 35% there, shared value is 40%/)
       .closest(".drift")!;
@@ -183,6 +185,9 @@ describe("SharedParamsCard", () => {
     const wrapup = screen.getByLabelText(/Wrap-up/);
     await user.clear(wrapup);
     await user.type(wrapup, "45");
+    const warmup = screen.getByLabelText(/Warm-up/);
+    await user.clear(warmup);
+    await user.type(warmup, "90");
     expect(apply).toBeEnabled();
     await user.click(apply);
 
@@ -191,6 +196,7 @@ describe("SharedParamsCard", () => {
     expect(puts[0].config).toMatchObject({
       contributionWindowMinutes: 1.5,
       protectedEndMinutes: 0.75,
+      protectedStartMinutes: 1.5,
     });
   });
 
