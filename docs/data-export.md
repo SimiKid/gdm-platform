@@ -200,13 +200,12 @@ The example below is **abridged**: each session object additionally embeds `bot`
           "messageId": "msg-uuid",
           "senderId": "@gdm_user_abc:synapse",
           "classifiedAt": "2026-07-13T10:07:05Z",
-          "respondsToPrior": { "value": true, "reason": "Agrees with Red's oxygen proposal." },
-          "referencesTaskItem": { "value": true, "reason": "Names the oxygen tanks." },
-          "hasDiscussionStructure": { "value": false, "reason": "No explicit stance or proposal." },
+          "relevance": { "rating": 5, "reason": "Names the oxygen tanks and takes a clear position." },
+          "coherence": { "rating": 4, "reason": "Agrees with Red's oxygen proposal." },
           "invitesParticipation": { "value": false, "reason": "Does not address another member." },
-          "meaningfulnessScore": 0.667,
+          "meaningfulnessScore": 0.875,
           "model": "claude-haiku-4-5-20251001",
-          "promptVersion": "meaningfulness-v1",
+          "promptVersion": "meaningfulness-v2",
           "prompt": "…the exact prompt sent to the API…",
           "rawOutput": "…the raw JSON the model returned…"
         }
@@ -479,11 +478,10 @@ The JSON export contains three arrays. The CSV contains only the aggregate contr
       "reactionCount": 0,
       "rankingMoveCount": 3,
       "typingDurationMs": 42000,
-      "respondsToPriorCount": 8,
-      "referencesTaskItemCount": 6,
-      "hasDiscussionStructureCount": 5,
+      "relevanceMean": 3.8,
+      "coherenceMean": 3.2,
       "invitesParticipationCount": 2,
-      "meaningfulnessScoreMean": 0.58
+      "meaningfulnessScoreMean": 0.625
     }
   ],
 
@@ -509,13 +507,12 @@ The JSON export contains three arrays. The CSV contains only the aggregate contr
       "messageId": "msg-uuid",
       "senderId": "@gdm_user_abc:synapse",
       "classifiedAt": "2026-07-13T10:07:05Z",
-      "respondsToPrior": { "value": true, "reason": "Agrees with Red's oxygen proposal." },
-      "referencesTaskItem": { "value": true, "reason": "Names the oxygen tanks." },
-      "hasDiscussionStructure": { "value": false, "reason": "No explicit stance or proposal." },
+      "relevance": { "rating": 5, "reason": "Names the oxygen tanks and takes a clear position." },
+      "coherence": { "rating": 4, "reason": "Agrees with Red's oxygen proposal." },
       "invitesParticipation": { "value": false, "reason": "Does not address another member." },
-      "meaningfulnessScore": 0.667,
+      "meaningfulnessScore": 0.875,
       "model": "claude-haiku-4-5-20251001",
-      "promptVersion": "meaningfulness-v1",
+      "promptVersion": "meaningfulness-v2",
       "prompt": "…the exact prompt sent to the API…",
       "rawOutput": "…the raw JSON the model returned…"
     }
@@ -534,21 +531,26 @@ The JSON export contains three arrays. The CSV contains only the aggregate contr
 | `reactionCount` | Total emoji reactions given by this participant (always 0 with the current UI) |
 | `rankingMoveCount` | Number of times this participant moved an item in the shared ranking |
 | `typingDurationMs` | Total milliseconds spent typing (from behavioral events) |
-| `respondsToPriorCount` | Messages that address, react to, or build on a prior message/member |
-| `referencesTaskItemCount` | Messages that explicitly name a ranking-task item |
-| `hasDiscussionStructureCount` | Messages with an explicit stance, proposal, or structured discourse move |
+| `relevanceMean` | Mean `relevance.rating` (1..5) across this participant's classified messages; `null` when no message carries a rating (baseline, or records from the pre-v2 boolean classifier) |
+| `coherenceMean` | Mean `coherence.rating` (1..5); `null` under the same conditions |
 | `invitesParticipationCount` | Messages that explicitly invite another member to contribute |
 | `meaningfulnessScoreMean` | Mean `meaningfulnessScore` across this participant's classified messages (0..1); `0` when nothing was classified (e.g. baseline) |
 
-**`classifications` fields**
+**`classifications` fields** (prompt version `meaningfulness-v2`)
 
 | Field | Description |
 |---|---|
-| `respondsToPrior` | `{ value, reason }` — addresses, reacts to, builds on, or refers to a specific prior message or member |
-| `referencesTaskItem` | `{ value, reason }` — explicitly names one or more ranking-task items |
-| `hasDiscussionStructure` | `{ value, reason }` — explicit stance, proposal, or structured discourse move |
+| `relevance` | `{ rating, reason }` — integer 1–5: how much of the message contributes content relevant to the ranking task (naming items, stating stances, making proposals); 5 = fully task-focused, 1 = entirely off-topic |
+| `coherence` | `{ rating, reason }` — integer 1–5: how well the message connects to and builds on the ongoing discussion; 5 = clearly addresses or extends prior messages or members, 1 = stands alone |
 | `invitesParticipation` | `{ value, reason }` — explicitly invites another member to contribute. Tracked separately; never part of the meaningfulness score. |
-| `meaningfulnessScore` | Mean of the first three indicator values (0, 1/3, 2/3, or 1) |
+| `meaningfulnessScore` | `(mean(relevance, coherence) − 1) / 4`, continuous in 0..1 |
+
+Records written before this version (`promptVersion: "meaningfulness-v1"`)
+carry three boolean indicators (`respondsToPrior`, `referencesTaskItem`,
+`hasDiscussionStructure`) instead of the two ratings, and a `meaningfulnessScore`
+that is the mean of those booleans. They still count toward
+`meaningfulnessScoreMean` and `classified_message_count`, but are excluded from
+`relevanceMean` / `coherenceMean`.
 
 **CSV columns** (aggregate scores only; use the JSON export for behavioral events and per-message classifications)
 
@@ -563,9 +565,8 @@ The JSON export contains three arrays. The CSV contains only the aggregate contr
 | `reaction_count` | Total reactions given |
 | `ranking_move_count` | Shared ranking edits made |
 | `typing_duration_ms` | Total typing time in milliseconds |
-| `responds_to_prior_count` | Messages addressing or building on a prior message/member |
-| `references_task_item_count` | Messages naming a ranking-task item |
-| `has_discussion_structure_count` | Messages with an explicit stance or proposal |
+| `relevance_mean` | Mean relevance rating (1..5) across classified messages; empty when none carries a rating |
+| `coherence_mean` | Mean coherence rating (1..5); empty under the same conditions |
 | `invites_participation_count` | Messages inviting another member to contribute |
 | `meaningfulness_score_mean` | Mean meaningfulness score across classified messages (0..1) |
 

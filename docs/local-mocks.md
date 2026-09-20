@@ -12,7 +12,8 @@ All published ports bind to 127.0.0.1. Data lives in separate `gdm-local` Docker
 
 The local-only Node preload intercepts Anthropic and Prolific fetch requests.
 It cannot load unless GDM_ENV=development. Production source and workflow are unchanged.
-AI classification is deterministic keyword matching, nudges are templated, and
+AI classification is deterministic keyword matching (relevance and coherence
+ratings 1–5 derived from keyword counts, plus the invitation flag), nudges are templated, and
 moderation (if enabled) flags the literal `[mock-abuse]` marker. Prolific submission
 IDs and participant IDs must be the same 24-character hexadecimal string, with
 study ID `aaaaaaaaaaaaaaaaaaaaaaaa`. The demo page generates these automatically.

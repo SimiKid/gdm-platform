@@ -18,13 +18,20 @@ globalThis.fetch = async function mockFetch(input, init = {}) {
     const prompt = body.messages?.[0]?.content || '';
     const properties = body.output_config?.format?.schema?.properties || {};
     let output;
-    if (properties.responds_to_prior) {
+    if (properties.relevance) {
       const message = prompt.match(/Text: "([\s\S]*?)"\n\nPRECEDING CONTEXT:/)?.[1] || '';
-      const indicator = value => ({ value, reason: 'Local mock: deterministic text heuristic, not an AI judgment.' });
+      const reason = 'Local mock: deterministic text heuristic, not an AI judgment.';
+      const hits = pattern => (message.match(pattern) || []).length;
+      // Graded 1-5 ratings from keyword counts, mirroring the v2 prompt order.
+      const rating = score => ({ rating: Math.max(1, Math.min(5, 1 + score)), reason });
+      const indicator = value => ({ value, reason });
+      const itemHits = hits(/oxygen|water|food|rope|map|parachute|radio|pistol|milk|match|compass|raft|kit|flare/gi);
+      const stanceHits = hits(/because|should|rank|first|second|suggest|think|let.s/gi);
+      const replyHits = hits(/agree|disagree|you said|good point/gi);
+      const mentionHits = hits(/\byou\b|\byour\b/gi);
       output = {
-        responds_to_prior: indicator(/agree|disagree|your|you said|good point/i.test(message)),
-        references_task_item: indicator(/oxygen|water|food|rope|map|parachute|radio|pistol|milk|match|compass|raft|kit|flare/i.test(message)),
-        has_discussion_structure: indicator(/because|should|rank|first|second|suggest|think|let.s/i.test(message)),
+        relevance: rating(itemHits + stanceHits),
+        coherence: rating(2 * replyHits + mentionHits),
         invites_participation: indicator(/what do you|anyone|thoughts|do you agree|what about/i.test(message)),
       };
     } else if (properties.message) {

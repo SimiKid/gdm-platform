@@ -135,9 +135,8 @@ export interface AdminSession {
     messageId: string;
     senderId: string;
     classifiedAt: string;
-    respondsToPrior: { value: boolean; reason: string };
-    referencesTaskItem: { value: boolean; reason: string };
-    hasDiscussionStructure: { value: boolean; reason: string };
+    relevance: { rating: number; reason: string };
+    coherence: { rating: number; reason: string };
     invitesParticipation: { value: boolean; reason: string };
     meaningfulnessScore: number;
     model: string;

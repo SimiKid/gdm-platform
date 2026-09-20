@@ -1455,7 +1455,7 @@ exclusions. Treat it as identifying data; keep it out of analysis folders.
 | debrief_feedback | Free-text feedback from the debriefing page (optional) |
 | message_count, word_count, character_count | This participant's chat activity (bot messages never count) |
 | contribution_share | Share of the session's total contribution score (messages × ${DEFAULT_INTERVENTION_CONFIG.scoreWeights.messages} + words × ${DEFAULT_INTERVENTION_CONFIG.scoreWeights.words}, weights from the condition snapshot) |
-| meaningfulness_score_mean / classified_message_count | LLM classifier aggregates (nudging arms only; empty in baseline) |
+| meaningfulness_score_mean / classified_message_count | LLM classifier aggregates (nudging arms only; empty in baseline). meaningfulness_score = (mean(relevance, coherence) − 1) / 4, each rated 1–5 by the classifier (prompt version meaningfulness-v2) |
 | nudges_received_total / _public / _private | Bot nudges targeting this participant |
 | typing_duration_ms, tab_hidden_count, ranking_move_count | Behavioral telemetry aggregates |
 

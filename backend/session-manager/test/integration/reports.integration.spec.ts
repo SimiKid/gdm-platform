@@ -93,7 +93,7 @@ describe("research reports (integration)", () => {
         senderId: userIds[0],
         failedAt: "2026-07-30T10:10:00.000Z",
         model: "test-model",
-        promptVersion: "meaningfulness-v1",
+        promptVersion: "meaningfulness-v2",
         error: "boom",
       },
     ];
