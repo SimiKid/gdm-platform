@@ -43,6 +43,10 @@ $COMPOSE pull
 echo "Starting stack..."
 $COMPOSE up -d --no-build --remove-orphans
 
+# Git may replace the mounted config file's inode. Recreate the proxy so its
+# bind mount and active configuration both pick up the current Caddyfile.
+$COMPOSE up -d --no-build --no-deps --force-recreate caddy
+
 echo "Waiting for application readiness..."
 for service in research-db synapse-db etherpad-db etherpad synapse session-manager chat-service; do
   attempts=0
