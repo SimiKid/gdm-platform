@@ -10,13 +10,9 @@ exercised by exactly one layer so failures point somewhere specific.
 
 | Layer | Command | Needs | Runtime | What is real |
 |---|---|---|---|---|
-| Unit | `pnpm test` | Node | seconds | Pure logic, participant components in jsdom |
+| Unit | `pnpm test` | Node | seconds | Pure logic, participant and admin-dashboard components in jsdom |
 | Integration | `pnpm test:integration` | Docker | minutes (real timers + two container runs) | Nest apps over HTTP, Postgres, Synapse |
 | End-to-end | `pnpm test:e2e` | Running compose stack | a few minutes (the golden path waits for a real one-minute discussion) | Everything: browsers, all services, Matrix |
-
-Known gap: the **admin dashboard has no unit tests** (its package defines no
-`test` script, so `pnpm -r` skips it silently) — its behavior is covered only
-by the e2e layer.
 
 All commands work from the repo root (they fan out via `pnpm -r`) or inside a
 single package.
@@ -49,7 +45,12 @@ Fast, no network, no containers. They own the pure logic:
   pages (`Survey.spec.tsx` walks consent → about you → attitudes → task →
   group phase; `App`, `AboutYouPage`, `Chat`, `SharedRanking`,
   `ExternalWorkspace`, `Recruiting`, `ExitSurvey`, `DebriefingPage`,
-  `StudyExitPage`, and the `src/study/` helpers have their own specs).
+  `StudyExitPage`, `RankingBoard`, and the `src/study/` helpers have their
+  own specs) and for the admin dashboard (`App` with its token gate,
+  `Overview`, `Results`, `Settings`, `ProlificOutcomes`, `Testing`,
+  `AuthenticatedDownloadLink`, and `api.ts`). Dashboard specs stub `fetch`
+  with a path → response table (`src/test-utils.ts`) so each assertion reads
+  as "this click sends this request".
 
 Conventions:
 
@@ -57,14 +58,19 @@ Conventions:
   Assert on behavior (what was recorded, posted, returned) — not on request
   URLs or headers; wire formats belong to the integration layer.
 - Coverage gates run via `pnpm test:cov` (80 % lines/functions/statements,
-  70 % branches in both backends). In the session manager, files whose main
+  70 % branches in both backends and both frontends). CI runs `pnpm test:cov`, not `pnpm test`,
+  on every pull request to `main` and every push to `main`, so a drop below a
+  threshold fails the `verify` job. In the session manager, files whose main
   body is only exercised by another layer are excluded from the unit metrics
   with a comment saying which layer owns them (`store.service.ts` and
   `prisma.service.ts` → integration suite); the chat service only excludes
-  `main.ts`, the Nest modules and the spec files themselves. The participant frontend inverts this: its
-  coverage config is an **allowlist** (`src/study/**/*.ts` plus
-  `Recruiting.tsx`, `Survey.tsx`, `ExitSurvey.tsx`), so pages outside it are
-  simply not in the metric.
+  `main.ts`, the Nest modules and the spec files themselves. The participant
+  frontend measures all of `src/` except three files owned by the e2e suite,
+  each named in the config with the reason: `App.tsx` (wires the whole flow
+  together), `WaitingRoom.tsx` (boots a real Matrix client against Synapse)
+  and `DinoGame.tsx` (a canvas/`requestAnimationFrame` loop with no study
+  logic). Everything else — the survey pages, chat, shared ranking, the
+  ranking board and the study helpers — counts toward the gate.
 
 ## Integration Tests (`test/integration/*.integration.spec.ts`)
 

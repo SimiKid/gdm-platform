@@ -16,6 +16,7 @@ import type {
   InterventionMode,
   WindowEvaluation,
 } from "./interventions.js";
+import type { StudyPadSnapshot } from "./etherpad.js";
 import type {
   BehavioralEvent,
   ClassificationFailure,
@@ -232,6 +233,7 @@ export interface InterventionSummary {
 export interface ExportBundle {
   generatedAt: string;
   sessions: Session[];
+  etherpads?: StudyPadSnapshot[];
 }
 
 /**

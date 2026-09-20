@@ -1,4 +1,5 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
+import { EtherpadService } from "../etherpad/etherpad.service";
 import archiver from "archiver";
 import {
   DEFAULT_INTERVENTION_CONFIG,
@@ -41,7 +42,32 @@ export class ReportsService {
   private readonly bundleInFlight = new Map<string, Promise<Buffer>>();
   private bundleQueue: Promise<void> = Promise.resolve();
 
-  constructor(private readonly store: StoreService) {}
+  constructor(private readonly store: StoreService, @Optional() private readonly etherpad?: EtherpadService) {}
+
+  async exportEtherpad(filter: ResearchFilter = {}, snapshot?: Session[]) {
+    const sessions = snapshot ?? await this.sessions(filter);
+    const ids = new Set(sessions.filter(isEtherpad).map(s => s.id));
+    const unfiltered = !filter.conditionIds?.length && !filter.roundIds?.length;
+    const pads = (await this.etherpad?.documents() ?? [])
+      .filter(d => d.sessionId ? ids.has(d.sessionId) : unfiltered)
+      .map(d => ({
+        padPseudonym: pseudonymize("D", d.id),
+        sessionPseudonym: d.sessionId ? pseudonymize("S", d.sessionId) : null,
+        participantPseudonym: d.participantId ? pseudonymize("P", d.participantId) : null,
+        conditionId: d.conditionId ?? null, round: d.roundId ?? null,
+        phase: d.phase, state: d.state, deadline: d.deadline,
+        capturedAt: d.capturedAt ?? null, revision: d.revision, text: d.text,
+      }));
+    return { generatedAt: new Date().toISOString(), pads };
+  }
+
+  async exportEtherpadCsv(filter: ResearchFilter = {}, snapshot?: Session[]): Promise<string> {
+    const { pads } = await this.exportEtherpad(filter, snapshot);
+    return toCsv([
+      ["pad_pseudonym", "session_pseudonym", "participant_pseudonym", "condition_id", "round", "phase", "state", "deadline", "captured_at", "revision", "raw_text"],
+      ...pads.map(p => [p.padPseudonym, cell(p.sessionPseudonym), cell(p.participantPseudonym), cell(p.conditionId), cell(p.round), p.phase, p.state, p.deadline, cell(p.capturedAt), cell(p.revision), cell(p.text)]),
+    ]);
+  }
 
   private async sessions(filter: ResearchFilter): Promise<Session[]> {
     return filterResearchSessions(await this.store.allSessions(), filter);
@@ -208,7 +234,7 @@ export class ReportsService {
         String(row.nudgesReceivedPrivate),
         String(row.typingDurationMs),
         String(row.tabHiddenCount),
-        String(row.rankingMoveCount),
+        cell(row.rankingMoveCount),
       ]),
     ]);
   }
@@ -283,7 +309,7 @@ export class ReportsService {
         row.completedAt ?? "",
         String(row.plannedDurationMinutes),
         cell(row.groupRankingError),
-        String(row.rankingEditCount),
+        cell(row.rankingEditCount),
         String(row.participantMessageCount),
         String(row.botMessageCount),
         String(row.wordCountTotal),
@@ -673,13 +699,13 @@ export class ReportsService {
             cell(row.chatComfort),
             cell(row.spaceflightFamiliarity),
             cell(row.survivalFamiliarity),
-            expertRankingOrder(),
-            rankingAnswer(participant.entrySurvey, "individualRanking")?.join("|") ?? "",
-            cell(rankingErrorScore(rankingAnswer(participant.entrySurvey, "individualRanking"))),
-            rankingAnswer(participant.exitSurvey, "finalRanking")?.join("|") ?? "",
-            cell(rankingErrorScore(rankingAnswer(participant.exitSurvey, "finalRanking"))),
-            session.ranking.order.join("|"),
-            cell(rankingErrorScore(session.ranking.order)),
+            isEtherpad(session) ? "" : expertRankingOrder(),
+            isEtherpad(session) ? "" : rankingAnswer(participant.entrySurvey, "individualRanking")?.join("|") ?? "",
+            isEtherpad(session) ? "" : cell(rankingErrorScore(rankingAnswer(participant.entrySurvey, "individualRanking"))),
+            isEtherpad(session) ? "" : rankingAnswer(participant.exitSurvey, "finalRanking")?.join("|") ?? "",
+            isEtherpad(session) ? "" : cell(rankingErrorScore(rankingAnswer(participant.exitSurvey, "finalRanking"))),
+            isEtherpad(session) ? "" : session.ranking.order.join("|"),
+            isEtherpad(session) ? "" : cell(rankingErrorScore(session.ranking.order)),
             cell(row.individualRankingCompleted),
             cell(row.taskConfidence),
             cell(row.groupDynamics[0]), // groupConsidered
@@ -775,6 +801,7 @@ export class ReportsService {
     });
     archive.append(results, { name: "results.csv" });
     archive.append(messages, { name: "messages.csv" });
+    if ((await this.exportEtherpad(filter, snapshot)).pads.length) archive.append(await this.exportEtherpadCsv(filter, snapshot), { name: "etherpad.csv" });
     await archive.finalize();
     await finished;
     return Buffer.concat(chunks);
@@ -833,7 +860,9 @@ export class ReportsService {
     archive.append(windows, { name: "windows.csv" });
     archive.append(rankings, { name: "rankings.csv" });
     archive.append(messages, { name: "messages.csv" });
-    archive.append(codebook(new Date().toISOString()), { name: "codebook.md" });
+    const hasPads = (await this.exportEtherpad(filter, snapshot)).pads.length > 0;
+    archive.append(codebook(new Date().toISOString()) + (hasPads ? ETHERPAD_CODEBOOK : ""), { name: "codebook.md" });
+    if (hasPads) archive.append(await this.exportEtherpadCsv(filter, snapshot), { name: "etherpad.csv" });
     await archive.finalize();
     await finished;
     return Buffer.concat(chunks);
@@ -845,6 +874,10 @@ function bundleFilterKey(filter: ResearchFilter): string {
     conditionIds: [...(filter.conditionIds ?? [])].sort(),
     roundIds: [...(filter.roundIds ?? [])].sort((a, b) => a - b),
   });
+}
+
+function isEtherpad(session: Session): boolean {
+  return session.condition.config.workspaceMode === "etherpad";
 }
 
 // ── ranking helpers ─────────────────────────────────────────────────
@@ -942,6 +975,7 @@ function editorPseudonym(session: Session, updatedBy: string): string | null {
 }
 
 function rankingRows(session: Session): RankingRow[] {
+  if (isEtherpad(session)) return [];
   const base = {
     sessionPseudonym: pseudonymize("S", session.id),
     conditionId: session.condition.id,
@@ -1042,7 +1076,7 @@ function participantRow(session: Session, participant: Participant) {
         event.participantId === matrixUserId &&
         event.type === type,
     );
-  const rankingCompleted = scalarAnswer(entry, "rankingCompleted");
+  const rankingCompleted = isEtherpad(session) ? null : scalarAnswer(entry, "rankingCompleted");
 
   return {
     participantPseudonym: pseudonymize("P", participant.id),
@@ -1077,7 +1111,7 @@ function participantRow(session: Session, participant: Participant) {
     spaceflightFamiliarity: scalarAnswer(entry, "spaceflightFamiliarity"),
     survivalFamiliarity: scalarAnswer(entry, "survivalFamiliarity"),
     individualRankingCompleted: rankingCompleted,
-    individualRankingSecondsUsed: scalarAnswer(entry, "rankingSecondsUsed"),
+    individualRankingSecondsUsed: isEtherpad(session) ? null : scalarAnswer(entry, "rankingSecondsUsed"),
     // Timed-out entry rankings are auto-completed in shown order, so only
     // rankings the participant explicitly finished are scored.
     individualRankingError:
@@ -1085,7 +1119,7 @@ function participantRow(session: Session, participant: Participant) {
         ? rankingErrorScore(rankingAnswer(entry, "individualRanking"))
         : null,
     exitSubmitted: exit ? true : null,
-    exitRankingError: rankingErrorScore(rankingAnswer(exit, "finalRanking")),
+    exitRankingError: isEtherpad(session) ? null : rankingErrorScore(rankingAnswer(exit, "finalRanking")),
     satisfaction: scalarAnswer(exit, "satisfaction"),
     fairness: scalarAnswer(exit, "fairness"),
     feltHeard: scalarAnswer(exit, "feltHeard"),
@@ -1129,7 +1163,7 @@ function participantRow(session: Session, participant: Participant) {
       0,
     ),
     tabHiddenCount: behavior("tab-hidden").length,
-    rankingMoveCount: behavior("ranking-move").length,
+    rankingMoveCount: isEtherpad(session) ? null : behavior("ranking-move").length,
   };
 }
 
@@ -1166,8 +1200,8 @@ function sessionRow(session: Session) {
     plannedDurationMinutes: session.durationMinutes,
     // Computable even with zero edits (the shuffled starting order) — always
     // read together with rankingEditCount.
-    groupRankingError: rankingErrorScore(session.ranking.order),
-    rankingEditCount: session.rankingHistory?.length ?? 0,
+    groupRankingError: isEtherpad(session) ? null : rankingErrorScore(session.ranking.order),
+    rankingEditCount: isEtherpad(session) ? null : session.rankingHistory?.length ?? 0,
     participantMessageCount: participantMessages.length,
     botMessageCount:
       session.chat.messages.length - participantMessages.length,
@@ -1307,6 +1341,26 @@ function cell(value: string | number | boolean | null | undefined): string {
 }
 
 // ── codebook ───────────────────────────────────────────────────────
+
+const ETHERPAD_CODEBOOK = `
+
+## Etherpad text tasks
+
+This bundle includes etherpad.csv. Each row represents one private entry pad,
+shared group pad, or private exit pad. Join the pseudonymous participant and
+session IDs to the other files. Unmatched entry pads have no session ID.
+raw_text is the final server-accepted plain text (maximum 1,000 Unicode code
+points); CSV formula escaping follows the other text exports. The JSON Etherpad
+download preserves the original text. state=captured with empty text means a
+blank response; open/error means no final snapshot yet. revision, deadline and
+captured_at describe the snapshot. Access grants are never exported.
+
+Etherpad sessions do not have ranking orders, ranking error scores or ranking
+edit counts. Those cells are empty and rankings.csv omits these sessions.
+Chat transcripts, contribution measures and bot analysis still describe only
+the Matrix conversation, not the Etherpad text. The entry and exit pads start
+blank and private; group text is never copied into the exit task.
+`;
 
 function codebook(generatedAt: string): string {
   const itemCount = MOON_SURVIVAL.items.length;

@@ -306,6 +306,16 @@ describe("ReportsService (in-memory store)", () => {
     });
   });
 
+  it("never scores or exports ranking orders for Etherpad, even with stale ranking data", async () => {
+    session.condition.config.workspaceMode = "etherpad";
+    const { participants } = await reports.exportParticipants();
+    expect(participants[0]).toMatchObject({ individualRankingError: null, exitRankingError: null, individualRankingCompleted: null, individualRankingSecondsUsed: null });
+    expect((await reports.exportSessionsAnalysis()).sessions[0].groupRankingError).toBeNull();
+    expect((await reports.exportRankings()).rankings).toEqual([]);
+    expect(await reports.exportResultsCsv()).not.toContain(EXPERT_ORDER.join("|"));
+    expect(await reports.exportResearchMessagesCsv()).toContain("one two three four");
+  });
+
   it("emits no raw identifiers in the participants CSV and guards formulas", async () => {
     const csv = await reports.exportParticipantsCsv();
     expect(csv).not.toContain("PROLIFIC-1");

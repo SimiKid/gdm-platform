@@ -8,8 +8,11 @@ import AttitudesPage from "./AttitudesPage";
 import type { AttitudesAnswers } from "./AttitudesPage";
 import RankingTaskPage from "./RankingTaskPage";
 import GroupIntroPage from "./GroupIntroPage";
+import StudyCountdown from "./StudyCountdown";
+import EtherpadTask from "./EtherpadTask";
 
 interface Props {
+  taskMode?: "ranking" | "etherpad";
   /** Called with the assembled entry survey (incl. the individual ranking). */
   onComplete: (survey: Survey) => void;
   onDecline?: () => void;
@@ -34,12 +37,15 @@ const STEP_NUMBER: Record<Step, 1 | 2 | 3 | 4> = {
  * on to the waiting room.
  */
 export default function Survey({
+  taskMode = "ranking",
   onComplete,
   onDecline,
   onIneligible,
   onWithdraw,
 }: Props) {
   const [step, setStep] = useState<Step>("consent");
+  const [questionnaireDeadline, setQuestionnaireDeadline] = useState<number | null>(null);
+  const [questionnaireTimedOut, setQuestionnaireTimedOut] = useState(false);
   const [about, setAbout] = useState<AboutYouAnswers | null>(null);
   const [attitudes, setAttitudes] = useState<AttitudesAnswers | null>(null);
   const [task, setTask] = useState<Record<
@@ -54,6 +60,7 @@ export default function Survey({
         consentAdult: true,
         consentInformed: true,
         consentParticipation: true,
+        entryQuestionnaireTimedOut: questionnaireTimedOut,
         ...(about ?? {}),
         ...(attitudes ?? {}),
         ...(task ?? {}),
@@ -66,13 +73,30 @@ export default function Survey({
 
   return (
     <StudyShell step={STEP_NUMBER[step]} onWithdraw={step === "consent" ? undefined : onWithdraw}>
+      {(step === "about" || step === "attitudes") && questionnaireDeadline !== null && (
+        <>
+          <StudyCountdown deadline={questionnaireDeadline} label="Entry questionnaire time remaining" onExpire={() => setQuestionnaireTimedOut(true)} />
+          <p>You have 5 minutes across both questionnaire pages. When time runs out, your answers so far are saved and you move to the {taskMode === "etherpad" ? "writing" : "ranking"} task.</p>
+        </>
+      )}
+      {questionnaireTimedOut && step === "task" && (
+        <p role="status">Questionnaire time is up. Your answers so far have been kept.</p>
+      )}
       {step === "consent" && (
-        <ConsentPage onBegin={() => setStep("about")} onDecline={onDecline} />
+        <ConsentPage onBegin={() => {
+          setQuestionnaireDeadline(Date.now() + 5 * 60_000);
+          setStep("about");
+        }} onDecline={onDecline} />
       )}
 
       {step === "about" && (
         <AboutYouPage
           onIneligible={onIneligible}
+          expired={questionnaireTimedOut}
+          onTimeout={(answers) => {
+            setAbout(answers);
+            setStep("task");
+          }}
           onContinue={(answers) => {
             setAbout(answers);
             setStep("attitudes");
@@ -82,6 +106,11 @@ export default function Survey({
 
       {step === "attitudes" && (
         <AttitudesPage
+          expired={questionnaireTimedOut}
+          onTimeout={(answers) => {
+            setAttitudes(answers);
+            setStep("task");
+          }}
           onContinue={(answers) => {
             setAttitudes(answers);
             setStep("task");
@@ -89,7 +118,8 @@ export default function Survey({
         />
       )}
 
-      {step === "task" && (
+      {step === "task" && taskMode === "etherpad" && <EtherpadTask phase="entry" onComplete={pad => { setTask({ entryEtherpadId: pad.id }); setStep("group"); }} />}
+      {step === "task" && taskMode !== "etherpad" && (
         <RankingTaskPage
           onComplete={(answers) => {
             setTask({ ...answers });
@@ -98,7 +128,7 @@ export default function Survey({
         />
       )}
 
-      {step === "group" && <GroupIntroPage onJoin={finish} />}
+      {step === "group" && <GroupIntroPage onJoin={finish} taskMode={taskMode} />}
     </StudyShell>
   );
 }

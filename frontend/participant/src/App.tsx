@@ -24,6 +24,7 @@ import {
 import type { StudyProgress } from "./study/progress";
 import { loadProlificIdentity } from "./study/prolific";
 import "./App.css";
+import { workspaceClient } from "./study/workspaceClient";
 
 const HOMESERVER =
   import.meta.env.VITE_MATRIX_HOMESERVER ?? "http://localhost:8008";
@@ -92,6 +93,7 @@ export default function App() {
   const [participantId, setParticipantId] = useState("");
   const [client, setClient] = useState<MatrixClient | null>(null);
   const [groupRanking, setGroupRanking] = useState<string[]>([]);
+  const [taskMode, setTaskMode] = useState<"ranking" | "etherpad">("ranking");
   const [compensationUrl, setCompensationUrl] = useState("");
   const [termination, setTermination] =
     useState<ParticipationOutcomeResponse | null>(null);
@@ -238,10 +240,12 @@ export default function App() {
           "consent",
         );
       }
+      const admission = await workspaceClient.prepare(token);
+      setTaskMode(admission.mode);
       setStage("survey");
-    } catch {
+    } catch (error) {
       setError(
-        "We could not validate your Prolific study link. Please return to Prolific and try again.",
+        error instanceof Error ? error.message : "We could not start your study. Please try again.",
       );
     } finally {
       setBooting(false);
@@ -374,6 +378,7 @@ export default function App() {
     outcome: "declined_consent" | "ineligible" | "voluntary_withdrawal",
     reason?: string,
   ) {
+    if (taskMode === "etherpad" && trackingToken) void workspaceClient.leave(trackingToken).catch(() => undefined);
     if (!prolific) {
       setTermination({
         outcome,
@@ -480,6 +485,7 @@ export default function App() {
     case "survey":
       return (
         <Survey
+          taskMode={taskMode}
           onDecline={() => void endParticipation("declined_consent")}
           onIneligible={(reason) =>
             void endParticipation("ineligible", reason)

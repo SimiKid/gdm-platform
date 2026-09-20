@@ -23,3 +23,6 @@ infra/synapse/homeserver.prod.yaml
 # Playwright artifacts
 e2e/test-results/
 e2e/playwright-report/
+
+# Generated test coverage
+coverage/

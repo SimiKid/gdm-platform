@@ -48,6 +48,11 @@
 	route {
 		respond @adminDenied 403
 
+		handle /etherpad/* {
+			header X-Frame-Options SAMEORIGIN
+			reverse_proxy participant:80
+		}
+
 		# These service-to-service endpoints are reachable only on the Docker
 		# network. Reject them before parsing a potentially large checkpoint body.
 		@internalApi path_regexp internalApi ^/api/sessions/(?:recover|[^/]+/(?:checkpoint|finalize))$

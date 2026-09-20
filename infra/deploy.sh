@@ -44,7 +44,7 @@ echo "Starting stack..."
 $COMPOSE up -d --no-build --remove-orphans
 
 echo "Waiting for application readiness..."
-for service in research-db synapse-db synapse session-manager chat-service; do
+for service in research-db synapse-db etherpad-db etherpad synapse session-manager chat-service; do
   attempts=0
   while :; do
     container=$($COMPOSE ps -q "$service")

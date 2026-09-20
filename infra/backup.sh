@@ -1,5 +1,5 @@
 #!/bin/sh
-# Consistent pre-deploy backups of both databases and Synapse's file volume.
+# Pre-deploy backups of the research, Synapse and Etherpad databases and Synapse's file volume.
 set -eu
 
 cd "$(dirname "$0")"
@@ -20,6 +20,7 @@ chmod 700 "$BACKUP_DIR"
 research_container=$($COMPOSE ps -q research-db)
 synapse_db_container=$($COMPOSE ps -q synapse-db)
 synapse_container=$($COMPOSE ps -q synapse)
+etherpad_container=$($COMPOSE ps -a -q etherpad-db)
 
 if [ -z "$research_container" ] && [ -z "$synapse_db_container" ]; then
   echo "No running databases found; treating this as an initial deployment."
@@ -33,10 +34,11 @@ fi
 research="$BACKUP_DIR/research-$timestamp.dump"
 synapse_db="$BACKUP_DIR/synapse-db-$timestamp.dump"
 synapse_data="$BACKUP_DIR/synapse-data-$timestamp.tar.gz"
+etherpad_db="$BACKUP_DIR/etherpad-db-$timestamp.dump"
 checksum="$BACKUP_DIR/checksums-$timestamp.sha256"
 
 cleanup() {
-  rm -f "$research.tmp" "$synapse_db.tmp" "$synapse_data.tmp" "$checksum.tmp"
+  rm -f "$research.tmp" "$synapse_db.tmp" "$synapse_data.tmp" "$etherpad_db.tmp" "$checksum.tmp"
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -47,6 +49,18 @@ $COMPOSE exec -T research-db \
 [ -s "$research.tmp" ]
 $COMPOSE exec -T research-db pg_restore --list < "$research.tmp" >/dev/null
 mv "$research.tmp" "$research"
+
+# Older deployments have no Etherpad database yet. Once created, require its
+# backup even when the editor itself is switched off.
+if [ -n "$etherpad_container" ]; then
+  echo "Backing up Etherpad database..."
+  $COMPOSE exec -T etherpad-db \
+    pg_dump --format=custom --compress=9 --no-owner --no-privileges \
+      -U etherpad etherpad > "$etherpad_db.tmp"
+  [ -s "$etherpad_db.tmp" ]
+  $COMPOSE exec -T etherpad-db pg_restore --list < "$etherpad_db.tmp" >/dev/null
+  mv "$etherpad_db.tmp" "$etherpad_db"
+fi
 
 echo "Backing up Synapse database..."
 $COMPOSE exec -T synapse-db \
@@ -65,6 +79,7 @@ mv "$synapse_data.tmp" "$synapse_data"
   cd "$BACKUP_DIR"
   sha256sum "$(basename "$research")" "$(basename "$synapse_db")" \
     "$(basename "$synapse_data")"
+  if [ -f "$etherpad_db" ]; then sha256sum "$(basename "$etherpad_db")"; fi
 ) > "$checksum.tmp"
 mv "$checksum.tmp" "$checksum"
 

@@ -1,17 +1,20 @@
 import { useState } from "react";
+import type { StudyTaskMode } from "@gdm/shared";
 
 interface Props {
   /** Called when the participant confirms and presses "Join chat". */
   onJoin: () => void;
+  taskMode?: StudyTaskMode;
 }
 
 /** Page before the group chat — instructions and acknowledgment. */
-export default function GroupIntroPage({ onJoin }: Props) {
+export default function GroupIntroPage({ onJoin, taskMode = "ranking" }: Props) {
   const [ready, setReady] = useState(false);
 
   return (
     <div className="study-card">
       <h1>You are now ready to join the group discussion!</h1>
+      {taskMode === "etherpad" && <p>Discuss the task in the chat and record your group's response in the shared writing workspace. You will write a separate, private final response after the discussion.</p>}
 
       <p>
         Your group, consisting of <strong>five participants</strong>, will be{" "}

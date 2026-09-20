@@ -16,6 +16,14 @@
 ## IMAGE_TAG pins a build (git sha) for rollbacks; defaults to latest.
 
 services:
+  etherpad:
+    image: ${IMAGE_PREFIX:-ghcr.io/simikid/gdm-platform}/etherpad:${IMAGE_TAG:-latest}
+    environment:
+      ETHERPAD_CONTROL_TOKEN: ${ETHERPAD_CONTROL_TOKEN:?set ETHERPAD_CONTROL_TOKEN in .env}
+      DB_PASS: ${ETHERPAD_DB_PASSWORD:?set ETHERPAD_DB_PASSWORD in .env}
+  etherpad-db:
+    environment:
+      POSTGRES_PASSWORD: ${ETHERPAD_DB_PASSWORD:?set ETHERPAD_DB_PASSWORD in .env}
   # ── Reverse Proxy / TLS termination ───────────────────
   caddy:
     image: caddy:2-alpine

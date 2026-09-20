@@ -7,11 +7,14 @@ import type {
 import { apiFetch, isTestCondition } from "../api";
 import AuthenticatedDownloadLink from "./AuthenticatedDownloadLink";
 
+/** `file` is the server's Content-Disposition name, so a dashboard download
+ * and a direct API download produce the same filename. */
 const RESEARCH_EXPORTS = [
-  { key: "participants", label: "Participants (surveys + activity joined)" },
-  { key: "sessions-analysis", label: "Sessions (derived analysis measures)" },
-  { key: "windows", label: "Contribution windows (fired or not)" },
-  { key: "rankings", label: "Rankings (raw orders + group edit history)" },
+  { key: "participants", file: "participants", label: "Participants (surveys + activity joined)" },
+  { key: "sessions-analysis", file: "sessions_analysis", label: "Sessions (derived analysis measures)" },
+  { key: "windows", file: "windows", label: "Contribution windows (fired or not)" },
+  { key: "rankings", file: "rankings", label: "Rankings (raw orders + group edit history)" },
+  { key: "etherpad", file: "etherpad", label: "Etherpad (raw entry, group and exit text)" },
 ] as const;
 
 /**
@@ -155,7 +158,7 @@ export default function Results({ rounds }: { rounds: RoundsResponse | null }) {
           <summary>Individual research datasets</summary>
           <table className="export-table">
             <tbody>
-              {RESEARCH_EXPORTS.map(({ key, label }) => (
+              {RESEARCH_EXPORTS.map(({ key, file, label }) => (
                 <tr key={key}>
                   <td>{label}</td>
                   <td>
@@ -163,7 +166,7 @@ export default function Results({ rounds }: { rounds: RoundsResponse | null }) {
                       className="link-button"
                       path={`/export/${key}`}
                       query={query}
-                      filename={`${key}.json`}
+                      filename={`${file}.json`}
                     >
                       JSON
                     </AuthenticatedDownloadLink>
@@ -171,7 +174,7 @@ export default function Results({ rounds }: { rounds: RoundsResponse | null }) {
                       className="link-button"
                       path={`/export/${key}.csv`}
                       query={query}
-                      filename={`${key}.csv`}
+                      filename={`${file}.csv`}
                     >
                       CSV
                     </AuthenticatedDownloadLink>

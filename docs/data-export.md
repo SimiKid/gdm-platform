@@ -1,5 +1,14 @@
 # Data Export
 
+Questionnaire timeouts are recorded in raw survey answers as
+`entryQuestionnaireTimedOut` and `exitQuestionnaireTimedOut`. Unanswered questions
+are omitted, rather than encoded as zero. Exit ranking answers also include
+`finalRankingTimedOut` and `finalRankingCompleted`. If the two-minute ranking
+deadline expires with items still unranked, the entered order is saved as
+`finalRankingPartial`; `finalRanking` is absent so existing ranking scores do not
+treat an unfinished order as complete. These metadata fields are available in raw
+survey/full-data exports; the fixed analysis CSV columns are unchanged.
+
 Every export is a `GET` endpoint of the Session Manager under `/api/export/…`, guarded by `ADMIN_API_TOKEN` (`Authorization: Bearer …`). The admin dashboard links the ones researchers normally need; the others are reachable by URL only (from the browser while logged into the dashboard, or with `curl -H "Authorization: Bearer $ADMIN_API_TOKEN"`).
 
 Where the downloads live in the dashboard:
@@ -10,7 +19,7 @@ Where the downloads live in the dashboard:
 
 Every research and raw export accepts `?conditionIds=a,b,c` to restrict the export to specific study arms (e.g. `baseline,public-llm,private-llm`) and `?roundIds=1,2` to restrict to specific study rounds; both compose. Sessions from automated `e2e-…` test conditions are always excluded. Note the failure modes of `roundIds`: non-numeric or non-positive values are silently ignored (so `?roundIds=abc` returns **all** rounds, not none), while a valid but non-existent round number returns an empty dataset with HTTP 200. The two exceptions are `GET /api/export/prolific-arrivals` and `GET /api/export/prolific-outcomes`, which take no filters and are not e2e-filtered (they are not session-based).
 
-Download filenames: the server sets a `Content-Disposition` filename (given below per endpoint). The dashboard's download links fetch the file with the token and save it under their own name, which differs in two cases: the Full data dump is saved as `full_data.json` (server name `detailed_data.json`), and the individual research datasets are saved as `<key>.csv` / `<key>.json`, so the sessions file becomes `sessions-analysis.csv` (server name `sessions_analysis.csv`).
+Download filenames: the server sets a `Content-Disposition` filename (given below per endpoint). The dashboard's download links fetch the file with the token and save it under the same name, so a file downloaded through the dashboard and one fetched from the API directly are named identically.
 
 ---
 
@@ -53,7 +62,7 @@ The Overview tab's primary download. A zip with two **non-pseudonymized** wide-f
 
 Because `results.csv` contains the Prolific id, keep this zip with the identifying data, not in the analysis folder.
 
-### Full Data (JSON): `detailed_data.json` (saved by the dashboard as `full_data.json`)
+### Full Data (JSON): `detailed_data.json`
 
 **Endpoint:** `GET /api/export/sessions`
 
@@ -619,3 +628,7 @@ Columns: `participant_pseudonym`, `session_pseudonym`, `round`, `participant_id`
 **Endpoint:** `GET /api/reports/summary`
 
 Per-condition descriptives backing the Results tab: session counts by status, participant and entry/exit survey counts over all sessions in the filter, and — over completed sessions only — means for group ranking error, entry/exit individual ranking errors, satisfaction/fairness/felt-heard (legacy keys), share SD/Gini, nudges per session, plus the total number of nudges and the **sums** of windows evaluated and nudged. Accepts `conditionIds` and `roundIds`. Monitoring only — the CSVs are the citable record.
+
+## Etherpad mode
+
+See [Etherpad study mode](etherpad.md) for raw text exports, limits and capture semantics. Admin downloads include `etherpad.csv` when pad records are present; standalone JSON and CSV endpoints are available. Ranking-dependent scores are empty for these sessions, and Matrix chat exports remain unchanged.
