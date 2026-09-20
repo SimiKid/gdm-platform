@@ -9,11 +9,21 @@ test("@validation participant forms explain and block incomplete answers", async
   await page.goto(`/?conditionId=${uniqueId("validation")}`);
   await page.getByRole("button", { name: "Start" }).click();
 
+  await test.step("the intro must be acknowledged before the consent form appears", async () => {
+    const toConsent = page.getByRole("button", { name: "Continue to the consent form" });
+    await expect(page.getByRole("heading", { name: "Welcome to the Study" })).toBeVisible();
+    await expect(toConsent).toBeHidden();
+    await page.getByRole("checkbox").check();
+    await expect(toConsent).toBeVisible();
+    await toConsent.click();
+  });
+
   await test.step("consent stays blocked until every declaration is checked", async () => {
+    await expect(page.getByRole("heading", { name: "Consent Form" })).toBeVisible();
     const begin = page.getByRole("button", { name: "Begin study" });
     const boxes = page.getByRole("checkbox");
+    await expect(boxes).toHaveCount(3);
     await expect(begin).toBeDisabled();
-    await expect(page.getByText("Please tick all three boxes above to begin.")).toBeVisible();
     await boxes.nth(0).check();
     await boxes.nth(1).check();
     await expect(begin).toBeDisabled();
@@ -43,7 +53,10 @@ test("@validation participant forms explain and block incomplete answers", async
     ).toBeVisible();
 
     await age.fill("18");
-    await page.getByRole("radio", { name: "Prefer not to say" }).check();
+    await page
+      .getByRole("group", { name: "What is your gender?" })
+      .getByRole("radio", { name: "Prefer not to say" })
+      .check();
     await page.getByRole("radio", { name: "Bachelor's degree" }).check();
     await expect(continueButton).toBeDisabled();
     await page.getByRole("radio", { name: "Fluent (advanced)" }).check();

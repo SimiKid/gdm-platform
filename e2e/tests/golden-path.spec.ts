@@ -116,7 +116,7 @@ async function walkToWaitingRoom(page: Page, seat: number): Promise<void> {
 
   // About you.
   await page.locator("#about-age").fill(String(24 + seat));
-  await page.getByRole("radio", { name: "Man" }).check();
+  await page.getByRole("radio", { name: "Man", exact: true }).check();
   await page.getByRole("radio", { name: "Bachelor's degree" }).check();
   await page.getByRole("radio", { name: "Fluent (advanced)" }).check();
   await page.getByRole("button", { name: "Continue" }).click();
@@ -226,7 +226,7 @@ test("@golden three participants run a full study session end to end", async ({
     }
 
     await Promise.all(
-      pages.map(async (page) => {
+      pages.map(async (page, seat) => {
         // Step 1: final ranking
         await rankAllItems(page);
         await page.getByRole("button", { name: "Submit my final ranking" }).click();
@@ -248,10 +248,27 @@ test("@golden three participants run a full study session end to end", async ({
         }
         await page.getByRole("button", { name: "Submit" }).click();
 
+        // Debriefing: must be acknowledged before the study can be finished.
+        // Direct participants finish in place; the (optional) Prolific seat
+        // gets the completion link instead.
         await expect(
           page.getByRole("heading", { name: "Debrief" }),
         ).toBeVisible();
-        await expect(page.getByRole("link", { name: "Return to Prolific" })).toBeVisible();
+        const prolificSeat = seat === 0 && Boolean(TEST_PROLIFIC);
+        if (prolificSeat) {
+          await expect(page.getByRole("link", { name: "Return to Prolific" })).toBeHidden();
+          await page.getByRole("checkbox").check();
+          await expect(page.getByRole("link", { name: "Return to Prolific" })).toBeVisible();
+        } else {
+          const finish = page.getByRole("button", { name: "Finish study" });
+          await expect(finish).toBeDisabled();
+          await page.getByRole("checkbox").check();
+          await expect(finish).toBeEnabled();
+          await finish.click();
+          await expect(
+            page.getByText("Your participation is complete. You may close this tab."),
+          ).toBeVisible();
+        }
       }),
     );
   });
