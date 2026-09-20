@@ -211,7 +211,8 @@ test("@exports every researcher export is downloadable, authenticated and exclud
         await expect(
           page.getByRole("heading", { name: "Study Admin" }),
         ).toBeVisible();
-        // The full dump lives behind the collapsed "Advanced" disclosure.
+        // The full dump lives behind the collapsed "Advanced" disclosure and
+        // is saved under the server's Content-Disposition name.
         const advanced = page.locator("details.export-advanced");
         await advanced.getByText("Advanced", { exact: true }).click();
         const jsonLink = advanced.getByRole("link", { name: "JSON", exact: true });
@@ -220,7 +221,7 @@ test("@exports every researcher export is downloadable, authenticated and exclud
           page.waitForEvent("download"),
           jsonLink.click(),
         ]);
-        expect(download.suggestedFilename()).toBe("full_data.json");
+        expect(download.suggestedFilename()).toBe("detailed_data.json");
         const path = await download.path();
         expect(path).not.toBeNull();
         const downloaded = JSON.parse(await readFile(path!, "utf8")) as {

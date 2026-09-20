@@ -10,7 +10,7 @@ Where the downloads live in the dashboard:
 
 Every research and raw export accepts `?conditionIds=a,b,c` to restrict the export to specific study arms (e.g. `baseline,public-llm,private-llm`) and `?roundIds=1,2` to restrict to specific study rounds; both compose. Sessions from automated `e2e-…` test conditions are always excluded. Note the failure modes of `roundIds`: non-numeric or non-positive values are silently ignored (so `?roundIds=abc` returns **all** rounds, not none), while a valid but non-existent round number returns an empty dataset with HTTP 200. The two exceptions are `GET /api/export/prolific-arrivals` and `GET /api/export/prolific-outcomes`, which take no filters and are not e2e-filtered (they are not session-based).
 
-Download filenames: the server sets a `Content-Disposition` filename (given below per endpoint). The dashboard's download links fetch the file with the token and save it under their own name, which differs in two cases: the Full data dump is saved as `full_data.json` (server name `detailed_data.json`), and the individual research datasets are saved as `<key>.csv` / `<key>.json`, so the sessions file becomes `sessions-analysis.csv` (server name `sessions_analysis.csv`).
+Download filenames: the server sets a `Content-Disposition` filename (given below per endpoint). The dashboard's download links fetch the file with the token and save it under the same name, so a file downloaded through the dashboard and one fetched from the API directly are named identically.
 
 ---
 
@@ -53,7 +53,7 @@ The Overview tab's primary download. A zip with two **non-pseudonymized** wide-f
 
 Because `results.csv` contains the Prolific id, keep this zip with the identifying data, not in the analysis folder.
 
-### Full Data (JSON): `detailed_data.json` (saved by the dashboard as `full_data.json`)
+### Full Data (JSON): `detailed_data.json`
 
 **Endpoint:** `GET /api/export/sessions`
 

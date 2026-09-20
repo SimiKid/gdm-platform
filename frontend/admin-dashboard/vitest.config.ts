@@ -15,14 +15,8 @@ export default defineConfig({
         "src/**/*.spec.{ts,tsx}",
         "src/main.tsx",
         "src/test-setup.ts",
+        "src/test-utils.ts",
         "src/vite-env.d.ts",
-        // Owned by the Playwright e2e suite: App wires the whole study flow
-        // together and WaitingRoom boots a real Matrix client against
-        // Synapse; DinoGame is a canvas/requestAnimationFrame loop with no
-        // study logic. None of them can be exercised meaningfully in jsdom.
-        "src/App.tsx",
-        "src/components/WaitingRoom.tsx",
-        "src/components/DinoGame.tsx",
       ],
       reporter: ["text", "text-summary"],
       thresholds: {

@@ -183,7 +183,7 @@ function ExportCard() {
             <tr>
               <td>Full data dump</td>
               <td>
-                <AuthenticatedDownloadLink className="link-button" path="/export/sessions" filename="full_data.json">
+                <AuthenticatedDownloadLink className="link-button" path="/export/sessions" filename="detailed_data.json">
                   JSON
                 </AuthenticatedDownloadLink>
               </td>

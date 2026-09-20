@@ -138,3 +138,85 @@ describe("httpSessionManager", () => {
     );
   });
 });
+
+describe("httpSessionManager – Prolific lifecycle and error paths", () => {
+  const prolific = {
+    participantId: "aaaaaaaaaaaaaaaaaaaaaaaa",
+    studyId: "bbbbbbbbbbbbbbbbbbbbbbbb",
+    sessionId: "cccccccccccccccccccccccc",
+  };
+
+  it("records participation progress", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true })));
+    await httpSessionManager.recordParticipationProgress(prolific, "waiting");
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/prolific/progress"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ prolific, stage: "waiting" }),
+      }),
+    );
+  });
+
+  it("terminates participation and returns the outcome", async () => {
+    const outcome = { outcome: "declined_consent", compensationKind: "none", redirectUrl: "", message: "" };
+    vi.stubGlobal("fetch", okJson(outcome));
+    await expect(
+      httpSessionManager.terminateParticipation(prolific, "declined_consent", "no consent"),
+    ).resolves.toEqual(outcome);
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/prolific/terminate"),
+      expect.objectContaining({
+        body: JSON.stringify({ prolific, outcome: "declined_consent", reason: "no consent" }),
+      }),
+    );
+  });
+
+  it("reads the participation outcome, treating an empty body as none", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, text: async () => "  " })));
+    await expect(httpSessionManager.getParticipationOutcome(prolific)).resolves.toBeNull();
+
+    const outcome = { outcome: "unmatched", compensationKind: "partial" };
+    vi.stubGlobal("fetch", okJson(outcome));
+    await expect(httpSessionManager.getParticipationOutcome(prolific)).resolves.toEqual(outcome);
+  });
+
+  it("submits debrief feedback with the participant token", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true })));
+    await httpSessionManager.submitDebriefFeedback("s", "p", "great study");
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/surveys/debrief-feedback"),
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ Authorization: "Bearer participant-token" }),
+        body: JSON.stringify({ sessionId: "s", participantId: "p", feedback: "great study" }),
+      }),
+    );
+  });
+
+  it("omits the Authorization header when no participant token is stored", async () => {
+    sessionStorage.clear();
+    vi.stubGlobal("fetch", okJson({ id: "s" }));
+    await httpSessionManager.getSession("s");
+    const [, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(init.headers).not.toHaveProperty("Authorization");
+  });
+
+  it.each([
+    ["recordProlificArrival", () => httpSessionManager.recordProlificArrival(prolific)],
+    ["resumeProlific", () => httpSessionManager.resumeProlific(prolific)],
+    ["recordParticipationProgress", () => httpSessionManager.recordParticipationProgress(prolific, "consent")],
+    ["terminateParticipation", () => httpSessionManager.terminateParticipation(prolific, "ineligible")],
+    ["getParticipationOutcome", () => httpSessionManager.getParticipationOutcome(prolific)],
+    ["getSession", () => httpSessionManager.getSession("s")],
+    ["submitSurvey", () => httpSessionManager.submitSurvey({ sessionId: "s", participantId: "p", kind: "exit", survey: { answers: {}, submittedAt: "" } })],
+    ["submitDebriefFeedback", () => httpSessionManager.submitDebriefFeedback("s", "p", "x")],
+    ["completeParticipant", () => httpSessionManager.completeParticipant("s", "p")],
+  ])("%s rejects with the HTTP status on a non-ok response", async (name, call) => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 503 })));
+    await expect(call()).rejects.toThrow(new RegExp(`${name} failed: 503`));
+  });
+});
