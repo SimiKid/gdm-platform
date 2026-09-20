@@ -3,21 +3,12 @@ import type {
   ConditionProgress,
   RoundsResponse,
   Session,
-  SessionStatus,
   SessionSummary,
 } from "@gdm/shared";
 import { PARTICIPANT_BASE, apiFetch, isTestCondition } from "../api";
+import { STATUS_LABEL } from "../labels";
 import AuthenticatedDownloadLink from "./AuthenticatedDownloadLink";
-
-/** Researcher-facing wording for backend session states (wireframe: lobby/active). */
-const STATUS_LABEL: Record<SessionStatus, string> = {
-  waiting: "lobby",
-  provisioning: "starting",
-  running: "active",
-  completed: "completed",
-  aborted: "aborted",
-};
-
+import SessionDetail from "./SessionDetail";
 
 
 interface Props {
@@ -332,51 +323,6 @@ function SessionRows({
           ))}
         </tbody>
       </table>
-    </div>
-  );
-}
-
-/** Compact, readable session inspector (replaces the old raw JSON dump). */
-function SessionDetail({ session }: { session: Session }) {
-  return (
-    <div className="session-detail">
-      <div className="detail">
-        <Fact label="Condition" value={session.condition.name} />
-        <Fact label="Bot mode" value={session.condition.config.interventionMode} />
-        <Fact
-          label="Participants"
-          value={
-            // No names are collected by design — fall back to the token.
-            session.participants
-              .map((p) => p.name || p.trackingToken.slice(0, 8))
-              .join(", ") || "none"
-          }
-        />
-        <Fact label="Messages" value={String(session.chat.messages.length)} />
-        <Fact label="Nudges" value={String(session.interventions.length)} />
-        <Fact
-          label="Behavior events"
-          value={String(session.behavioralEvents.length)}
-        />
-        <Fact
-          label="Semantic classifications"
-          value={String(session.contributionClassifications.length)}
-        />
-        <Fact
-          label="Ranking edits"
-          value={String(session.rankingHistory?.length ?? 0)}
-        />
-        <Fact label="Room" value={session.roomId ?? "not provisioned"} />
-      </div>
-    </div>
-  );
-}
-
-function Fact({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <span className="label">{label}</span>
-      <strong>{value}</strong>
     </div>
   );
 }

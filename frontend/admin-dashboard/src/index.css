@@ -742,3 +742,143 @@ tbody tr:last-child td {
 .workspace-busy { position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 12px; padding: 18px; background: #eef5ff; border: 1px solid #8dafde; border-radius: 8px; }
 .workspace-spinner { width: 20px; height: 20px; border: 3px solid #ccd9eb; border-top-color: #2155a3; border-radius: 50%; animation: workspace-spin 1s linear infinite; }
 @keyframes workspace-spin { to { transform: rotate(360deg); } }
+
+/* ── Session inspector ─────────────────────────────── */
+
+.session-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin-bottom: 10px;
+  font-size: 0.88rem;
+}
+
+.session-head strong {
+  font-size: 1rem;
+}
+
+.legend {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  font-size: 0.85rem;
+}
+
+.legend li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.swatch {
+  display: inline-block;
+  width: 16px;
+  height: 3px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.swatch.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.subhead {
+  margin: 18px 0 6px;
+  font-size: 0.95rem;
+}
+
+.timeline {
+  position: relative;
+  overflow-x: auto;
+}
+
+.timeline svg {
+  display: block;
+  width: 100%;
+  min-width: 640px;
+  height: auto;
+  font-family: inherit;
+}
+
+.timeline svg:focus-visible {
+  outline: 2px solid #1c7ed6;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.timeline-tip {
+  position: absolute;
+  top: 4px;
+  z-index: 1;
+  padding: 8px 10px;
+  border: 1px solid #d9e0ea;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 4px 12px rgba(23, 32, 51, 0.08);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.timeline-tip .row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+.timeline-tip strong {
+  font-variant-numeric: tabular-nums;
+  min-width: 3ch;
+  text-align: right;
+}
+
+.nudge-block {
+  border: 1px solid #edf1f6;
+  border-radius: 8px;
+  padding: 10px;
+  margin-top: 10px;
+}
+
+.nudge-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  font-size: 0.88rem;
+}
+
+.nudge-text {
+  margin: 6px 0 8px;
+  font-style: italic;
+}
+
+.nudge-block td,
+.window-table td {
+  font-variant-numeric: tabular-nums;
+}
+
+.delta {
+  font-weight: 650;
+}
+
+.delta.good {
+  color: #166534;
+}
+
+.delta.bad {
+  color: #991b1b;
+}
+
+.window-table summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #45566e;
+  margin-top: 8px;
+}
