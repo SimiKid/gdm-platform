@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
+import { readFileSync } from "node:fs";
 import type { InterventionLog, Message, Ranking } from "@gdm/shared";
 import { SessionsService } from "../../src/sessions/sessions.service";
 import { PrismaService } from "../../src/prisma/prisma.service";
@@ -101,7 +102,7 @@ describe("persistence & exports (integration)", () => {
       trigger: "contribution-threshold",
       threshold: 0.4,
       llmMode: "off",
-      contributionWindowMinutes: 4,
+      contributionWindowMinutes: 0.1666666666666667,
       contributionSplit: [
         {
           userId: userIds[0],
@@ -124,6 +125,30 @@ describe("persistence & exports (integration)", () => {
       .send({ messages, rankingHistory, interventions: [intervention] })
       .expect(201);
     expect(finalized.body.status).toBe("completed");
+    const storedIntervention = await t.app.get(PrismaService).interventionRecord.findUniqueOrThrow({
+      where: { id: intervention.id },
+    });
+    expect(storedIntervention.contributionWindowMinutes).toBeCloseTo(1 / 6, 12);
+
+    // Reproduce a historical integer-column truncation and exercise the actual
+    // migration's repair against Postgres, not just the in-memory JSON payload.
+    const prisma = t.app.get(PrismaService);
+    await prisma.interventionRecord.update({
+      where: { id: intervention.id },
+      data: { contributionWindowMinutes: 0 },
+    });
+    const migration = readFileSync(
+      "prisma/migrations/20260920000000_fractional_intervention_windows/migration.sql",
+      "utf8",
+    );
+    for (const statement of migration.split(";").filter((sql) => sql.trim())) {
+      await prisma.$executeRawUnsafe(statement);
+    }
+    const repaired = await prisma.interventionRecord.findUniqueOrThrow({
+      where: { id: intervention.id },
+    });
+    expect(repaired.contributionWindowMinutes).toBeCloseTo(1 / 6, 12);
+    expect(repaired.payload).toEqual(storedIntervention.payload);
 
     // Restart: a fresh app instance can only answer from Postgres.
     await t.close();

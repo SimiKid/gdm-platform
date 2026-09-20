@@ -226,7 +226,7 @@ model InterventionRecord {
   timestamp                 DateTime
   trigger                   String
   threshold                 Float
-  contributionWindowMinutes Int           @map("contribution_window_minutes")
+  contributionWindowMinutes Float         @map("contribution_window_minutes")
   message                   String
   payload                   Json
   session                   SessionRecord @relation(fields: [sessionId], references: [id], onDelete: Cascade)

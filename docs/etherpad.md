@@ -18,6 +18,9 @@ With Etherpad on:
 - Group discussion: a separate, shared blank pad for that session, available for
   the existing discussion duration. Matrix remains the discussion channel.
 - Exit task: a new, private, blank pad with a server-timed two-minute deadline.
+- Shared-pad text uses each participant's chat identity colour; private entry
+  and exit text is black. Author backgrounds are transparent in every pad.
+  The shared workspace shows a short instruction and a collapsed task/item list.
 - Entry and exit questionnaires retain their five-minute limits and partial
   submission on expiry. Refreshing a writing task reuses its pad and deadline.
 - Ranking error scores are null/blank and ranking-order exports omit these
