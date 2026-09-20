@@ -675,58 +675,93 @@ tbody tr:last-child td {
 
 /* ── Shared participant workspace ─────────────────── */
 
-.workspace-options {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.workspace-options > label {
+.workspace-row {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  border: 1px solid #d9e0ea;
-  border-radius: 8px;
+  align-items: center;
+  gap: 14px;
+  margin-top: 14px;
   padding: 12px 14px;
-  cursor: pointer;
+  border: 1px solid #edf1f6;
+  border-radius: 8px;
 }
 
-.workspace-options > label.selected {
-  border-color: #3366cc;
-  background: #eef4ff;
+.workspace-row .switch {
+  flex: none;
 }
 
-.workspace-options input {
-  margin-top: 3px;
-}
-
-.workspace-options span {
+.workspace-copy {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
-.workspace-options small {
-  color: #5f6f86;
-  line-height: 1.4;
+.workspace-copy strong {
+  font-size: 0.92rem;
+}
+
+.workspace-state {
+  flex: none;
+  white-space: nowrap;
+}
+
+.workspace-state.off {
+  background: #eef2f7;
+  color: #45566e;
+}
+
+.workspace-state.busy {
+  background: #dbeafe;
+  color: #1c4f9c;
+}
+
+.workspace-state.ok {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.workspace-state.warn {
+  background: #fff4d6;
+  color: #8a5a00;
+}
+
+.workspace-state.bad {
+  background: #fee2e2;
+  color: #991b1b;
 }
 
 .workspace-warning {
-  border: 1px solid #b45309;
+  border: 1px solid #f1d28a;
   border-radius: 8px;
   background: #fff4d6;
   color: #8a5a00;
   font-size: 0.84rem;
   padding: 10px 14px;
-  margin-top: 14px;
+  margin: 12px 0 0;
+}
+
+.workspace-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0 0;
+}
+
+.switch input:disabled {
+  cursor: default;
+}
+
+.switch input:disabled + .knob {
+  opacity: 0.5;
 }
 
 @media (max-width: 700px) {
-  .workspace-options {
-    grid-template-columns: 1fr;
+  .workspace-row {
+    flex-wrap: wrap;
   }
 }
-
 
 .dashboard-controls { border: 0; padding: 0; margin: 0; min-width: 0; }
 .dashboard-controls:disabled { opacity: .6; pointer-events: none; }
