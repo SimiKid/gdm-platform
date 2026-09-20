@@ -13,16 +13,17 @@ const LIVE_ENABLED = process.env.E2E_LIVE_ANTHROPIC === "1";
 const EXPECTED_MODEL =
   process.env.E2E_EXPECTED_ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
 
-// Each message exercises different meaningfulness indicators:
-// [0] opens with a task item + stance, [1] replies and invites participation,
-// [2] is calibration noise that should score zero.
+// Each message exercises different graded dimensions:
+// [0] opens with a task item + stance (high relevance, nothing to cohere with),
+// [1] replies and invites participation (high coherence),
+// [2] is calibration noise that should score near zero.
 const MESSAGES = [
   "We should rank the oxygen tanks first because a crew cannot survive without breathable oxygen.",
   "I agree with you that the oxygen tanks belong at the top. What would you put second?",
   "Calibration phrase: purple rectangle, violin, tram 741.",
 ] as const;
 
-test("@llm-live the deployed Anthropic classifier records meaningfulness indicators without nudging", async ({
+test("@llm-live the deployed Anthropic classifier records graded meaningfulness ratings without nudging", async ({
   browser,
   request,
 }) => {
@@ -89,21 +90,21 @@ test("@llm-live the deployed Anthropic classifier records meaningfulness indicat
 
     const opener = byText(MESSAGES[0]);
     expect(opener.senderId).toBe(group.members[0].matrix.userId);
-    expect(opener.respondsToPrior.value).toBe(false);
-    expect(opener.referencesTaskItem.value).toBe(true);
+    expect(opener.relevance.rating).toBeGreaterThanOrEqual(4);
     expect(opener.invitesParticipation.value).toBe(false);
 
     const reply = byText(MESSAGES[1]);
-    expect(reply.respondsToPrior.value).toBe(true);
+    expect(reply.coherence.rating).toBeGreaterThanOrEqual(4);
     expect(reply.invitesParticipation.value).toBe(true);
 
     const noise = byText(MESSAGES[2]);
-    expect(noise.meaningfulnessScore).toBe(0);
+    expect(noise.relevance.rating).toBeLessThanOrEqual(2);
+    expect(noise.meaningfulnessScore).toBeLessThanOrEqual(0.25);
 
     for (const classification of detail.contributionClassifications) {
       expect(classification).toMatchObject({
         model: EXPECTED_MODEL,
-        promptVersion: "meaningfulness-v1",
+        promptVersion: "meaningfulness-v2",
       });
       for (const member of group.members) {
         expect(classification.prompt).not.toContain(member.matrix.userId);
@@ -113,21 +114,22 @@ test("@llm-live the deployed Anthropic classifier records meaningfulness indicat
       expect(classification.prompt).toContain("GROUP MEMBERS:");
       expect(classification.prompt).toMatch(/Sender: (?:Red|Blue)/);
 
+      const ratingShape = { rating: expect.any(Number), reason: expect.any(String) };
       const indicatorShape = { value: expect.any(Boolean), reason: expect.any(String) };
       const raw = JSON.parse(classification.rawOutput) as Record<string, unknown>;
       expect(raw).toEqual({
-        responds_to_prior: indicatorShape,
-        references_task_item: indicatorShape,
-        has_discussion_structure: indicatorShape,
+        relevance: ratingShape,
+        coherence: ratingShape,
         invites_participation: indicatorShape,
       });
 
-      const trueCount = [
-        classification.respondsToPrior,
-        classification.referencesTaskItem,
-        classification.hasDiscussionStructure,
-      ].filter((indicator) => indicator.value).length;
-      expect(classification.meaningfulnessScore).toBeCloseTo(trueCount / 3);
+      for (const dimension of [classification.relevance, classification.coherence]) {
+        expect(Number.isInteger(dimension.rating)).toBe(true);
+        expect(dimension.rating).toBeGreaterThanOrEqual(1);
+        expect(dimension.rating).toBeLessThanOrEqual(5);
+      }
+      const mean = (classification.relevance.rating + classification.coherence.rating) / 2;
+      expect(classification.meaningfulnessScore).toBeCloseTo((mean - 1) / 4);
     }
 
     expect(detail.interventions).toEqual([]);

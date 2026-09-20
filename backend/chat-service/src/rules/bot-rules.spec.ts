@@ -90,11 +90,11 @@ function fakeClassification(
     messageId: message.id,
     senderId: message.senderId,
     classifiedAt: new Date().toISOString(),
-    respondsToPrior: { value: true, reason: "builds on a prior message" },
-    referencesTaskItem: { value: true, reason: "names a task item" },
-    hasDiscussionStructure: { value: false, reason: "no explicit stance" },
+    relevance: { rating: 4, reason: "names a task item and takes a stance" },
+    coherence: { rating: 3, reason: "builds loosely on a prior message" },
     invitesParticipation: { value: invites, reason: invites ? "asks the group" : "no invitation" },
-    meaningfulnessScore: overrides.meaningfulnessScore ?? 2 / 3,
+    // (mean(4, 3) - 1) / 4 = 0.625 unless a test pins its own score.
+    meaningfulnessScore: overrides.meaningfulnessScore ?? 0.625,
     model: "test-model",
     promptVersion: "test-v1",
     prompt: context.priorMessages.map((item) => item.id).join(","),
@@ -418,7 +418,9 @@ describe("ContributionBotRules", () => {
       expect(rt.contributionClassifications[0]).toMatchObject({
         messageId: "idea",
         senderId: MEMBERS[0],
-        meaningfulnessScore: 2 / 3,
+        relevance: { rating: 4 },
+        coherence: { rating: 3 },
+        meaningfulnessScore: 0.625,
       });
       const [, context] = classify.mock.calls[0];
       expect(context.participantIds).toEqual(MEMBERS);

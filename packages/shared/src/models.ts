@@ -225,26 +225,39 @@ export interface ClassifierIndicator {
   reason: string;
 }
 
+/** One integer rating on a 1–5 scale plus the model's one-sentence justification. */
+export interface ClassifierRating {
+  rating: number;
+  reason: string;
+}
+
 /**
  * Auditable result of one meaningfulness classification request.
  *
- * The first three indicators average into `meaningfulnessScore` (0..1).
- * `invitesParticipation` is tracked separately — it feeds the dominant
- * contributor's self-correction grace period, never the score.
+ * Two graded dimensions (rated in this order) combine into
+ * `meaningfulnessScore = (mean(relevance, coherence) - 1) / 4`, continuous
+ * in 0..1. `invitesParticipation` is tracked separately — it feeds the
+ * dominant contributor's self-correction grace period, never the score.
  */
 export interface ContributionClassification {
   messageId: string;
   senderId: string;
   classifiedAt: string;
-  /** Reacts to, builds on, or directly refers to a prior message/member. */
-  respondsToPrior: ClassifierIndicator;
-  /** Explicitly names one or more ranking-task items. */
-  referencesTaskItem: ClassifierIndicator;
-  /** Explicit stance, proposal, or structured discourse move. */
-  hasDiscussionStructure: ClassifierIndicator;
+  /**
+   * How much of the message contributes content relevant to the ranking task
+   * (naming items, stating stances, making proposals).
+   * 5 = fully task-focused, 1 = entirely off-topic.
+   */
+  relevance: ClassifierRating;
+  /**
+   * How well the message connects to and builds on the ongoing discussion.
+   * 5 = clearly addresses or extends prior messages or members,
+   * 1 = stands alone with no connection.
+   */
+  coherence: ClassifierRating;
   /** Explicitly invites another (named or unnamed) member to contribute. */
   invitesParticipation: ClassifierIndicator;
-  /** Mean of the three meaningfulness indicators, 0..1. */
+  /** `(mean(relevance, coherence) - 1) / 4`, continuous in 0..1. */
   meaningfulnessScore: number;
   model: string;
   promptVersion: string;

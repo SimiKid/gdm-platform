@@ -3,6 +3,7 @@ import { buildIdentities, identityFor } from "@gdm/shared";
 import type {
   ClassificationFailure,
   ClassifierIndicator,
+  ClassifierRating,
   ContributionClassification,
   Message,
 } from "@gdm/shared";
@@ -11,23 +12,40 @@ import type {
   ContributionClassifier,
 } from "./contribution-classifier";
 
-const PROMPT_VERSION = "meaningfulness-v1";
+const PROMPT_VERSION = "meaningfulness-v2";
 const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 const REQUEST_TIMEOUT_MS = 10_000;
 /** Preceding messages included for reference resolution (study protocol). */
 const CONTEXT_MESSAGES = 3;
+const MIN_RATING = 1;
+const MAX_RATING = 5;
 
 interface IndicatorOutput {
   value: boolean;
   reason: string;
 }
 
+interface RatingOutput {
+  rating: number;
+  reason: string;
+}
+
+/** Property order is intentional: relevance is rated before coherence. */
 interface ClassificationOutput {
-  responds_to_prior: IndicatorOutput;
-  references_task_item: IndicatorOutput;
-  has_discussion_structure: IndicatorOutput;
+  relevance: RatingOutput;
+  coherence: RatingOutput;
   invites_participation: IndicatorOutput;
 }
+
+const RATING_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    rating: { type: "integer" },
+    reason: { type: "string" },
+  },
+  required: ["rating", "reason"],
+} as const;
 
 const INDICATOR_SCHEMA = {
   type: "object",
@@ -83,9 +101,10 @@ export class AnthropicContributionClassifier implements ContributionClassifier {
           max_tokens: 500,
           temperature: 0,
           system:
-            "You classify structural features of group-decision chat messages. " +
-            "Judge only what is explicitly present in the text — never quality, " +
-            "correctness, or writing style. Do not infer identities beyond the " +
+            "You rate group-decision chat messages on two graded dimensions " +
+            "(relevance, then coherence) and flag whether they invite " +
+            "participation. Judge only what is present in the text — never " +
+            "correctness or writing style. Do not infer identities beyond the " +
             "labels given. Return only the requested JSON.",
           messages: [{ role: "user", content: prompt }],
           output_config: {
@@ -95,17 +114,11 @@ export class AnthropicContributionClassifier implements ContributionClassifier {
                 type: "object",
                 additionalProperties: false,
                 properties: {
-                  responds_to_prior: INDICATOR_SCHEMA,
-                  references_task_item: INDICATOR_SCHEMA,
-                  has_discussion_structure: INDICATOR_SCHEMA,
+                  relevance: RATING_SCHEMA,
+                  coherence: RATING_SCHEMA,
                   invites_participation: INDICATOR_SCHEMA,
                 },
-                required: [
-                  "responds_to_prior",
-                  "references_task_item",
-                  "has_discussion_structure",
-                  "invites_participation",
-                ],
+                required: ["relevance", "coherence", "invites_participation"],
               },
             },
           },
@@ -117,23 +130,17 @@ export class AnthropicContributionClassifier implements ContributionClassifier {
       };
       const rawOutput = response.content?.find((block) => block.type === "text")?.text;
       if (!rawOutput) throw new Error("Anthropic response contained no text block");
-      const output = JSON.parse(rawOutput) as ClassificationOutput;
-      const respondsToPrior = toIndicator(output.responds_to_prior);
-      const referencesTaskItem = toIndicator(output.references_task_item);
-      const hasDiscussionStructure = toIndicator(output.has_discussion_structure);
+      const output = JSON.parse(rawOutput) as Partial<ClassificationOutput>;
+      const relevance = toRating(output.relevance, "relevance");
+      const coherence = toRating(output.coherence, "coherence");
       return {
         messageId: message.id,
         senderId: message.senderId,
         classifiedAt: new Date().toISOString(),
-        respondsToPrior,
-        referencesTaskItem,
-        hasDiscussionStructure,
+        relevance,
+        coherence,
         invitesParticipation: toIndicator(output.invites_participation),
-        meaningfulnessScore: meanOf(
-          respondsToPrior,
-          referencesTaskItem,
-          hasDiscussionStructure,
-        ),
+        meaningfulnessScore: scoreOf(relevance, coherence),
         model,
         promptVersion: PROMPT_VERSION,
         prompt,
@@ -165,24 +172,22 @@ function buildPrompt(message: Message, context: ClassifierContext): string {
 
   return [
     `You are analyzing a single message from a group discussion where ${memberCount} ` +
-      "people are jointly ranking a list of items. Classify structural features " +
-      "of THIS message only — do not judge quality, correctness, or writing style.",
+      "people are jointly ranking a list of items. Rate THIS message only — do not " +
+      "judge correctness or writing style.",
     "",
-    "Answer each with true/false and a one-sentence justification. Do not infer",
-    "intent beyond what is explicitly present in the text.",
+    "Give each rating as an integer from 1 to 5 with a one-sentence justification.",
+    "Answer invites_participation with true/false and a one-sentence justification.",
+    "Do not infer intent beyond what is present in the text.",
     "",
-    "1. responds_to_prior: Does the message clearly address, react to, build on,",
-    "   or directly refer to a specific prior message or group member (agreement,",
-    "   disagreement, clarification, extension, or direct mention)?",
+    "1. relevance (1-5): How much of the message contributes content relevant to",
+    "   the ranking task (naming items, stating stances, making proposals)?",
+    "   5 = fully task-focused, 1 = entirely off-topic.",
     "",
-    "2. references_task_item: Does the message explicitly mention one or more",
-    "   items from the ranking task list, by name?",
+    "2. coherence (1-5): How well does the message connect to and build on the",
+    "   ongoing discussion? 5 = clearly addresses or extends prior messages or",
+    "   members, 1 = stands alone with no connection.",
     "",
-    "3. has_discussion_structure: Does the message contain an explicit stance,",
-    '   proposal, or structured discourse move (e.g., "I disagree because...",',
-    '   "let\'s put X at position Y", a counterproposal)?',
-    "",
-    "4. invites_participation: Does the message explicitly invite another named",
+    "3. invites_participation: Does the message explicitly invite another named",
     "   or unnamed group member to contribute (a direct question to them, or an",
     '   open prompt like "anyone else?")?',
     "",
@@ -201,6 +206,24 @@ function buildPrompt(message: Message, context: ClassifierContext): string {
   ].join("\n");
 }
 
+/**
+ * Validates one graded dimension. Anything that is not an integer within
+ * 1..5 throws, so the whole message lands in the failure path exactly like
+ * malformed JSON — a half-usable rating must never become a silent score.
+ */
+function toRating(output: RatingOutput | undefined, dimension: string): ClassifierRating {
+  const rating = output?.rating;
+  if (
+    typeof rating !== "number" ||
+    !Number.isInteger(rating) ||
+    rating < MIN_RATING ||
+    rating > MAX_RATING
+  ) {
+    throw new Error(`invalid rating for ${dimension}: ${JSON.stringify(rating)}`);
+  }
+  return { rating, reason: String(output?.reason ?? "") };
+}
+
 function toIndicator(output: IndicatorOutput | undefined): ClassifierIndicator {
   return {
     value: output?.value === true,
@@ -208,7 +231,8 @@ function toIndicator(output: IndicatorOutput | undefined): ClassifierIndicator {
   };
 }
 
-function meanOf(...indicators: ClassifierIndicator[]): number {
-  const trueCount = indicators.filter((item) => item.value).length;
-  return trueCount / indicators.length;
+/** `(mean(relevance, coherence) - 1) / 4`, continuous in 0..1. */
+function scoreOf(relevance: ClassifierRating, coherence: ClassifierRating): number {
+  const mean = (relevance.rating + coherence.rating) / 2;
+  return (mean - MIN_RATING) / (MAX_RATING - MIN_RATING);
 }

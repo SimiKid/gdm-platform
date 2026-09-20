@@ -168,8 +168,9 @@ pnpm --dir e2e test:e2e:recovery
 
 The restart profile refuses non-local API URLs and refuses to run while a
 non-E2E session is waiting or running. The live profile is intentionally one
-test; it verifies the four meaningfulness indicators and pseudonymized
-prompts on a baseline condition, where no nudge may ever render.
+test; it verifies the two graded meaningfulness ratings (relevance and
+coherence, 1–5), the separate invitation flag and pseudonymized prompts on a
+baseline condition, where no nudge may ever render.
 
 First-time setup: `pnpm --filter @gdm/e2e exec playwright install chromium`.
 

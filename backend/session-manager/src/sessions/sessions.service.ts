@@ -17,6 +17,7 @@ import {
 } from "@gdm/shared";
 import type {
   CheckpointSessionRequest,
+  ClassifierRating,
   CompleteParticipantResponse,
   Condition,
   ContributionAggregate,
@@ -959,9 +960,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         "reaction_count",
         "ranking_move_count",
         "typing_duration_ms",
-        "responds_to_prior_count",
-        "references_task_item_count",
-        "has_discussion_structure_count",
+        "relevance_mean",
+        "coherence_mean",
         "invites_participation_count",
         "meaningfulness_score_mean",
       ],
@@ -975,9 +975,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         String(c.reactionCount),
         String(c.rankingMoveCount),
         String(c.typingDurationMs),
-        String(c.respondsToPriorCount),
-        String(c.referencesTaskItemCount),
-        String(c.hasDiscussionStructureCount),
+        c.relevanceMean === null ? "" : String(c.relevanceMean),
+        c.coherenceMean === null ? "" : String(c.coherenceMean),
         String(c.invitesParticipationCount),
         String(c.meaningfulnessScoreMean),
       ]),
@@ -1725,15 +1724,8 @@ function contributionAggregates(session: Session): ContributionAggregate[] {
           (event) => event.participantId === participantId && event.type === "typing-stop",
         )
         .reduce((sum, event) => sum + (event.durationMs ?? 0), 0),
-      respondsToPriorCount: classifications.filter(
-        (item) => item.respondsToPrior.value,
-      ).length,
-      referencesTaskItemCount: classifications.filter(
-        (item) => item.referencesTaskItem.value,
-      ).length,
-      hasDiscussionStructureCount: classifications.filter(
-        (item) => item.hasDiscussionStructure.value,
-      ).length,
+      relevanceMean: meanRating(classifications.map((item) => item.relevance)),
+      coherenceMean: meanRating(classifications.map((item) => item.coherence)),
       invitesParticipationCount: classifications.filter(
         (item) => item.invitesParticipation.value,
       ).length,
@@ -1744,6 +1736,19 @@ function contributionAggregates(session: Session): ContributionAggregate[] {
           : 0,
     };
   });
+}
+
+/**
+ * Mean of the 1..5 ratings that are actually present. Records written by the
+ * pre-v2 boolean classifier (`meaningfulness-v1`) carry no rating and are
+ * skipped; they still count toward `meaningfulnessScoreMean`.
+ */
+function meanRating(ratings: Array<ClassifierRating | undefined>): number | null {
+  const values = ratings
+    .map((item) => item?.rating)
+    .filter((value): value is number => typeof value === "number");
+  if (values.length === 0) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 /** Headers for service-to-service calls (shared INTERNAL_API_TOKEN, if set). */
