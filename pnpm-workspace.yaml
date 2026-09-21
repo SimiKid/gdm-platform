@@ -6,7 +6,8 @@ packages:
 overrides:
   "brace-expansion@2.1.1": "2.1.4"
   effect: "3.20.0"
-  multer: "2.2.0"
+  multer: ">=2.3.0"
+  deepmerge-ts: ">=8.0.0"
 allowBuilds:
   '@prisma/client': true
   '@prisma/engines': true
