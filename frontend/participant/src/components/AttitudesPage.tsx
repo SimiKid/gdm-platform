@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import Likert from "./Likert";
 import LikertMatrix from "./LikertMatrix";
 
@@ -8,8 +8,6 @@ export interface AttitudesAnswers {
 
 interface Props {
   onContinue: (answers: AttitudesAnswers) => void;
-  expired?: boolean;
-  onTimeout?: (answers: AttitudesAnswers) => void;
 }
 
 const AI_ITEMS = [
@@ -89,14 +87,13 @@ const SURVIVAL_OPTIONS = [
 ];
 
 /** Page 3 — Attitudes & personality (before the individual task). */
-export default function AttitudesPage({ onContinue, expired, onTimeout }: Props) {
+export default function AttitudesPage({ onContinue }: Props) {
   const [aiValues, setAiValues] = useState<Record<string, string>>({});
   const [personalityValues, setPersonalityValues] = useState<Record<string, string>>({});
   const [teamwork, setTeamwork] = useState("");
   const [chatComfort, setChatComfort] = useState("");
   const [spaceflightFamiliarity, setSpaceflightFamiliarity] = useState("");
   const [survivalFamiliarity, setSurvivalFamiliarity] = useState("");
-  const timeoutHandled = useRef(false);
 
   const aiComplete = AI_ITEMS.every((item) => aiValues[item.key]);
   const personalityComplete = PERSONALITY_ITEMS.every(
@@ -124,12 +121,6 @@ export default function AttitudesPage({ onContinue, expired, onTimeout }: Props)
     }
     return answers;
   }
-
-  useEffect(() => {
-    if (!expired || timeoutHandled.current) return;
-    timeoutHandled.current = true;
-    onTimeout?.(collectAnswers());
-  });
 
   return (
     <div className="study-card">

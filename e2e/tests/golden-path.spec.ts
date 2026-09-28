@@ -115,7 +115,7 @@ async function walkToWaitingRoom(page: Page, seat: number): Promise<void> {
   for (const box of await page.getByRole("checkbox").all()) await box.check();
   await page.getByRole("button", { name: "Begin study" }).click();
 
-  // About you.
+  // Background info.
   await page.locator("#about-age").fill(String(24 + seat));
   await page.getByRole("radio", { name: "Man", exact: true }).check();
   await page.getByRole("radio", { name: "Bachelor's degree" }).check();

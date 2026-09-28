@@ -72,7 +72,7 @@ async function rankAllItems() {
 }
 
 describe("Survey", () => {
-  it("walks consent → about you → attitudes → task → group phase and returns the entry survey", async () => {
+  it("walks consent → background info → attitudes → task → group phase and returns the entry survey", async () => {
     const onComplete = vi.fn();
     render(<Survey onComplete={onComplete} />);
 
@@ -80,8 +80,8 @@ describe("Survey", () => {
     expect(screen.getByText(/Welcome to the Study/)).toBeInTheDocument();
     await completeConsent();
 
-    // Page 2 — about you (demographics)
-    expect(screen.getByText(/About You/)).toBeInTheDocument();
+    // Page 2 — background info (demographics)
+    expect(screen.getByText(/Background Info/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
     await completeAboutYou();
 

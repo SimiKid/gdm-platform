@@ -382,6 +382,43 @@ a.btn[aria-disabled="true"] {
   max-width: 24rem;
 }
 
+/* Vertical radio list: categorical options (gender, education, …) */
+
+.radio-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.radio-list-option {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.radio-list-option:hover {
+  background: var(--accent-tint);
+}
+
+.radio-list-option input[type="radio"] {
+  flex: none;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.radio-list-option span {
+  font-size: 0.95rem;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
 /* ── Likert matrix (rows = items, columns = scale) ── */
 
 .likert-matrix-wrapper {

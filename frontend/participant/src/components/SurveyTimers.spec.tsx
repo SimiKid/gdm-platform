@@ -15,62 +15,28 @@ function consent() {
   fireEvent.click(screen.getByRole("button", { name: "Begin study" }));
 }
 
-function finishEntry() {
-  act(() => vi.advanceTimersByTime(300_000)); // existing individual ranking timer
-  fireEvent.click(screen.getByRole("checkbox"));
-  fireEvent.click(screen.getByRole("button", { name: "Join chat" }));
-}
-
-describe("entry questionnaire timer", () => {
-  it("starts after consent and preserves incomplete demographics at expiry", () => {
+describe("entry questionnaire", () => {
+  it("is untimed: no countdown and no auto-advance off the demographic pages", () => {
     const onComplete = vi.fn();
     render(<Survey onComplete={onComplete} />);
+    consent();
+    // The only remaining entry timer belongs to the ranking task, which is
+    // two pages away.
+    expect(screen.queryByRole("timer")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("How old are you?"), { target: { value: "30" } });
     act(() => vi.advanceTimersByTime(600_000));
     expect(screen.queryByRole("timer")).not.toBeInTheDocument();
-    consent();
-    expect(screen.getByRole("timer")).toHaveTextContent("5:00");
-    fireEvent.change(screen.getByLabelText("How old are you?"), { target: { value: "30" } });
-    act(() => vi.advanceTimersByTime(299_000));
-    expect(screen.getByRole("timer")).toHaveTextContent("0:01");
-    act(() => vi.advanceTimersByTime(1000));
-    expect(screen.getByText(/Task: Survival on the Moon/)).toBeInTheDocument();
-    expect(screen.getByRole("timer")).toHaveTextContent("5:00");
-    finishEntry();
-    expect(onComplete).toHaveBeenCalledOnce();
-    const answers = onComplete.mock.calls[0][0].answers;
-    expect(answers).toMatchObject({ age: 30, entryQuestionnaireTimedOut: true });
-    expect(answers).not.toHaveProperty("gender");
-    expect(answers).not.toHaveProperty("gaais1");
-  });
+    expect(screen.getByLabelText("How old are you?")).toBeInTheDocument();
+    expect(screen.queryByText(/Task: Survival on the Moon/)).not.toBeInTheDocument();
 
-  it("shares the five minutes across demographic and attitudes pages", () => {
-    const onComplete = vi.fn();
-    render(<Survey onComplete={onComplete} />);
-    consent();
-    fireEvent.change(screen.getByLabelText("How old are you?"), { target: { value: "30" } });
     fireEvent.click(screen.getByRole("radio", { name: "Woman" }));
     fireEvent.click(screen.getByRole("radio", { name: "Bachelor's degree" }));
     fireEvent.click(screen.getByRole("radio", { name: "Fluent (advanced)" }));
-    act(() => vi.advanceTimersByTime(120_000));
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    expect(screen.getByRole("timer")).toHaveTextContent("3:00");
-    fireEvent.click(screen.getAllByRole("radio", { name: /: Disagree strongly$/i })[0]);
-    act(() => vi.advanceTimersByTime(180_000));
-    finishEntry();
-    const answers = onComplete.mock.calls[0][0].answers;
-    expect(answers).toMatchObject({ gaais1: 1, age: 30, entryQuestionnaireTimedOut: true });
-    expect(answers).not.toHaveProperty("gaais2");
-    expect(answers).not.toHaveProperty("chatComfort");
-  });
-
-  it("does not bypass a reported underage answer on expiry", () => {
-    const onIneligible = vi.fn();
-    render(<Survey onComplete={vi.fn()} onIneligible={onIneligible} />);
-    consent();
-    fireEvent.change(screen.getByLabelText("How old are you?"), { target: { value: "17" } });
-    act(() => vi.advanceTimersByTime(300_000));
-    expect(onIneligible).toHaveBeenCalledOnce();
+    act(() => vi.advanceTimersByTime(600_000));
+    expect(screen.queryByRole("timer")).not.toBeInTheDocument();
     expect(screen.queryByText(/Task: Survival on the Moon/)).not.toBeInTheDocument();
+    expect(onComplete).not.toHaveBeenCalled();
   });
 });
 
