@@ -14,14 +14,9 @@ describe("DebriefingPage", () => {
     );
 
     const finish = screen.getByRole("button", { name: "Finish study" });
-    expect(finish).toBeDisabled();
+    expect(finish).toBeEnabled();
     expect(screen.queryByText("Return to Prolific")).not.toBeInTheDocument();
 
-    await userEvent.click(
-      screen.getByRole("checkbox", {
-        name: "I have read and understood the debriefing above.",
-      }),
-    );
     await userEvent.click(finish);
 
     expect(
@@ -39,12 +34,6 @@ describe("DebriefingPage", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Return to Prolific" })).toBeDisabled();
-    await userEvent.click(
-      screen.getByRole("checkbox", {
-        name: "I have read and understood the debriefing above.",
-      }),
-    );
     expect(screen.getByRole("link", { name: "Return to Prolific" })).toHaveAttribute(
       "href",
       "https://app.prolific.com/submissions/complete?cc=TEST",

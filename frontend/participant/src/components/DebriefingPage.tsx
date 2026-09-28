@@ -27,7 +27,6 @@ export default function DebriefingPage({
   const paymentUrl = completionUrl || import.meta.env.VITE_PAYMENT_URL || "#";
   const paymentConfigured = paymentUrl !== "" && paymentUrl !== "#";
   const [feedback, setFeedback] = useState("");
-  const [debriefAcknowledged, setDebriefAcknowledged] = useState(false);
   const [directFinished, setDirectFinished] = useState(false);
 
   function handleReturn() {
@@ -71,15 +70,6 @@ export default function DebriefingPage({
           <strong>Thank you again for contributing to this research!</strong>
         </p>
 
-        <label className="consent-check">
-          <input
-            type="checkbox"
-            checked={debriefAcknowledged}
-            onChange={() => setDebriefAcknowledged((value) => !value)}
-          />
-          <span>I have read and understood the debriefing above.</span>
-        </label>
-
         <div className="card-actions">
           {!prolificParticipant && directFinished ? (
             <p>Your participation is complete. You may close this tab.</p>
@@ -87,7 +77,6 @@ export default function DebriefingPage({
             <button
               type="button"
               className="btn btn-primary"
-              disabled={!debriefAcknowledged}
               onClick={() => {
                 handleReturn();
                 setDirectFinished(true);
@@ -95,7 +84,7 @@ export default function DebriefingPage({
             >
               Finish study
             </button>
-          ) : paymentConfigured && debriefAcknowledged ? (
+          ) : paymentConfigured ? (
             <a
               className="btn btn-primary"
               href={paymentUrl}
@@ -103,10 +92,6 @@ export default function DebriefingPage({
             >
               Return to Prolific
             </a>
-          ) : paymentConfigured ? (
-            <button type="button" className="btn btn-primary" disabled>
-              Return to Prolific
-            </button>
           ) : (
             <>
               <button type="button" className="btn btn-primary" disabled>
@@ -117,12 +102,6 @@ export default function DebriefingPage({
                 keep this page open and contact the researcher.
               </p>
             </>
-          )}
-          {!debriefAcknowledged && (
-            <p className="action-hint">
-              Please acknowledge the debriefing before{" "}
-              {prolificParticipant ? "returning" : "finishing"}.
-            </p>
           )}
         </div>
       </div>
