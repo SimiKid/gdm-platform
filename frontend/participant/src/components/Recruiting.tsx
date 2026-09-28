@@ -115,10 +115,6 @@ export default function Recruiting({ onEnter }: Props) {
       <div className="study-card narrow centered">
         <h1>Welcome to the study</h1>
         <p>
-          You're about to take part in a short group decision-making exercise.
-          The next screens will brief you and ask for your consent.
-        </p>
-        <p>
           This is a live group study. Please keep this tab open throughout the
           session so the other participants are not left waiting.
         </p>

@@ -4,11 +4,12 @@ import { describe, expect, it, vi } from "vitest";
 import AboutYouPage from "./AboutYouPage";
 
 describe("AboutYouPage", () => {
-  it("explains why an under-18 participant cannot continue", async () => {
+  it("warns an under-18 participant while typing but only ends the study on Continue", async () => {
     const user = userEvent.setup();
     const onIneligible = vi.fn();
+    const onContinue = vi.fn();
     render(
-      <AboutYouPage onContinue={vi.fn()} onIneligible={onIneligible} />,
+      <AboutYouPage onContinue={onContinue} onIneligible={onIneligible} />,
     );
 
     await user.type(screen.getByLabelText("How old are you?"), "17");
@@ -17,8 +18,42 @@ describe("AboutYouPage", () => {
     expect(
       screen.getByText("You must be at least 18 years old to participate."),
     ).toHaveAttribute("role", "alert");
+    // Warned, but still correctable — nothing is reported yet.
+    expect(onIneligible).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("radio", { name: "Woman" }));
+    await user.click(screen.getByRole("radio", { name: "Bachelor's degree" }));
+    await user.click(screen.getByRole("radio", { name: "Fluent (advanced)" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
     expect(onIneligible).toHaveBeenCalledOnce();
-    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+    expect(onContinue).not.toHaveBeenCalled();
+  });
+
+  it("lets a mis-clicked answer be corrected before Continue", async () => {
+    const user = userEvent.setup();
+    const onIneligible = vi.fn();
+    const onContinue = vi.fn();
+    render(<AboutYouPage onContinue={onContinue} onIneligible={onIneligible} />);
+
+    await user.type(screen.getByLabelText("How old are you?"), "17");
+    await user.click(screen.getByRole("radio", { name: "None" }));
+    expect(onIneligible).not.toHaveBeenCalled();
+
+    await user.clear(screen.getByLabelText("How old are you?"));
+    await user.type(screen.getByLabelText("How old are you?"), "34");
+    await user.click(screen.getByRole("radio", { name: "Woman" }));
+    await user.click(screen.getByRole("radio", { name: "Bachelor's degree" }));
+    await user.click(screen.getByRole("radio", { name: "Fluent (advanced)" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(onIneligible).not.toHaveBeenCalled();
+    expect(onContinue).toHaveBeenCalledWith({
+      gender: "woman",
+      education: "bachelors",
+      englishProficiency: "fluent",
+      age: 34,
+    });
   });
 });
 
@@ -64,9 +99,12 @@ describe("AboutYouPage – free-text options and submission", () => {
     await user.click(screen.getByRole("radio", { name: "Woman" }));
     await user.click(screen.getByRole("radio", { name: "Master's degree or higher" }));
     await user.click(screen.getByRole("radio", { name: "None" }));
+    expect(onIneligible).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(onIneligible).toHaveBeenCalledWith(
       expect.stringContaining("no English proficiency"),
     );
+    expect(onContinue).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("radio", { name: "Intermediate" }));
     await user.click(screen.getByRole("button", { name: "Continue" }));

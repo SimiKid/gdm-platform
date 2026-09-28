@@ -49,8 +49,10 @@ export default function DebriefingPage({
         <DebriefingDisclosure />
 
         <p>
-          We'd love to hear your thoughts on the experiment — please share any
-          feedback in the box below.
+          <strong>
+            We'd love to hear your thoughts on the experiment — please share any
+            feedback in the box below.
+          </strong>
         </p>
 
         <textarea
@@ -65,7 +67,9 @@ export default function DebriefingPage({
           If you have further questions about the study, you can contact the
           researchers{prolificParticipant ? " through Prolific" : ""}.
         </p>
-        <p>Thank you again for contributing to this research.</p>
+        <p>
+          <strong>Thank you again for contributing to this research!</strong>
+        </p>
 
         <label className="consent-check">
           <input

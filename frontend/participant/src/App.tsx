@@ -380,11 +380,19 @@ export default function App() {
   ) {
     if (taskMode === "etherpad" && trackingToken) void workspaceClient.leave(trackingToken).catch(() => undefined);
     if (!prolific) {
+      // No Prolific submission to return, so mirror the server's per-outcome
+      // wording without its return instructions.
+      const message =
+        outcome === "ineligible"
+          ? "You cannot continue with this study. You may close this page."
+          : outcome === "declined_consent"
+            ? "You have not entered the study. You may close this page."
+            : "Your withdrawal was recorded. You may close this page.";
       setTermination({
         outcome,
         compensationKind: "none",
         redirectUrl: "",
-        message: "Your withdrawal was recorded. You may close this page.",
+        message,
       });
       client?.stopClient();
       setClient(null);

@@ -1,16 +1,11 @@
 import { useState } from "react";
+import { CONSENT_ITEMS } from "../study/consent";
 
 interface Props {
   /** Called once all consent boxes are ticked and "Continue" is pressed. */
   onBegin: () => void;
   onDecline?: () => void;
 }
-
-const CONSENT_ITEMS = [
-  "I am at least 18 years old.",
-  "I have read and understood the information above.",
-  "I voluntarily consent to participate in this study.",
-];
 
 /** Page 1 — Study Introduction & Informed Consent (two internal steps). */
 export default function ConsentPage({ onBegin, onDecline }: Props) {
@@ -87,53 +82,73 @@ export default function ConsentPage({ onBegin, onDecline }: Props) {
   return (
     <div className="study-card">
       <h1>Consent Form</h1>
+      <p>Please read the following carefully before participating.</p>
+
       <p>
-        Please read the following information carefully in order to participate.
+        <strong>Voluntary participation.</strong> Taking part is entirely
+        voluntary. You may withdraw at any time without giving a reason and
+        without any negative consequences. If you withdraw during the session,
+        your data will be deleted upon request — contact the researcher via
+        Prolific Messages to do so.
       </p>
 
       <p>
-        <strong>Participation is voluntary.</strong> You may withdraw at any time
-        without giving a reason and without any disadvantage. If you withdraw
-        during the session, your data will be deleted on request.
+        <strong>Anonymity and pseudonymization.</strong> All data is collected
+        under pseudonymous identifiers. If recruited through Prolific, your
+        Prolific study and submission IDs are stored solely to match your
+        responses to your submission and process your compensation. These
+        identifiers are never shared externally.
       </p>
 
       <p>
-        <strong>Participation is anonymous.</strong> All data is collected under
-        pseudonymous identifiers. If you were recruited through Prolific, your
-        study and submission IDs are stored so your responses can be matched to
-        your submission and compensation.
+        <strong>Data use and third-party processing.</strong> Pseudonymous chat
+        messages are recorded and used for research analysis. Depending on the
+        study group you are randomly assigned to, you may experience an
+        AI-assisted feature. In that case, excerpts of your pseudonymous chat
+        messages may be processed by a third-party AI service (Anthropic) to
+        generate AI-assisted responses. No Prolific identifiers are included
+        during the task phase. Anthropic processes data in accordance with its{" "}
+        <a
+          href="https://www.anthropic.com/privacy"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Privacy Policy
+        </a>
+        .
       </p>
 
       <p>
-        <strong>The collected data</strong> is stored on European servers and
-        only used for scientific purposes. Chat messages written during the group
-        phase are recorded and analyzed for research publications. As the study
-        uses semantic assistance, recent pseudonymous chat text is sent to
-        Anthropic's API to classify participation and create assistant wording.
-        Prolific identifiers are not included in those requests. Results may be
-        published only in an anonymous form.
+        <strong>Storage and publication.</strong> All study data is stored on
+        servers at the University of Zurich (Switzerland) and used for
+        scientific purposes only. Chat messages are recorded and may be analyzed
+        and quoted in research publications, always in anonymous form.
       </p>
 
       <p>
-        There are no known risks beyond those of everyday computer use. Your
-        participation contributes to research on collaborative decision-making.
-        Compensation is the amount shown in the Prolific study listing and is
-        processed after completion.
+        <strong>Risks.</strong> There are no known risks beyond those of
+        everyday computer use. The study task is designed to create no personal
+        risks or consequences.
       </p>
 
       <p>
-        For questions about the study, contact the researcher through Prolific
+        <strong>Compensation</strong> is the amount listed in the Prolific study
+        and is paid upon full completion. If you are unable to be matched with a
+        group, you will receive a partial reimbursement, and your data will be
+        deleted. If you withdraw before completing the study, compensation may
+        not be issued. Please check Prolific for details.
+      </p>
+
+      <p>
+        <strong>Questions?</strong> Contact the researcher via Prolific
         Messages.
       </p>
 
       <section className="consent-box" aria-labelledby="consent-heading">
         <h2 id="consent-heading">Declaration of Consent</h2>
-        <p>
-          To proceed with the study, all boxes of the declaration of consent must
-          be ticked:
-        </p>
-        {CONSENT_ITEMS.map((text, i) => (
-          <label key={text} className="consent-check">
+        <p>To proceed, please confirm all of the following:</p>
+        {CONSENT_ITEMS.map(({ key, text }, i) => (
+          <label key={key} className="consent-check">
             <input
               type="checkbox"
               checked={checked[i]}

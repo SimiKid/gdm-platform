@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import Likert from "./Likert";
 
 export interface AboutYouAnswers {
@@ -14,8 +14,6 @@ export interface AboutYouAnswers {
 interface Props {
   onContinue: (answers: AboutYouAnswers) => void;
   onIneligible?: (reason: string) => void;
-  expired?: boolean;
-  onTimeout?: (answers: AboutYouAnswers) => void;
 }
 
 const GENDER_OPTIONS = [
@@ -44,8 +42,8 @@ const ENGLISH_OPTIONS = [
   { value: "none", label: "None" },
 ];
 
-/** Page 2 — About You. */
-export default function AboutYouPage({ onContinue, onIneligible, expired, onTimeout }: Props) {
+/** Page 2 — Background Info (demographics). */
+export default function AboutYouPage({ onContinue, onIneligible }: Props) {
   const [age, setAge] = useState("");
   const [ageNa, setAgeNa] = useState(false);
   const [gender, setGender] = useState("");
@@ -53,15 +51,39 @@ export default function AboutYouPage({ onContinue, onIneligible, expired, onTime
   const [education, setEducation] = useState("");
   const [educationOther, setEducationOther] = useState("");
   const [english, setEnglish] = useState("");
-  const timeoutHandled = useRef(false);
 
   const ageNum = Number(age);
-  const ageValid = ageNa || (age !== "" && Number.isInteger(ageNum) && ageNum >= 18 && ageNum <= 120);
+  // "Answered plausibly" — not "eligible". An under-18 age still enables
+  // Continue so that ineligibility is only acted on when the page is
+  // submitted; a typo like 121 is a correctable mistake, so it does not.
+  const ageComplete =
+    ageNa || (age !== "" && Number.isInteger(ageNum) && ageNum >= 1 && ageNum <= 120);
+  const ageEligible = ageNa || ageNum >= 18;
   const genderValid =
     gender !== "" && (gender !== "self-describe" || genderCustom.trim() !== "");
   const educationValid =
     education !== "" && (education !== "other" || educationOther.trim() !== "");
-  const ready = ageValid && genderValid && educationValid && english !== "";
+  const ready = ageComplete && genderValid && educationValid && english !== "";
+
+  /**
+   * Eligibility is decided here, never while the participant is still typing
+   * or clicking: a mis-click on "None" must be correctable.
+   */
+  function submit() {
+    if (!ageEligible) {
+      onIneligible?.(
+        "The participant reported being younger than the minimum age of 18.",
+      );
+      return;
+    }
+    if (english === "none") {
+      onIneligible?.(
+        "The participant reported no English proficiency for the live group discussion.",
+      );
+      return;
+    }
+    onContinue(collectAnswers());
+  }
 
   function collectAnswers(): AboutYouAnswers {
     const answers: AboutYouAnswers = {};
@@ -70,7 +92,7 @@ export default function AboutYouPage({ onContinue, onIneligible, expired, onTime
     if (english) answers.englishProficiency = english;
     if (ageNa) {
       answers.agePreferNotToSay = true;
-    } else if (ageValid) {
+    } else if (ageComplete && ageEligible) {
       answers.age = ageNum;
     }
     if (gender === "self-describe" && genderCustom.trim()) {
@@ -82,20 +104,9 @@ export default function AboutYouPage({ onContinue, onIneligible, expired, onTime
     return answers;
   }
 
-  useEffect(() => {
-    if (!expired || timeoutHandled.current) return;
-    timeoutHandled.current = true;
-    // Expiry must not bypass an explicitly reported eligibility failure.
-    if ((!ageNa && age !== "" && ageNum < 18) || english === "none") {
-      onIneligible?.("The participant reported an ineligible age or no English proficiency.");
-      return;
-    }
-    onTimeout?.(collectAnswers());
-  });
-
   return (
     <div className="study-card">
-      <h1>About You</h1>
+      <h1>Background Info</h1>
       <p>
         Before starting with the task, we ask you to answer some questions on the
         next two pages. Note that there are no right or wrong answers. Please
@@ -116,16 +127,11 @@ export default function AboutYouPage({ onContinue, onIneligible, expired, onTime
           value={age}
           disabled={ageNa}
           onChange={(e) => setAge(e.target.value)}
-          onBlur={() => {
-            if (!ageNa && age !== "" && ageNum < 18) {
-              onIneligible?.(
-                "The participant reported being younger than the minimum age of 18.",
-              );
-            }
-          }}
-          aria-invalid={!ageNa && age !== "" && !ageValid}
+          aria-invalid={!ageNa && age !== "" && !(ageComplete && ageEligible)}
           aria-describedby={
-            !ageNa && age !== "" && !ageValid ? "about-age-error" : undefined
+            !ageNa && age !== "" && !(ageComplete && ageEligible)
+              ? "about-age-error"
+              : undefined
           }
         />
         {!ageNa && age !== "" && ageNum < 18 && (
@@ -153,6 +159,7 @@ export default function AboutYouPage({ onContinue, onIneligible, expired, onTime
 
       <Likert
         name="gender"
+        layout="list"
         legend="What is your gender?"
         options={GENDER_OPTIONS}
         value={gender}
@@ -175,6 +182,7 @@ export default function AboutYouPage({ onContinue, onIneligible, expired, onTime
 
       <Likert
         name="education"
+        layout="list"
         legend="What is the highest level of education you have completed?"
         options={EDUCATION_OPTIONS}
         value={education}
@@ -197,17 +205,11 @@ export default function AboutYouPage({ onContinue, onIneligible, expired, onTime
 
       <Likert
         name="english"
+        layout="list"
         legend="What is your level of English proficiency?"
         options={ENGLISH_OPTIONS}
         value={english}
-        onChange={(value) => {
-          setEnglish(value);
-          if (value === "none") {
-            onIneligible?.(
-              "The participant reported no English proficiency for the live group discussion.",
-            );
-          }
-        }}
+        onChange={setEnglish}
       />
 
       <div className="card-actions">
@@ -215,7 +217,7 @@ export default function AboutYouPage({ onContinue, onIneligible, expired, onTime
           type="button"
           className="btn btn-primary"
           disabled={!ready}
-          onClick={() => onContinue(collectAnswers())}
+          onClick={submit}
         >
           Continue
         </button>
