@@ -227,7 +227,7 @@ test("@golden three participants run a full study session end to end", async ({
   await test.step("the discussion timer ends — all three finish the exit survey to debriefing", async () => {
     for (const page of pages) {
       await expect(
-        page.getByRole("heading", { name: "Final Task Reflection (1/2)" }),
+        page.getByRole("heading", { name: "Final Task Reflection (1/3)" }),
       ).toBeVisible({ timeout: 90_000 });
     }
 

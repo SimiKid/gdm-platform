@@ -7,6 +7,8 @@ interface Props {
   /** Groups the radios; must be unique per matrix on the page. */
   name: string;
   legend: string;
+  /** Keeps the legend for screen readers but takes it off the screen. */
+  hideLegend?: boolean;
   items: Item[];
   scaleLabels: string[];
   /** Current values keyed by item key. */
@@ -21,6 +23,7 @@ interface Props {
 export default function LikertMatrix({
   name,
   legend,
+  hideLegend = false,
   items,
   scaleLabels,
   values,
@@ -28,7 +31,10 @@ export default function LikertMatrix({
 }: Props) {
   return (
     <fieldset className="q-block">
-      <legend className="q-label" style={{ fontWeight: "normal" }}>
+      <legend
+        className={hideLegend ? "visually-hidden" : "q-label"}
+        style={hideLegend ? undefined : { fontWeight: "normal" }}
+      >
         {legend}
       </legend>
       <div className="likert-matrix-wrapper">

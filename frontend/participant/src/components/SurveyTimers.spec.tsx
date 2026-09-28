@@ -59,14 +59,14 @@ describe("exit survey", () => {
     render(<ExitSurvey session={session} participantId="p" groupRanking={order} onDone={onDone} />);
 
     // 1/2 — the final ranking: no countdown, and waiting advances nothing.
-    expect(screen.getByText("Final Task Reflection (1/2)")).toBeInTheDocument();
+    expect(screen.getByText("Final Task Reflection (1/3)")).toBeInTheDocument();
     expect(screen.queryByRole("timer")).not.toBeInTheDocument();
     act(() => vi.advanceTimersByTime(600_000));
-    expect(screen.getByText("Final Task Reflection (1/2)")).toBeInTheDocument();
+    expect(screen.getByText("Final Task Reflection (1/3)")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Submit my final ranking" }));
 
     // 2/2 — confidence + group dynamics, also untimed.
-    expect(screen.getByText("Final Task Reflection (2/2)")).toBeInTheDocument();
+    expect(screen.getByText("Final Task Reflection (2/3)")).toBeInTheDocument();
     expect(screen.queryByRole("timer")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: "Rather confident" }));
     screen.getAllByRole("radio", { name: /: Disagree strongly$/i }).forEach(radio => fireEvent.click(radio));

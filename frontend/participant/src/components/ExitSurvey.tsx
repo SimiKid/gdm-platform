@@ -176,7 +176,7 @@ export default function ExitSurvey({
     return (
       <StudyShell onWithdraw={onWithdraw}>
         <div className="study-card">
-          <h1>Final Task Reflection (1/2)</h1>
+          <h1>Final Task Reflection (1/3)</h1>
 
           <p>
             Before moving to the final questionnaire,{" "}
@@ -228,7 +228,7 @@ export default function ExitSurvey({
     return (
       <StudyShell onWithdraw={onWithdraw}>
         <div className="study-card">
-          <h1>Final Task Reflection (2/2)</h1>
+          <h1>Final Task Reflection (2/3)</h1>
           <p>
             Finally, we ask you to reflect on your experience in the group by
             answering the questions below.
@@ -278,7 +278,7 @@ export default function ExitSurvey({
   return (
     <StudyShell onWithdraw={onWithdraw}>
       <div className="study-card">
-        <h1>Final Task Reflection</h1>
+        <h1>Final Task Reflection (3/3)</h1>
         <p>
           Finally, we ask you to reflect on your experience in the group by
           answering the questions below.
@@ -298,6 +298,7 @@ export default function ExitSurvey({
         <LikertMatrix
           name="bot-perception"
           legend="The bot intervention"
+          hideLegend
           items={BOT_PERCEPTION_ITEMS}
           scaleLabels={AGREE_SCALE_5}
           values={botPerception}
