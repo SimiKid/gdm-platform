@@ -61,7 +61,7 @@ test("private entry/exit pads, shared capped text, exports and a draining switch
       await expect(editor(pages[1]).getByText("Bob entry: oxygen first.", { exact: true })).toHaveCSS("color", "rgb(0, 0, 0)");
       await expect(editor(pages[1]).locator('span[class*="author-"]').first()).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       await Promise.all(pages.map(p => p.getByRole("button", { name: "Submit my response" }).click()));
-      await Promise.all(pages.map(p => expect(p.getByRole("heading", { name: "You are now ready to join the group discussion!" })).toBeVisible()));
+      await Promise.all(pages.map(p => expect(p.getByRole("heading", { name: "Briefing Group Task" })).toBeVisible()));
       for (const page of pages) { await page.getByRole("checkbox").check(); await page.getByRole("button", { name: "Join chat" }).click(); }
     });
 
