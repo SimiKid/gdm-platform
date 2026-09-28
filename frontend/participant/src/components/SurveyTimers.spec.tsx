@@ -27,7 +27,7 @@ describe("entry questionnaire", () => {
     act(() => vi.advanceTimersByTime(600_000));
     expect(screen.queryByRole("timer")).not.toBeInTheDocument();
     expect(screen.getByLabelText("How old are you?")).toBeInTheDocument();
-    expect(screen.queryByText(/Task: Survival on the Moon/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Study Task Description")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("radio", { name: "Woman" }));
     fireEvent.click(screen.getByRole("radio", { name: "Bachelor's degree" }));
@@ -35,7 +35,7 @@ describe("entry questionnaire", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     act(() => vi.advanceTimersByTime(600_000));
     expect(screen.queryByRole("timer")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Task: Survival on the Moon/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Study Task Description")).not.toBeInTheDocument();
     expect(onComplete).not.toHaveBeenCalled();
   });
 });

@@ -105,7 +105,7 @@ export default function RankingTaskPage({ onComplete }: Props) {
           your group of five.
         </p>
 
-        <h1>Task: Survival on the Moon</h1>
+        <h1>Study Task Description</h1>
         <p>
           As part of a space crew, you are ready to land on the lighted surface
           of the moon where you planned to meet up with the mothership. Due to

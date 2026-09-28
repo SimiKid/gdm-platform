@@ -102,7 +102,7 @@ describe("Survey", () => {
     await completeAttitudes();
 
     // Page 4 — individual ranking task with the 5-minute timer.
-    expect(screen.getByText(/Task: Survival on the Moon/)).toBeInTheDocument();
+    expect(screen.getByText("Study Task Description")).toBeInTheDocument();
     expect(screen.getByRole("timer")).toBeInTheDocument();
     const submit = screen.getByRole("button", { name: "Submit my ranking" });
     expect(submit).toBeDisabled();

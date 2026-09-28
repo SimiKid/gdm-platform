@@ -152,7 +152,7 @@ async function walkToWaitingRoom(page: Page, seat: number): Promise<void> {
 
   // Individual ranking: add every current task item in list order, then submit.
   await expect(
-    page.getByRole("heading", { name: "Task: Survival on the Moon" }),
+    page.getByRole("heading", { name: "Study Task Description" }),
   ).toBeVisible();
   await rankAllItems(page);
   await page.getByRole("button", { name: "Submit my ranking" }).click();
