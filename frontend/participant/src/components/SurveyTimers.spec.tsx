@@ -52,54 +52,44 @@ function savedAnswers(fetchMock: ReturnType<typeof mockApi>) {
   return JSON.parse(call![1].body as string).survey.answers;
 }
 
-describe("exit timers", () => {
-  it("keeps an unfinished ranking after two minutes and submits partial answers after five more", async () => {
+describe("exit survey", () => {
+  it("is untimed end to end and keeps every answer through to submit", async () => {
     const fetchMock = mockApi();
-    const onDone = vi.fn();
-    render(<ExitSurvey session={session} participantId="p" onDone={onDone} />);
-    expect(screen.getByRole("timer")).toHaveTextContent("2:00");
-    fireEvent.click(screen.getAllByRole("button", { name: /^Add .* to the ranking$/ })[0]);
-    act(() => vi.advanceTimersByTime(120_000));
-    expect(screen.getByRole("timer")).toHaveTextContent("5:00");
-    fireEvent.click(screen.getByRole("radio", { name: "Rather confident" }));
-    await act(async () => vi.advanceTimersByTime(300_000));
-    expect(onDone).toHaveBeenCalledOnce();
-    const answers = savedAnswers(fetchMock);
-    expect(answers).toMatchObject({ taskConfidence: 4, finalRankingTimedOut: true, finalRankingCompleted: false, exitQuestionnaireTimedOut: true });
-    expect(answers.finalRankingPartial).toHaveLength(1);
-    expect(answers).not.toHaveProperty("finalRanking");
-    expect(answers).not.toHaveProperty("groupConsidered");
-    await act(async () => vi.advanceTimersByTime(60_000));
-    expect(onDone).toHaveBeenCalledOnce();
-  });
-
-  it("shares the questionnaire deadline across reflection pages and retains all entered answers", async () => {
-    const fetchMock = mockApi();
-    render(<ExitSurvey session={session} participantId="p" groupRanking={order} onDone={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Submit my final ranking" }));
-    fireEvent.click(screen.getByRole("radio", { name: "Rather confident" }));
-    screen.getAllByRole("radio", { name: /: Disagree strongly$/i }).forEach(radio => fireEvent.click(radio));
-    act(() => vi.advanceTimersByTime(120_000));
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    expect(screen.getByRole("timer")).toHaveTextContent("3:00");
-    fireEvent.click(screen.getAllByRole("radio", { name: /: Disagree strongly$/i })[0]);
-    await act(async () => vi.advanceTimersByTime(180_000));
-    expect(savedAnswers(fetchMock)).toMatchObject({ finalRanking: order, taskConfidence: 4, groupConsidered: 1, safeSpeakUp: 1 });
-    expect(savedAnswers(fetchMock)).not.toHaveProperty("raiseConcerns");
-  });
-
-  it("allows retrying a failed automatic submission without duplicating completion", async () => {
-    const fetchMock = mockApi();
-    fetchMock.mockRejectedValueOnce(new Error("offline"));
     const onDone = vi.fn();
     render(<ExitSurvey session={session} participantId="p" groupRanking={order} onDone={onDone} />);
-    act(() => vi.advanceTimersByTime(120_000));
-    await act(async () => vi.advanceTimersByTime(300_000));
-    expect(screen.getByRole("alert")).toHaveTextContent(/couldn't submit/);
+
+    // 1/2 — the final ranking: no countdown, and waiting advances nothing.
+    expect(screen.getByText("Final Task Reflection (1/2)")).toBeInTheDocument();
+    expect(screen.queryByRole("timer")).not.toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(600_000));
+    expect(screen.getByText("Final Task Reflection (1/2)")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Submit my final ranking" }));
+
+    // 2/2 — confidence + group dynamics, also untimed.
+    expect(screen.getByText("Final Task Reflection (2/2)")).toBeInTheDocument();
+    expect(screen.queryByRole("timer")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Rather confident" }));
+    screen.getAllByRole("radio", { name: /: Disagree strongly$/i }).forEach(radio => fireEvent.click(radio));
+    act(() => vi.advanceTimersByTime(600_000));
     expect(onDone).not.toHaveBeenCalled();
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Try again" })));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    // Last page — psychological safety + bot perception, submitted by hand.
+    expect(screen.queryByRole("timer")).not.toBeInTheDocument();
+    screen.getAllByRole("radio", { name: /: Disagree strongly$/i }).forEach(radio => fireEvent.click(radio));
+    act(() => vi.advanceTimersByTime(600_000));
+    expect(onDone).not.toHaveBeenCalled();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Submit" })));
+
     expect(onDone).toHaveBeenCalledOnce();
-    expect(savedAnswers(fetchMock).finalRanking).toEqual(order);
-    expect(savedAnswers(fetchMock)).not.toHaveProperty("taskConfidence");
+    expect(savedAnswers(fetchMock)).toMatchObject({
+      finalRanking: order,
+      finalRankingCompleted: true,
+      finalRankingTimedOut: false,
+      exitQuestionnaireTimedOut: false,
+      taskConfidence: 4,
+      groupConsidered: 1,
+      safeSpeakUp: 1,
+    });
   });
 });
