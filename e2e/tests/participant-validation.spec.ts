@@ -22,12 +22,13 @@ test("@validation participant forms explain and block incomplete answers", async
     await expect(page.getByRole("heading", { name: "Consent Form" })).toBeVisible();
     const begin = page.getByRole("button", { name: "Begin study" });
     const boxes = page.getByRole("checkbox");
-    await expect(boxes).toHaveCount(3);
+    await expect(boxes).toHaveCount(4);
     await expect(begin).toBeDisabled();
     await boxes.nth(0).check();
     await boxes.nth(1).check();
-    await expect(begin).toBeDisabled();
     await boxes.nth(2).check();
+    await expect(begin).toBeDisabled();
+    await boxes.nth(3).check();
     await expect(begin).toBeEnabled();
     await begin.click();
   });

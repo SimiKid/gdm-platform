@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Survey } from "@gdm/shared";
 import StudyShell from "./StudyShell";
 import ConsentPage from "./ConsentPage";
+import { CONSENT_ITEMS } from "../study/consent";
 import AboutYouPage from "./AboutYouPage";
 import type { AboutYouAnswers } from "./AboutYouPage";
 import AttitudesPage from "./AttitudesPage";
@@ -56,10 +57,10 @@ export default function Survey({
   function finish() {
     const survey: Survey = {
       answers: {
-        // All three boxes must be ticked before "Begin study" enables.
-        consentAdult: true,
-        consentInformed: true,
-        consentParticipation: true,
+        // Every box must be ticked before "Begin study" enables.
+        ...Object.fromEntries(
+          CONSENT_ITEMS.map(({ key }) => [key, true] as const),
+        ),
         entryQuestionnaireTimedOut: questionnaireTimedOut,
         ...(about ?? {}),
         ...(attitudes ?? {}),

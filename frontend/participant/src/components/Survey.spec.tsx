@@ -132,11 +132,10 @@ describe("Survey", () => {
       screen.getByRole("button", { name: /continue to the consent form/i }),
     );
     const boxes = screen.getAllByRole("checkbox");
-    expect(boxes).toHaveLength(3);
-    await userEvent.click(boxes[0]);
-    await userEvent.click(boxes[1]);
+    expect(boxes).toHaveLength(4);
+    for (const box of boxes.slice(0, -1)) await userEvent.click(box);
     expect(screen.getByRole("button", { name: "Begin study" })).toBeDisabled();
-    await userEvent.click(boxes[2]);
+    await userEvent.click(boxes[boxes.length - 1]);
     expect(screen.getByRole("button", { name: "Begin study" })).toBeEnabled();
   });
 });

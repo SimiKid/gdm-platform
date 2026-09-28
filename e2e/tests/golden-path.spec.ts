@@ -106,7 +106,7 @@ async function walkToWaitingRoom(page: Page, seat: number): Promise<void> {
     await page.getByRole("button", { name: "Start" }).click();
   }
 
-  // Intro screen, then consent: all three boxes, then begin.
+  // Intro screen, then consent: every declaration box, then begin.
   await expect(
     page.getByRole("heading", { name: "Welcome to the Study" }),
   ).toBeVisible();
