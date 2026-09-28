@@ -122,11 +122,16 @@ async function walkToWaitingRoom(page: Page, seat: number): Promise<void> {
   await page.getByRole("radio", { name: "Fluent (advanced)" }).check();
   await page.getByRole("button", { name: "Continue" }).click();
 
-  // Attitudes & personality page: fill all matrix radios + single items.
-  // AI attitudes — click first scale option for each row.
-  for (const radio of await page.getByRole("radio", { name: /: Disagree strongly$/i }).all()) {
-    await radio.check();
+  // Attitudes & Traits 1/2 (AI) then 2/2 (personality): first scale option
+  // for every matrix row, one screen at a time.
+  for (let screenIndex = 0; screenIndex < 2; screenIndex++) {
+    for (const radio of await page.getByRole("radio", { name: /: Disagree strongly$/i }).all()) {
+      await radio.check();
+    }
+    await page.getByRole("button", { name: "Continue" }).click();
   }
+
+  // Skills & Experience single items.
   await page
     .getByRole("group", { name: /work in teams/ })
     .getByRole("radio", { name: "Sometimes" })

@@ -28,16 +28,26 @@ async function completeAboutYou() {
   await userEvent.click(screen.getByRole("button", { name: "Continue" }));
 }
 
-async function completeAttitudes() {
-  // Click all matrix radios — "Disagree strongly" is the first option in both
-  // the AI (5-point) and personality (7-point) matrices = 20 radios total.
-  const allDisagreeStrongly = screen.getAllByRole("radio", {
+async function completeMatrix() {
+  // "Disagree strongly" is the first option in both matrices.
+  for (const radio of screen.getAllByRole("radio", {
     name: /: Disagree strongly$/i,
-  });
-  for (const radio of allDisagreeStrongly) {
+  })) {
     await userEvent.click(radio);
   }
-  // Single-item Likert questions
+  await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+}
+
+async function completeAttitudes() {
+  // Screen 1/2 — AI attitudes, then screen 2/2 — personality.
+  await completeMatrix();
+  expect(
+    screen.getByText(/Attitudes & Traits \(2\/2\)/),
+  ).toBeInTheDocument();
+  await completeMatrix();
+
+  // Screen 3 — Skills & Experience single items.
+  expect(screen.getByText("Skills & Experience")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("radio", { name: "Sometimes" }));
   const comfort = screen.getByRole("group", {
     name: /communicating via text chat/,
@@ -85,7 +95,7 @@ describe("Survey", () => {
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
     await completeAboutYou();
 
-    // Page 3 — about you (attitudes & personality)
+    // Page 3 — attitudes & traits (2 screens) then skills & experience
     expect(
       screen.getByText(/attitudes towards Artificial Intelligence/),
     ).toBeInTheDocument();
