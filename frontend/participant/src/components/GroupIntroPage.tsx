@@ -13,39 +13,36 @@ export default function GroupIntroPage({ onJoin, taskMode = "ranking" }: Props) 
 
   return (
     <div className="study-card">
-      <h1>You are now ready to join the group discussion!</h1>
+      <h1>Briefing Group Task</h1>
+      <p>
+        <strong>You are now ready to join the group discussion!</strong>
+      </p>
       {taskMode === "etherpad" && <p>Discuss the task in the chat and record your group's response in the shared writing workspace. You will write a separate, private final response after the discussion.</p>}
 
       <p>
-        Your group, consisting of <strong>five participants</strong>, will be{" "}
-        <strong>randomly assigned</strong>. All of you will participate{" "}
-        <strong>fully anonymously</strong> — please refrain from sharing any
-        private information.
+        Your group of five participants will be randomly assembled. Together
+        with your four team members, your goal is to reach consensus on the NASA
+        task you previously completed individually.{" "}
+        <strong>You have 12 minutes to complete the task.</strong> A timer and
+        notifications will help you stay on track. Depending on the study group
+        you are randomly assigned to, an AI assistant may be present in the
+        chat. It will not actively participate in the decision-making process.
       </p>
 
       <p>
-        Together with your four team members,{" "}
-        <strong>
-          your goal is to reach consensus over the NASA task you previously did
-          by yourself.
-        </strong>
+        <strong>Please follow these rules during the chat:</strong>
       </p>
-
-      <p>
-        A chatbot will be present in the chat. It will, however, not take an
-        active role in the decision-making process of the group. It will rather
-        take an organizational role.
-      </p>
-
-      <p>
-        You have <strong>12 minutes for the task</strong> — a timer will provide
-        orientation; there will also be notifications during this time.
-      </p>
-
-      <p>
-        Please focus on discussions with your team members and do not use
-        external resources for the decision at hand.
-      </p>
+      <ul>
+        <li>Focus your discussion on the task. Do not use external resources.</li>
+        <li>
+          The group chat will be fully pseudonymized. However, do not share any
+          personal or identifying information during the task.
+        </li>
+        <li>
+          Do not post offensive, discriminatory, or inappropriate content.
+          Participants who violate this rule may be removed from the study.
+        </li>
+      </ul>
 
       <label className="consent-check">
         <input
@@ -54,7 +51,7 @@ export default function GroupIntroPage({ onJoin, taskMode = "ranking" }: Props) 
           onChange={(e) => setReady(e.target.checked)}
         />
         <span>
-          I understand and accept the instructions and am ready to join the
+          I have read and understood the instructions and am ready to join the
           group.
         </span>
       </label>

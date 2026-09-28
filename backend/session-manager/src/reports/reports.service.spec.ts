@@ -40,6 +40,7 @@ function entrySurvey(overrides: Record<string, unknown> = {}): Survey {
     answers: {
       consentAdult: true,
       consentInformed: true,
+      consentWithdrawal: true,
       consentParticipation: true,
       age: 29,
       gender: "na",

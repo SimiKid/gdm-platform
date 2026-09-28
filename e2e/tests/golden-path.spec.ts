@@ -106,7 +106,7 @@ async function walkToWaitingRoom(page: Page, seat: number): Promise<void> {
     await page.getByRole("button", { name: "Start" }).click();
   }
 
-  // Intro screen, then consent: all three boxes, then begin.
+  // Intro screen, then consent: every declaration box, then begin.
   await expect(
     page.getByRole("heading", { name: "Welcome to the Study" }),
   ).toBeVisible();
@@ -115,18 +115,23 @@ async function walkToWaitingRoom(page: Page, seat: number): Promise<void> {
   for (const box of await page.getByRole("checkbox").all()) await box.check();
   await page.getByRole("button", { name: "Begin study" }).click();
 
-  // About you.
+  // Background info.
   await page.locator("#about-age").fill(String(24 + seat));
   await page.getByRole("radio", { name: "Man", exact: true }).check();
   await page.getByRole("radio", { name: "Bachelor's degree" }).check();
   await page.getByRole("radio", { name: "Fluent (advanced)" }).check();
   await page.getByRole("button", { name: "Continue" }).click();
 
-  // Attitudes & personality page: fill all matrix radios + single items.
-  // AI attitudes — click first scale option for each row.
-  for (const radio of await page.getByRole("radio", { name: /: Disagree strongly$/i }).all()) {
-    await radio.check();
+  // Attitudes & Traits 1/2 (AI) then 2/2 (personality): first scale option
+  // for every matrix row, one screen at a time.
+  for (let screenIndex = 0; screenIndex < 2; screenIndex++) {
+    for (const radio of await page.getByRole("radio", { name: /: Disagree strongly$/i }).all()) {
+      await radio.check();
+    }
+    await page.getByRole("button", { name: "Continue" }).click();
   }
+
+  // Skills & Experience single items.
   await page
     .getByRole("group", { name: /work in teams/ })
     .getByRole("radio", { name: "Sometimes" })
@@ -147,7 +152,7 @@ async function walkToWaitingRoom(page: Page, seat: number): Promise<void> {
 
   // Individual ranking: add every current task item in list order, then submit.
   await expect(
-    page.getByRole("heading", { name: "Task: Survival on the Moon" }),
+    page.getByRole("heading", { name: "Study Task Description" }),
   ).toBeVisible();
   await rankAllItems(page);
   await page.getByRole("button", { name: "Submit my ranking" }).click();
@@ -222,7 +227,7 @@ test("@golden three participants run a full study session end to end", async ({
   await test.step("the discussion timer ends — all three finish the exit survey to debriefing", async () => {
     for (const page of pages) {
       await expect(
-        page.getByRole("heading", { name: "Almost done!" }),
+        page.getByRole("heading", { name: "Final Task Reflection (1/3)" }),
       ).toBeVisible({ timeout: 90_000 });
     }
 

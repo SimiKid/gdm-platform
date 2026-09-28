@@ -91,6 +91,7 @@ export function validateSurveyAnswers(
     for (const key of [
       "consentAdult",
       "consentInformed",
+      "consentWithdrawal",
       "consentParticipation",
       "groupInstructionsAcknowledged",
     ]) {

@@ -28,16 +28,26 @@ async function completeAboutYou() {
   await userEvent.click(screen.getByRole("button", { name: "Continue" }));
 }
 
-async function completeAttitudes() {
-  // Click all matrix radios — "Disagree strongly" is the first option in both
-  // the AI (5-point) and personality (7-point) matrices = 20 radios total.
-  const allDisagreeStrongly = screen.getAllByRole("radio", {
+async function completeMatrix() {
+  // "Disagree strongly" is the first option in both matrices.
+  for (const radio of screen.getAllByRole("radio", {
     name: /: Disagree strongly$/i,
-  });
-  for (const radio of allDisagreeStrongly) {
+  })) {
     await userEvent.click(radio);
   }
-  // Single-item Likert questions
+  await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+}
+
+async function completeAttitudes() {
+  // Screen 1/2 — AI attitudes, then screen 2/2 — personality.
+  await completeMatrix();
+  expect(
+    screen.getByText(/Attitudes & Traits \(2\/2\)/),
+  ).toBeInTheDocument();
+  await completeMatrix();
+
+  // Screen 3 — Skills & Experience single items.
+  expect(screen.getByText("Skills & Experience")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("radio", { name: "Sometimes" }));
   const comfort = screen.getByRole("group", {
     name: /communicating via text chat/,
@@ -72,7 +82,7 @@ async function rankAllItems() {
 }
 
 describe("Survey", () => {
-  it("walks consent → about you → attitudes → task → group phase and returns the entry survey", async () => {
+  it("walks consent → background info → attitudes → task → group phase and returns the entry survey", async () => {
     const onComplete = vi.fn();
     render(<Survey onComplete={onComplete} />);
 
@@ -80,19 +90,19 @@ describe("Survey", () => {
     expect(screen.getByText(/Welcome to the Study/)).toBeInTheDocument();
     await completeConsent();
 
-    // Page 2 — about you (demographics)
-    expect(screen.getByText(/About You/)).toBeInTheDocument();
+    // Page 2 — background info (demographics)
+    expect(screen.getByText(/Background Info/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
     await completeAboutYou();
 
-    // Page 3 — about you (attitudes & personality)
+    // Page 3 — attitudes & traits (2 screens) then skills & experience
     expect(
       screen.getByText(/attitudes towards Artificial Intelligence/),
     ).toBeInTheDocument();
     await completeAttitudes();
 
     // Page 4 — individual ranking task with the 5-minute timer.
-    expect(screen.getByText(/Task: Survival on the Moon/)).toBeInTheDocument();
+    expect(screen.getByText("Study Task Description")).toBeInTheDocument();
     expect(screen.getByRole("timer")).toBeInTheDocument();
     const submit = screen.getByRole("button", { name: "Submit my ranking" });
     expect(submit).toBeDisabled();
@@ -132,11 +142,10 @@ describe("Survey", () => {
       screen.getByRole("button", { name: /continue to the consent form/i }),
     );
     const boxes = screen.getAllByRole("checkbox");
-    expect(boxes).toHaveLength(3);
-    await userEvent.click(boxes[0]);
-    await userEvent.click(boxes[1]);
+    expect(boxes).toHaveLength(4);
+    for (const box of boxes.slice(0, -1)) await userEvent.click(box);
     expect(screen.getByRole("button", { name: "Begin study" })).toBeDisabled();
-    await userEvent.click(boxes[2]);
+    await userEvent.click(boxes[boxes.length - 1]);
     expect(screen.getByRole("button", { name: "Begin study" })).toBeEnabled();
   });
 });

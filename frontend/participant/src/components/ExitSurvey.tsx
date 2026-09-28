@@ -9,7 +9,6 @@ import StudyShell from "./StudyShell";
 import RankingBoard from "./RankingBoard";
 import Likert from "./Likert";
 import LikertMatrix from "./LikertMatrix";
-import StudyCountdown from "./StudyCountdown";
 import EtherpadTask from "./EtherpadTask";
 
 interface Props {
@@ -85,10 +84,6 @@ export default function ExitSurvey({
   const etherpadMode = session.condition?.config.workspaceMode === "etherpad";
   const [exitPadId, setExitPadId] = useState<string | null>(null);
   const [step, setStep] = useState<ExitStep>("ranking");
-  const [rankingDeadline] = useState(() => Date.now() + 2 * 60_000);
-  const [questionnaireDeadline, setQuestionnaireDeadline] = useState<number | null>(null);
-  const [rankingTimedOut, setRankingTimedOut] = useState(false);
-  const [questionnaireTimedOut, setQuestionnaireTimedOut] = useState(false);
   const rankingFinished = useRef(false);
   const submissionInFlight = useRef(false);
 
@@ -118,22 +113,22 @@ export default function ExitSurvey({
     PSYCH_SAFETY_ITEMS.every((item) => psychSafety[item.key]) &&
     BOT_PERCEPTION_ITEMS.every((item) => botPerception[item.key]);
 
-  function finishRanking(timedOut = false) {
+  function finishRanking() {
     if (rankingFinished.current) return;
     rankingFinished.current = true;
-    setRankingTimedOut(timedOut);
-    setQuestionnaireDeadline(Date.now() + 5 * 60_000);
     setStep("reflection2");
   }
 
-  async function submit(timedOut = questionnaireTimedOut) {
+  async function submit() {
     if (submissionInFlight.current) return;
     submissionInFlight.current = true;
     setSubmitting(true);
     setSubmitError(false);
     const answers: Record<string, string | number | boolean | string[]> = {
-      ...(etherpadMode ? { exitEtherpadId: exitPadId ?? "" } : { finalRankingCompleted: allRanked, finalRankingTimedOut: rankingTimedOut }),
-      exitQuestionnaireTimedOut: timedOut,
+      ...(etherpadMode ? { exitEtherpadId: exitPadId ?? "" } : { finalRankingCompleted: allRanked, finalRankingTimedOut: false }),
+      // Both exit questionnaire pages are untimed; kept so the answer schema
+      // still matches the timed sessions recorded before this was removed.
+      exitQuestionnaireTimedOut: false,
     };
     // Keep an unfinished order without treating it as a scored, complete ranking.
     if (!etherpadMode) {
@@ -173,33 +168,6 @@ export default function ExitSurvey({
     }
   }
 
-  const questionnaireTimer = questionnaireDeadline !== null && (
-    <>
-      <StudyCountdown deadline={questionnaireDeadline} label="Exit questionnaire time remaining" onExpire={() => {
-        setQuestionnaireTimedOut(true);
-        void submit(true);
-      }} />
-      <p>You have 5 minutes across both reflection pages. When time runs out, the answers you have entered are submitted automatically.</p>
-    </>
-  );
-
-  if (questionnaireTimedOut) {
-    return (
-      <StudyShell onWithdraw={onWithdraw}>
-        <div className="study-card">
-          <h1>Questionnaire time is up</h1>
-          <p role="status">{submitting ? "Submitting your answers so far…" : "Your answers so far have been kept."}</p>
-          {submitError && (
-            <>
-              <p className="error" role="alert">We couldn't submit your answers. Please check your connection and try again.</p>
-              <button className="btn btn-primary" disabled={submitting} onClick={() => void submit(true)}>Try again</button>
-            </>
-          )}
-        </div>
-      </StudyShell>
-    );
-  }
-
   // ── Step 1: Final ranking ─────────────────────────────────────────────
   if (step === "ranking" && etherpadMode) {
     return <StudyShell onWithdraw={onWithdraw}><EtherpadTask phase="exit" sessionId={session.id} onComplete={pad => { setExitPadId(pad.id); finishRanking(); }} /></StudyShell>;
@@ -207,9 +175,8 @@ export default function ExitSurvey({
   if (step === "ranking") {
     return (
       <StudyShell onWithdraw={onWithdraw}>
-        <StudyCountdown deadline={rankingDeadline} label="Final ranking time remaining" onExpire={() => finishRanking(true)} />
         <div className="study-card">
-          <h1>Almost done!</h1>
+          <h1>Final Task Reflection (1/3)</h1>
 
           <p>
             Before moving to the final questionnaire,{" "}
@@ -224,9 +191,8 @@ export default function ExitSurvey({
             interested in your personal view!
           </p>
           <p>
-            Once you are done, please click submit. The time limit for your
-            final ranking is 2 minutes. When time runs out, your current ranking
-            is kept and you move to the final questionnaire.
+            Once you are done, please click submit to move on to the final
+            questionnaire.
           </p>
 
           <RankingBoard
@@ -261,10 +227,8 @@ export default function ExitSurvey({
   if (step === "reflection2") {
     return (
       <StudyShell onWithdraw={onWithdraw}>
-        {questionnaireTimer}
-        {rankingTimedOut && <p role="status">Ranking time is up. Your current ranking has been kept.</p>}
         <div className="study-card">
-          <h1>Final Task Reflection</h1>
+          <h1>Final Task Reflection (2/3)</h1>
           <p>
             Finally, we ask you to reflect on your experience in the group by
             answering the questions below.
@@ -272,6 +236,7 @@ export default function ExitSurvey({
 
           <Likert
             name="confidence"
+            layout="list"
             legend={etherpadMode ? "How confident are you in the decision your group recorded?" : "How confident are you that your group was able to submit the correct ranking?"}
             options={CONFIDENCE_OPTIONS}
             value={confidence}
@@ -312,9 +277,8 @@ export default function ExitSurvey({
   // ── Step 3: Psychological safety + bot perception ─────────────────────
   return (
     <StudyShell onWithdraw={onWithdraw}>
-      {questionnaireTimer}
       <div className="study-card">
-        <h1>Final Task Reflection</h1>
+        <h1>Final Task Reflection (3/3)</h1>
         <p>
           Finally, we ask you to reflect on your experience in the group by
           answering the questions below.
@@ -334,6 +298,7 @@ export default function ExitSurvey({
         <LikertMatrix
           name="bot-perception"
           legend="The bot intervention"
+          hideLegend
           items={BOT_PERCEPTION_ITEMS}
           scaleLabels={AGREE_SCALE_5}
           values={botPerception}

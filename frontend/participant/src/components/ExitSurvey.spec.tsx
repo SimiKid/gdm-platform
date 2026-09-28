@@ -72,7 +72,7 @@ describe("ExitSurvey", () => {
   it("walks ranking → reflection 2 → reflection 3, then submits", async () => {
     const onDone = vi.fn();
     render(<ExitSurvey session={session} participantId="p" onDone={onDone} />);
-    expect(screen.getByText(/Almost done!/)).toBeInTheDocument();
+    expect(screen.getByText("Final Task Reflection (1/3)")).toBeInTheDocument();
 
     // Step 1: ranking
     const submitRanking = screen.getByRole("button", {

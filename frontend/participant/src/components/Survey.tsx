@@ -2,13 +2,13 @@ import { useState } from "react";
 import type { Survey } from "@gdm/shared";
 import StudyShell from "./StudyShell";
 import ConsentPage from "./ConsentPage";
+import { CONSENT_ITEMS } from "../study/consent";
 import AboutYouPage from "./AboutYouPage";
 import type { AboutYouAnswers } from "./AboutYouPage";
 import AttitudesPage from "./AttitudesPage";
 import type { AttitudesAnswers } from "./AttitudesPage";
 import RankingTaskPage from "./RankingTaskPage";
 import GroupIntroPage from "./GroupIntroPage";
-import StudyCountdown from "./StudyCountdown";
 import EtherpadTask from "./EtherpadTask";
 
 interface Props {
@@ -31,7 +31,7 @@ const STEP_NUMBER: Record<Step, 1 | 2 | 3 | 4> = {
 
 /**
  * The pre-chat participant flow (pages 1–5):
- * informed consent → about you (demographics) → about you (attitudes)
+ * informed consent → background info (demographics) → about you (attitudes)
  * → individual ranking task (5-min timer) → group phase instructions.
  * "Join chat" hands the assembled entry survey up to App, which moves
  * on to the waiting room.
@@ -44,8 +44,6 @@ export default function Survey({
   onWithdraw,
 }: Props) {
   const [step, setStep] = useState<Step>("consent");
-  const [questionnaireDeadline, setQuestionnaireDeadline] = useState<number | null>(null);
-  const [questionnaireTimedOut, setQuestionnaireTimedOut] = useState(false);
   const [about, setAbout] = useState<AboutYouAnswers | null>(null);
   const [attitudes, setAttitudes] = useState<AttitudesAnswers | null>(null);
   const [task, setTask] = useState<Record<
@@ -56,11 +54,13 @@ export default function Survey({
   function finish() {
     const survey: Survey = {
       answers: {
-        // All three boxes must be ticked before "Begin study" enables.
-        consentAdult: true,
-        consentInformed: true,
-        consentParticipation: true,
-        entryQuestionnaireTimedOut: questionnaireTimedOut,
+        // Every box must be ticked before "Begin study" enables.
+        ...Object.fromEntries(
+          CONSENT_ITEMS.map(({ key }) => [key, true] as const),
+        ),
+        // The entry questionnaire is untimed; kept so the answer schema still
+        // matches the timed sessions recorded before this was removed.
+        entryQuestionnaireTimedOut: false,
         ...(about ?? {}),
         ...(attitudes ?? {}),
         ...(task ?? {}),
@@ -73,30 +73,13 @@ export default function Survey({
 
   return (
     <StudyShell step={STEP_NUMBER[step]} onWithdraw={step === "consent" ? undefined : onWithdraw}>
-      {(step === "about" || step === "attitudes") && questionnaireDeadline !== null && (
-        <>
-          <StudyCountdown deadline={questionnaireDeadline} label="Entry questionnaire time remaining" onExpire={() => setQuestionnaireTimedOut(true)} />
-          <p>You have 5 minutes across both questionnaire pages. When time runs out, your answers so far are saved and you move to the {taskMode === "etherpad" ? "writing" : "ranking"} task.</p>
-        </>
-      )}
-      {questionnaireTimedOut && step === "task" && (
-        <p role="status">Questionnaire time is up. Your answers so far have been kept.</p>
-      )}
       {step === "consent" && (
-        <ConsentPage onBegin={() => {
-          setQuestionnaireDeadline(Date.now() + 5 * 60_000);
-          setStep("about");
-        }} onDecline={onDecline} />
+        <ConsentPage onBegin={() => setStep("about")} onDecline={onDecline} />
       )}
 
       {step === "about" && (
         <AboutYouPage
           onIneligible={onIneligible}
-          expired={questionnaireTimedOut}
-          onTimeout={(answers) => {
-            setAbout(answers);
-            setStep("task");
-          }}
           onContinue={(answers) => {
             setAbout(answers);
             setStep("attitudes");
@@ -106,11 +89,6 @@ export default function Survey({
 
       {step === "attitudes" && (
         <AttitudesPage
-          expired={questionnaireTimedOut}
-          onTimeout={(answers) => {
-            setAttitudes(answers);
-            setStep("task");
-          }}
           onContinue={(answers) => {
             setAttitudes(answers);
             setStep("task");
