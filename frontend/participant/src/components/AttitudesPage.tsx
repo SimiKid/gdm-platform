@@ -86,7 +86,7 @@ const SURVIVAL_OPTIONS = [
   { value: "5", label: "Very familiar" },
 ];
 
-/** Page 3 — Attitudes & personality (before the individual task). */
+/** Page 3 — Attitudes & Traits (before the individual task). */
 export default function AttitudesPage({ onContinue }: Props) {
   const [aiValues, setAiValues] = useState<Record<string, string>>({});
   const [personalityValues, setPersonalityValues] = useState<Record<string, string>>({});
@@ -124,7 +124,7 @@ export default function AttitudesPage({ onContinue }: Props) {
 
   return (
     <div className="study-card">
-      <h1>About You</h1>
+      <h1>Attitudes &amp; Traits (1/2)</h1>
 
       <LikertMatrix
         name="ai"
