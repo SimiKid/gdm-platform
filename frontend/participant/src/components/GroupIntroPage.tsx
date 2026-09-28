@@ -14,20 +14,24 @@ export default function GroupIntroPage({ onJoin, taskMode = "ranking" }: Props) 
   return (
     <div className="study-card">
       <h1>Briefing Group Task</h1>
-      <p>You are now ready to join the group discussion!</p>
+      <p>
+        <strong>You are now ready to join the group discussion!</strong>
+      </p>
       {taskMode === "etherpad" && <p>Discuss the task in the chat and record your group's response in the shared writing workspace. You will write a separate, private final response after the discussion.</p>}
 
       <p>
         Your group of five participants will be randomly assembled. Together
         with your four team members, your goal is to reach consensus on the NASA
-        task you previously completed individually. You have 12 minutes to
-        complete the task. A timer and notifications will help you stay on
-        track. Depending on the study group you are randomly assigned to, an AI
-        assistant may be present in the chat. It will not actively participate
-        in the decision-making process.
+        task you previously completed individually.{" "}
+        <strong>You have 12 minutes to complete the task.</strong> A timer and
+        notifications will help you stay on track. Depending on the study group
+        you are randomly assigned to, an AI assistant may be present in the
+        chat. It will not actively participate in the decision-making process.
       </p>
 
-      <p>Please follow these rules during the chat:</p>
+      <p>
+        <strong>Please follow these rules during the chat:</strong>
+      </p>
       <ul>
         <li>Focus your discussion on the task. Do not use external resources.</li>
         <li>
