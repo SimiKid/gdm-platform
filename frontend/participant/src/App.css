@@ -1326,6 +1326,13 @@ a.btn[aria-disabled="true"] {
   font-weight: 600;
 }
 
+.ranking-hint {
+  margin: 0.5rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
 .panel-col .ranking-item.remote-move {
   animation: remote-ranking-move 0.9s ease-out;
   outline: 2px solid var(--accent);

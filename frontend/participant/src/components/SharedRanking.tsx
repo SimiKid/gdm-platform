@@ -205,6 +205,12 @@ export default function SharedRanking({ client, roomId, task, initial, onChange 
           </li>
         ))}
       </ol>
+      <p className="ranking-hint">
+        <strong>
+          Note that you can move items by clicking on the arrows or by dragging
+          them into the dedicated position
+        </strong>
+      </p>
     </div>
   );
 }
