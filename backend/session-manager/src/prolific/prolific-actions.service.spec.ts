@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ServiceUnavailableException } from "@nestjs/common";
+import {
+  ConflictException,
+  NotFoundException,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 import type { ParticipationOutcomeRecord } from "@gdm/shared";
 import { ProlificActionsService } from "./prolific-actions.service";
 import { StoreService } from "../store/store.service";
@@ -334,8 +338,19 @@ describe("ProlificActionsService – automation, guards and error handling", () 
       await expect(service.requestReturnById("missing")).rejects.toThrow(
         /No actionable terminal outcome/,
       );
-      await expect(service.resolveManuallyById("missing")).rejects.toThrow(
-        /No actionable terminal outcome/,
+      await expect(service.resolveManuallyById("missing")).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+
+    it("rejects actions for a participation that has not ended", async () => {
+      const identity = nextIdentity();
+      const arrival = await store.recordProlificArrival(identity);
+      const { id } = (await store.listParticipationOutcomes()).find(
+        (row) => row.sessionId === arrival.sessionId,
+      )!;
+      await expect(service.requestReturnById(id)).rejects.toBeInstanceOf(
+        ConflictException,
       );
     });
 
@@ -415,6 +430,9 @@ describe("ProlificActionsService – automation, guards and error handling", () 
       );
       await expect(service.prepareBonusById(none.id)).rejects.toThrow(
         /Only partial-compensation outcomes/,
+      );
+      await expect(service.prepareBonusById(none.id)).rejects.toBeInstanceOf(
+        ConflictException,
       );
 
       const empty = await store.terminateProlificParticipation(

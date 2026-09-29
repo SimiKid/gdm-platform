@@ -11,7 +11,6 @@ import {
   inviteUser,
   joinRoom,
   joinedMembers,
-  redactEvent,
   registerUser,
   roomMessages,
   sendRanking,
@@ -91,7 +90,16 @@ describe("chat-service ↔ real Synapse (integration)", () => {
   it("joins the room when the session manager hands over a session", async () => {
     const alice = await registerUser("alice");
     const berta = await registerUser("berta");
-    await startSession(alice, [berta], testCondition("baseline"), 10);
+    const { roomId } = await startSession(
+      alice,
+      [berta],
+      testCondition("baseline"),
+      10,
+    );
+
+    expect(await joinedMembers(alice, roomId)).toEqual(
+      expect.arrayContaining([alice.userId, berta.userId, t.bot.botUserId]),
+    );
   });
 
   it("backfills messages sent while the recorder was restarting", async () => {
@@ -145,10 +153,9 @@ describe("chat-service ↔ real Synapse (integration)", () => {
 
     const m1 = await sendText(alice, roomId, "I say oxygen tanks first");
     const m2 = await sendText(berta, roomId, "Water matters more than heat");
-    const upvote = await sendReaction(berta, roomId, m1, "👍");
+    // Emoji reactions are not part of the study UI: the recorder ignores them.
+    await sendReaction(berta, roomId, m1, "👍");
     await sendReaction(alice, roomId, m2, "🚀");
-    // Toggle the 👍 off again — the redaction must undo it in the record.
-    await redactEvent(berta, roomId, upvote);
     await sendRanking(berta, roomId, {
       taskId: "moon-survival",
       order: ["oxygen", "water", "food"],
@@ -165,16 +172,15 @@ describe("chat-service ↔ real Synapse (integration)", () => {
       id: m1,
       senderId: alice.userId,
       text: "I say oxygen tanks first",
-      reactions: [], // the 👍 was redacted
+      reactions: [],
     });
     expect(second).toMatchObject({
       id: m2,
       senderId: berta.userId,
       text: "Water matters more than heat",
+      reactions: [],
     });
-    expect(second.reactions).toEqual([
-      expect.objectContaining({ key: "🚀", senderId: alice.userId }),
-    ]);
+    expect(call.body.reactionEvents).toEqual([]);
 
     expect(call.body.rankingHistory).toEqual([
       expect.objectContaining({

@@ -1,13 +1,14 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
-
-const API = process.env.E2E_SESSION_MANAGER_URL ?? "http://localhost:3001/api";
-const ADMIN = process.env.E2E_ADMIN_URL ?? "http://localhost:3003";
-// Required when the target stack sets ADMIN_API_TOKEN (production smoke test);
-// locally the guards are open and this stays empty.
-const ADMIN_TOKEN = process.env.E2E_ADMIN_TOKEN ?? "";
-const API_HEADERS = ADMIN_TOKEN
-  ? { Authorization: `Bearer ${ADMIN_TOKEN}` }
-  : undefined;
+// ADMIN_TOKEN (E2E_ADMIN_TOKEN) is required when the target stack sets
+// ADMIN_API_TOKEN (production smoke test); locally the guards are open.
+import {
+  ADMIN,
+  ADMIN_TOKEN,
+  API,
+  API_HEADERS,
+  rankAllItems,
+  walkToWaitingRoom,
+} from "../support/e2e-helpers";
 
 /**
  * The test provisions its own condition so it never touches the study's real
@@ -99,82 +100,23 @@ async function upsertCondition(request: APIRequestContext, active: boolean) {
   expect(res.ok()).toBe(true);
 }
 
-/** Recruiting → consent → about-you → individual ranking → group intro. */
-async function walkToWaitingRoom(page: Page, seat: number): Promise<void> {
-  const query = new URLSearchParams({ conditionId: CONDITION_ID });
-  if (seat === 0 && TEST_PROLIFIC) {
-    query.set("PROLIFIC_PID", TEST_PROLIFIC.participantId);
-    query.set("STUDY_ID", TEST_PROLIFIC.studyId);
-    query.set("SESSION_ID", TEST_PROLIFIC.sessionId);
-  }
-  await page.goto(`/?${query.toString()}`);
-  if (!(seat === 0 && TEST_PROLIFIC)) {
-    await page.getByRole("button", { name: "Start" }).click();
-  }
-
-  // Intro screen, then consent: every declaration box, then begin.
-  await expect(
-    page.getByRole("heading", { name: "Welcome to the Study" }),
-  ).toBeVisible();
-  await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: /continue to the consent form/i }).click();
-  for (const box of await page.getByRole("checkbox").all()) await box.check();
-  await page.getByRole("button", { name: "Begin study" }).click();
-
-  // Background info.
-  await page.locator("#about-age").fill(String(24 + seat));
-  await page.getByRole("radio", { name: "Man", exact: true }).check();
-  await page.getByRole("radio", { name: "Bachelor's degree" }).check();
-  await page.getByRole("radio", { name: "Fluent (advanced)" }).check();
-  await page.getByRole("button", { name: "Continue" }).click();
-
-  // Attitudes & Traits 1/2 (AI) then 2/2 (personality): first scale option
-  // for every matrix row, one screen at a time.
-  for (let screenIndex = 0; screenIndex < 2; screenIndex++) {
-    for (const radio of await page.getByRole("radio", { name: /: Disagree strongly$/i }).all()) {
-      await radio.check();
-    }
-    await page.getByRole("button", { name: "Continue" }).click();
-  }
-
-  // Skills & Experience single items.
-  await page
-    .getByRole("group", { name: /work in teams/ })
-    .getByRole("radio", { name: "Sometimes" })
-    .check();
-  await page
-    .getByRole("group", { name: /communicating via text chat/ })
-    .getByRole("radio", { name: "Rather comfortable" })
-    .check();
-  await page
-    .getByRole("group", { name: /spaceflight-related/ })
-    .getByRole("radio", { name: "Rather unfamiliar" })
-    .check();
-  await page
-    .getByRole("group", { name: /wilderness.*survival/i })
-    .getByRole("radio", { name: "Rather unfamiliar" })
-    .check();
-  await page.getByRole("button", { name: "Continue" }).click();
-
-  // Individual ranking: add every current task item in list order, then submit.
-  await expect(
-    page.getByRole("heading", { name: "Study Task Description" }),
-  ).toBeVisible();
-  await rankAllItems(page);
-  await page.getByRole("button", { name: "Submit my ranking" }).click();
-
-  // Group intro → waiting room.
-  await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "Join chat" }).click();
-  await expect(page.getByRole("heading", { name: "Waiting room" })).toBeVisible();
-}
-
-/** Click every "Add … to the ranking" button until the pool is empty. */
-async function rankAllItems(page: Page): Promise<void> {
-  const addButtons = page.getByRole("button", { name: /^Add .* to the ranking$/ });
-  while ((await addButtons.count()) > 0) {
-    await addButtons.first().click();
-  }
+/** Seat 0 optionally arrives through a fake Prolific link (no Start button). */
+async function joinWaitingRoom(page: Page, seat: number): Promise<void> {
+  const prolific = seat === 0 ? TEST_PROLIFIC : undefined;
+  await walkToWaitingRoom(page, {
+    query: {
+      conditionId: CONDITION_ID,
+      ...(prolific
+        ? {
+            PROLIFIC_PID: prolific.participantId,
+            STUDY_ID: prolific.studyId,
+            SESSION_ID: prolific.sessionId,
+          }
+        : {}),
+    },
+    prolific: Boolean(prolific),
+    entry: { age: 24 + seat },
+  });
 }
 
 test("@golden three participants run a full study session end to end", async ({
@@ -188,7 +130,7 @@ test("@golden three participants run a full study session end to end", async ({
     for (let seat = 0; seat < GROUP_SIZE; seat++) {
       pages.push(await (await browser.newContext()).newPage());
     }
-    await Promise.all(pages.map((page, seat) => walkToWaitingRoom(page, seat)));
+    await Promise.all(pages.map((page, seat) => joinWaitingRoom(page, seat)));
   });
 
   await test.step("the third join provisions the Matrix room — everyone lands in the chat", async () => {

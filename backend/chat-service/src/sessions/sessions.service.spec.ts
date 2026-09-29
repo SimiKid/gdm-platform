@@ -163,13 +163,13 @@ describe("SessionsService (chat-service)", () => {
     );
   });
 
-  it("collects messages, reactions and ranking; runs rules; records but never processes its own events", async () => {
+  it("collects messages and ranking, ignores emoji reactions; runs rules; records but never processes its own events", async () => {
     await svc.startSession(note);
     emit({ roomId: "!r", type: "m.room.message", sender: "@u:localhost", eventId: "m1", ts: 1000, content: { body: "hi" } });
     emit({ roomId: "!r", type: "m.reaction", sender: "@u2:localhost", eventId: "re1", ts: 1001, content: { "m.relates_to": { rel_type: "m.annotation", event_id: "m1", key: "👍" } } });
     emit({ roomId: "!r", type: "de.gdm.ranking", sender: "@u:localhost", eventId: "rk1", ts: 1002, content: { taskId: "t", order: ["a", "b"], updatedAt: "", updatedBy: "u", movement: { itemId: "a", from: 1, to: 0 } } });
     emit({ roomId: "!r", type: "de.gdm.behavior", sender: "@u:localhost", eventId: "ty1", ts: 1003, content: { type: "typing-stop", durationMs: 800 } });
-    emit({ roomId: "!r", type: "m.room.redaction", sender: "@u2:localhost", eventId: "rd1", ts: 1004, content: {}, redacts: "re1" });
+    emit({ roomId: "!r", type: "m.room.redaction", sender: "@u2:localhost", eventId: "rd1", ts: 1004, content: { redacts: "re1" } });
     emit({ roomId: "!r", type: "m.room.message", sender: "@bot:localhost", eventId: "b1", ts: 1004, content: { body: "own", "de.gdm.recipient": "@u:localhost" } });
 
     // Rules run for every non-own event; the bot's own message is recorded
@@ -181,15 +181,10 @@ describe("SessionsService (chat-service)", () => {
     const lastCall = fetchMock.mock.calls.at(-1) as [string, { body: string }];
     const lastBody = JSON.parse(lastCall[1].body);
     expect(lastBody.messages).toHaveLength(2);
-    expect(lastBody.messages[0].reactions).toHaveLength(0); // added then redacted
-    expect(lastBody.reactionEvents).toEqual([
-      expect.objectContaining({
-        eventId: "re1",
-        messageId: "m1",
-        redacted: true,
-        redactionEventId: "rd1",
-      }),
-    ]);
+    // Emoji reactions are not part of the study UI and are not recorded.
+    expect(lastBody.messages[0].reactions).toEqual([]);
+    expect(lastBody.reactionEvents).toEqual([]);
+    expect(lastBody.redactedReactionEventIds).toEqual([]);
     expect(lastBody.messages[1]).toMatchObject({
       id: "b1",
       senderId: "@bot:localhost",

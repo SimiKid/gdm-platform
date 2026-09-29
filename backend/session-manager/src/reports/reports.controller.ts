@@ -6,29 +6,18 @@ import {
   StreamableFile,
   UseGuards,
 } from "@nestjs/common";
-import type { ReportsSummaryResponse } from "@gdm/shared";
 import { AdminGuard } from "../auth/admin.guard";
 import { ReportsService } from "./reports.service";
-import { parseConditionIds, parseRoundIds } from "./filter";
+import { researchFilter } from "./filter";
 
 /**
- * Analysis-ready research exports (pseudonymized) and the dashboard Results
- * summary. The legacy raw exports stay on the sessions controller; these are
- * the files a researcher loads into R/SPSS directly.
+ * Analysis-ready research exports (pseudonymized) and the Overview tab's
+ * research-data download. The legacy raw exports stay on the sessions
+ * controller; these are the files a researcher loads into R/SPSS directly.
  */
 @Controller()
 export class ReportsController {
   constructor(private readonly reports: ReportsService) {}
-
-  /** Per-condition descriptives for the dashboard Results tab. */
-  @Get("reports/summary")
-  @UseGuards(AdminGuard)
-  summary(
-    @Query("conditionIds") conditionIds?: string,
-    @Query("roundIds") roundIds?: string,
-  ): Promise<ReportsSummaryResponse> {
-    return this.reports.summary(researchFilter(conditionIds, roundIds));
-  }
 
   /** One row per participant, surveys + activity joined, pseudonymized. */
   @Get("export/participants")
@@ -177,11 +166,4 @@ export class ReportsController {
     );
     return new StreamableFile(zip);
   }
-}
-
-function researchFilter(conditionIds?: string, roundIds?: string) {
-  return {
-    conditionIds: parseConditionIds(conditionIds),
-    roundIds: parseRoundIds(roundIds),
-  };
 }

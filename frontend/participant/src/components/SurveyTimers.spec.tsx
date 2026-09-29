@@ -40,7 +40,11 @@ describe("entry questionnaire", () => {
   });
 });
 
-const session = { id: "s", rankingTask: MOON_SURVIVAL } as PublicSession;
+const session = {
+  id: "s",
+  condition: { config: {} },
+  rankingTask: MOON_SURVIVAL,
+} as PublicSession;
 const order = MOON_SURVIVAL.items.map(item => item.id);
 function mockApi() {
   const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ completedAt: "now", compensationUrl: "" }) }));

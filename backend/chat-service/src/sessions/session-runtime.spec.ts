@@ -1,8 +1,8 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { SessionRuntime } from "./session-runtime";
-import type { MatrixBotService } from "../matrix/matrix-bot.service";
+import { fakeBot as makeFakeBot } from "../test-utils";
 import { DEFAULT_INTERVENTION_CONFIG } from "@gdm/shared";
-import type { Condition, Message } from "@gdm/shared";
+import type { Condition, Message, RuntimeCheckpoint } from "@gdm/shared";
 
 const condition: Condition = {
   id: "c",
@@ -14,17 +14,12 @@ const condition: Condition = {
   config: { ...DEFAULT_INTERVENTION_CONFIG },
 };
 
-function fakeBot() {
-  return {
-    botUserId: "@bot:localhost",
-    sendText: vi.fn(async () => undefined),
-    getJoinedMemberIds: vi.fn(async () => [
-      "@gdm_a:localhost",
-      "@gdm_bot_x:localhost",
-      "@gdm_orchestrator_x:localhost",
-    ]),
-  } as unknown as MatrixBotService;
-}
+const fakeBot = () =>
+  makeFakeBot([
+    "@gdm_a:localhost",
+    "@gdm_bot_x:localhost",
+    "@gdm_orchestrator_x:localhost",
+  ]);
 
 const message = (id: string): Message => ({
   id,
@@ -40,20 +35,6 @@ describe("SessionRuntime", () => {
     const rt = new SessionRuntime("s", "!r", condition, 10, fakeBot());
     rt.recordMessage(message("m1"));
     expect(rt.messages).toHaveLength(1);
-  });
-
-  it("attaches a reaction to its target message, and removes it on redaction", () => {
-    const rt = new SessionRuntime("s", "!r", condition, 10, fakeBot());
-    rt.recordMessage(message("m1"));
-    rt.addReaction("re1", "m1", {
-      key: "👍",
-      senderId: "@u2:localhost",
-      timestamp: "now",
-    });
-    expect(rt.messages[0].reactions).toHaveLength(1);
-
-    rt.removeRedacted("re1");
-    expect(rt.messages[0].reactions).toHaveLength(0);
   });
 
   it("claims each window boundary once, including across a restart", () => {
@@ -85,52 +66,47 @@ describe("SessionRuntime", () => {
     expect(restored.claimWindowBoundary(end + 4 * 60_000)).toBe(true);
   });
 
-  it("keeps a redacted reaction as an audit tombstone across restart", () => {
-    const first = new SessionRuntime("s", "!r", condition, 10, fakeBot());
-    first.recordMessage(message("m1"));
-    first.addReaction("re1", "m1", {
-      key: "👍",
+  it("passes reaction data from a legacy checkpoint through a restart unchanged", () => {
+    const reaction = {
+      eventId: "re2",
+      key: "🚀",
       senderId: "@u2:localhost",
-      timestamp: "2026-08-05T10:00:00.000Z",
-    });
+      timestamp: "2026-08-05T10:00:02.000Z",
+    };
+    const legacy: RuntimeCheckpoint = {
+      revision: 3,
+      messages: [{ ...message("m1"), reactions: [reaction] }],
+      rankingHistory: [],
+      interventions: [],
+      behavioralEvents: [],
+      contributionClassifications: [],
+      processedEventIds: ["m1", "re1", "re2", "rd1"],
+      redactedReactionEventIds: ["re1"],
+      reactionEvents: [
+        {
+          eventId: "re1",
+          messageId: "m1",
+          key: "👍",
+          senderId: "@u2:localhost",
+          timestamp: "2026-08-05T10:00:00.000Z",
+          redacted: true,
+          redactionEventId: "rd1",
+          redactedAt: "2026-08-05T10:00:01.000Z",
+        },
+        { ...reaction, messageId: "m1", redacted: false },
+      ],
+      ruleState: {},
+    };
+    const expected = structuredClone(legacy);
 
-    const restored = new SessionRuntime(
-      "s",
-      "!r",
-      condition,
-      10,
-      fakeBot(),
-      undefined,
-      first.checkpoint(),
-    );
-    restored.removeRedacted(
-      "re1",
-      "rd1",
-      "2026-08-05T10:00:01.000Z",
-    );
-
+    const restored = new SessionRuntime("s", "!r", condition, 10, fakeBot(), undefined, legacy);
+    restored.recordMessage(message("m2"));
     const checkpoint = restored.checkpoint();
-    expect(checkpoint.messages[0].reactions).toEqual([]);
-    expect(checkpoint.reactionEvents).toEqual([
-      expect.objectContaining({
-        eventId: "re1",
-        messageId: "m1",
-        redacted: true,
-        redactionEventId: "rd1",
-      }),
-    ]);
-    expect(checkpoint.redactedReactionEventIds).toEqual(["re1"]);
-  });
 
-  it("ignores reactions to unknown messages and unknown redactions", () => {
-    const rt = new SessionRuntime("s", "!r", condition, 10, fakeBot());
-    rt.addReaction("re1", "missing", {
-      key: "👍",
-      senderId: "@u:localhost",
-      timestamp: "now",
-    });
-    rt.removeRedacted("nope"); // no throw
-    expect(rt.messages).toHaveLength(0);
+    expect(checkpoint.messages[0].reactions).toEqual(expected.messages[0].reactions);
+    expect(checkpoint.messages[1].reactions).toEqual([]);
+    expect(checkpoint.reactionEvents).toEqual(expected.reactionEvents);
+    expect(checkpoint.redactedReactionEventIds).toEqual(expected.redactedReactionEventIds);
   });
 
   it("records ranking history in order", () => {

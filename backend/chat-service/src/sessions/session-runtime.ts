@@ -8,7 +8,6 @@ import type {
   Message,
   Ranking,
   RecordedReaction,
-  Reaction,
   RuntimeCheckpoint,
   WindowEvaluation,
 } from "@gdm/shared";
@@ -17,12 +16,12 @@ import type { MatrixBotService } from "../matrix/matrix-bot.service";
 /**
  * The live state of one running session, owned by the Chat Service.
  *
- * Collects the discussion (messages + reactions) and the shared-ranking
- * history as they happen, and exposes helpers the bot rules use to intervene.
+ * Collects the discussion (messages) and the shared-ranking history as they
+ * happen, and exposes helpers the bot rules use to intervene.
  * At session end it's serialised and handed back to the Session Manager.
  */
 export class SessionRuntime {
-  /** The chat log so far; each message carries its aggregated reactions. */
+  /** The chat log so far, oldest → newest. */
   readonly messages: Message[] = [];
   /** Every shared-ranking state seen this session, oldest → newest. */
   readonly rankingHistory: Ranking[] = [];
@@ -40,13 +39,14 @@ export class SessionRuntime {
   readonly startedAtMs: number;
   private ended = false;
   private readonly byId = new Map<string, Message>();
-  /** reaction event id -> where it landed, so redactions can undo it. */
-  private readonly reactionEvents = new Map<
-    string,
-    { message: Message; reaction: Reaction }
-  >();
-  private readonly recordedReactions = new Map<string, RecordedReaction>();
-  private readonly redactedReactionEventIds = new Set<string>();
+  /**
+   * Reaction audit data restored from checkpoints written while emoji
+   * reactions were still recorded. Reactions are no longer ingested (the
+   * participant UI cannot produce them); these are passed through unchanged
+   * so a restore → checkpoint round-trip never drops historical data.
+   */
+  private readonly legacyReactionEvents: RecordedReaction[] = [];
+  private readonly legacyRedactedReactionEventIds: string[] = [];
   private readonly processedEventIds = new Set<string>();
   private participantUserIds?: Promise<string[]>;
   /** Monotonic snapshot revision; restored after a Chat Service restart. */
@@ -71,63 +71,6 @@ export class SessionRuntime {
     if (this.byId.has(message.id)) return;
     this.messages.push(message);
     this.byId.set(message.id, message);
-  }
-
-  /** Attach a reaction to its target message (if we've seen it). */
-  addReaction(
-    reactionEventId: string,
-    targetMessageId: string,
-    reaction: Reaction,
-  ): void {
-    const recorded = this.recordedReactions.get(reactionEventId) ?? {
-      ...reaction,
-      eventId: reactionEventId,
-      messageId: targetMessageId,
-      redacted: this.redactedReactionEventIds.has(reactionEventId),
-    };
-    this.recordedReactions.set(reactionEventId, recorded);
-    if (recorded.redacted) return;
-    const message = this.byId.get(targetMessageId);
-    if (!message) return;
-    let stored = message.reactions.find(
-      (candidate) =>
-        candidate.eventId === reactionEventId ||
-        (!candidate.eventId &&
-          candidate.key === reaction.key &&
-          candidate.senderId === reaction.senderId),
-    );
-    if (!stored) {
-      stored = { ...reaction, eventId: reactionEventId };
-      message.reactions.push(stored);
-    } else if (!stored.eventId) {
-      stored.eventId = reactionEventId;
-    }
-    this.reactionEvents.set(reactionEventId, { message, reaction: stored });
-  }
-
-  /** Undo a reaction that was redacted (toggled off). */
-  removeRedacted(
-    redactedEventId: string,
-    redactionEventId?: string,
-    redactedAt?: string,
-  ): void {
-    const entry =
-      this.reactionEvents.get(redactedEventId) ??
-      this.findReactionEvent(redactedEventId);
-    const recorded = this.recordedReactions.get(redactedEventId);
-    // Matrix also uses m.room.redaction for messages. Only create a reaction
-    // tombstone when the target is known to be an annotation event.
-    if (!entry && !recorded) return;
-    this.redactedReactionEventIds.add(redactedEventId);
-    if (recorded) {
-      recorded.redacted = true;
-      if (redactionEventId) recorded.redactionEventId = redactionEventId;
-      if (redactedAt) recorded.redactedAt = redactedAt;
-    }
-    if (!entry) return;
-    const idx = entry.message.reactions.indexOf(entry.reaction);
-    if (idx >= 0) entry.message.reactions.splice(idx, 1);
-    this.reactionEvents.delete(redactedEventId);
   }
 
   recordRanking(ranking: Ranking): void {
@@ -196,8 +139,8 @@ export class SessionRuntime {
       windowEvaluations: this.windowEvaluations,
       classificationFailures: this.classificationFailures,
       processedEventIds: [...this.processedEventIds],
-      redactedReactionEventIds: [...this.redactedReactionEventIds],
-      reactionEvents: [...this.recordedReactions.values()],
+      redactedReactionEventIds: [...this.legacyRedactedReactionEventIds],
+      reactionEvents: [...this.legacyReactionEvents],
       ruleState: this.state,
     };
   }
@@ -241,38 +184,13 @@ export class SessionRuntime {
 
   private restore(checkpoint: RuntimeCheckpoint): void {
     this.checkpointRevision = Math.max(0, checkpoint.revision ?? 0);
-    for (const reaction of checkpoint.reactionEvents ?? []) {
-      const restored = { ...reaction };
-      this.recordedReactions.set(restored.eventId, restored);
-      if (restored.redacted) {
-        this.redactedReactionEventIds.add(restored.eventId);
-      }
-    }
-    for (const eventId of checkpoint.redactedReactionEventIds ?? []) {
-      this.redactedReactionEventIds.add(eventId);
-    }
+    // Checkpoints written before the reaction fields existed omit them.
+    this.legacyReactionEvents.push(...(checkpoint.reactionEvents ?? []));
+    this.legacyRedactedReactionEventIds.push(
+      ...(checkpoint.redactedReactionEventIds ?? []),
+    );
     this.messages.push(...checkpoint.messages);
-    for (const message of this.messages) {
-      message.reactions = message.reactions.filter(
-        (reaction) =>
-          !reaction.eventId ||
-          !this.redactedReactionEventIds.has(reaction.eventId),
-      );
-      this.byId.set(message.id, message);
-      for (const reaction of message.reactions) {
-        if (reaction.eventId) {
-          if (!this.recordedReactions.has(reaction.eventId)) {
-            this.recordedReactions.set(reaction.eventId, {
-              ...reaction,
-              eventId: reaction.eventId,
-              messageId: message.id,
-              redacted: false,
-            });
-          }
-          this.reactionEvents.set(reaction.eventId, { message, reaction });
-        }
-      }
-    }
+    for (const message of this.messages) this.byId.set(message.id, message);
     this.rankingHistory.push(...checkpoint.rankingHistory);
     this.interventions.push(...checkpoint.interventions);
     this.behavioralEvents.push(...checkpoint.behavioralEvents);
@@ -290,15 +208,5 @@ export class SessionRuntime {
       this.processedEventIds.add(eventId);
     }
     Object.assign(this.state, checkpoint.ruleState);
-  }
-
-  private findReactionEvent(
-    eventId: string,
-  ): { message: Message; reaction: Reaction } | undefined {
-    for (const message of this.messages) {
-      const reaction = message.reactions.find((item) => item.eventId === eventId);
-      if (reaction) return { message, reaction };
-    }
-    return undefined;
   }
 }

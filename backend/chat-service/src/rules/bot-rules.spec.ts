@@ -6,7 +6,8 @@ import {
 import type { Condition, InterventionMode, Message } from "@gdm/shared";
 import type { MatrixBotService, TimelineEvent } from "../matrix/matrix-bot.service";
 import { SessionRuntime } from "../sessions/session-runtime";
-import { ContributionBotRules, NoopBotRules, StudyBotRules } from "./bot-rules";
+import { ContributionBotRules, StudyBotRules } from "./bot-rules";
+import { fakeBot } from "../test-utils";
 import type { ClassifierContext } from "../classifier/contribution-classifier";
 
 const MEMBERS = [
@@ -40,16 +41,8 @@ function condition(mode: InterventionMode, overrides = {}): Condition {
   };
 }
 
-function fakeBot() {
-  return {
-    botUserId: "@gdm_bot:localhost",
-    sendText: vi.fn(async () => undefined),
-    getJoinedMemberIds: vi.fn(async () => MEMBERS),
-  } as unknown as MatrixBotService;
-}
-
 function runtime(mode: InterventionMode, overrides = {}) {
-  const bot = fakeBot();
+  const bot = fakeBot(MEMBERS);
   const rt = new SessionRuntime("s", "!r", condition(mode, overrides), 10, bot);
   return { rt, bot };
 }
@@ -58,7 +51,7 @@ function record(
   rt: SessionRuntime,
   sender: string,
   text: string,
-  eventId = crypto.randomUUID(),
+  eventId: string = crypto.randomUUID(),
   ts = Date.now() + 60_000,
 ): TimelineEvent {
   const message: Message = {
@@ -368,7 +361,7 @@ describe("ContributionBotRules", () => {
     for (const event of events) await rules.onEvent(rt, event);
     await rules.onWindowElapsed(rt, ts + 3_000);
 
-    // No grace: the invitation does not protect Red from the nudge.
+    // Leaving the invitation out of the split does not protect Red from the nudge.
     expect(bot.sendText).toHaveBeenCalledTimes(1);
     expect(rt.interventions[0].targets[0].userId).toBe(MEMBERS[0]);
     const red = rt.windowEvaluations[0].contributionSplit.find(
@@ -766,14 +759,5 @@ describe("window evaluation records", () => {
       messageId: "m-fail",
       error: "boom",
     });
-  });
-});
-
-describe("NoopBotRules", () => {
-  it("onEvent does nothing and never throws", () => {
-    const { rt } = runtime("public");
-    expect(() =>
-      new NoopBotRules().onEvent(rt, {} as TimelineEvent),
-    ).not.toThrow();
   });
 });

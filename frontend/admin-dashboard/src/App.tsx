@@ -10,12 +10,16 @@ import Settings from "./components/Settings";
 import Testing from "./components/Testing";
 import { apiFetch, getAdminToken, setAdminToken } from "./api";
 
-export { API_BASE, PARTICIPANT_BASE } from "./api";
-
 /** How often the dashboard refreshes itself (drives the "Live" indicator). */
 const POLL_MS = 5000;
 
 type View = "overview" | "settings" | "testing";
+
+const VIEWS: Array<{ id: View; label: string }> = [
+  { id: "overview", label: "Overview" },
+  { id: "settings", label: "Settings" },
+  { id: "testing", label: "Testing" },
+];
 
 export default function App() {
   const [view, setView] = useState<View>("overview");
@@ -110,27 +114,17 @@ export default function App() {
           <p>Group decision-making study: tracking, sessions, and exports.</p>
         </div>
         <nav className="tabs" aria-label="Views">
-          <button
-            type="button"
-            className={view === "overview" ? "tab active" : "tab"}
-            onClick={() => setView("overview")}
-          >
-            Overview
-          </button>
-          <button
-            type="button"
-            className={view === "settings" ? "tab active" : "tab"}
-            onClick={() => setView("settings")}
-          >
-            Settings
-          </button>
-          <button
-            type="button"
-            className={view === "testing" ? "tab active" : "tab"}
-            onClick={() => setView("testing")}
-          >
-            Testing
-          </button>
+          {VIEWS.map(({ id, label }) => (
+            <button
+              key={id}
+              type="button"
+              className={view === id ? "tab active" : "tab"}
+              aria-current={view === id ? "page" : undefined}
+              onClick={() => setView(id)}
+            >
+              {label}
+            </button>
+          ))}
         </nav>
       </header>
 

@@ -1,47 +1,43 @@
 import { Injectable, OnModuleInit, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { randomInt, randomUUID } from "node:crypto";
-import {
-  DEFAULT_INTERVENTION_CONFIG,
-  MOON_SURVIVAL,
-  MOON_SURVIVAL_BRIEFING,
-  normalizeInterventionMode,
-} from "@gdm/shared";
+import { TEST_CONDITION_PREFIX, isTestCondition } from "@gdm/shared";
 import type {
-  Briefing,
-  BehavioralEvent,
-  BotConfig,
-  ClassificationFailure,
   CheckpointSessionRequest,
   Condition,
-  ContributionClassification,
-  InterventionLog,
-  InterventionMode,
-  Message,
-  Participant,
   ParticipationOutcome,
   ParticipationOutcomeRecord,
   ParticipationStage,
-  Poll,
+  Participant,
   ProlificArrival,
   ProlificIdentity,
-  Ranking,
-  RankingTask,
-  Reaction,
-  RecordedReaction,
   Session,
   SessionSummary,
   StudyRound,
   StudySettings,
   Survey,
-  WindowEvaluation,
 } from "@gdm/shared";
 import type { MatrixCreds } from "../matrix/matrix.service";
 import { PrismaService } from "../prisma/prisma.service";
-import { dedupeWindowEvaluations } from "./window-evaluations";
-
-const BRIEFING = MOON_SURVIVAL_BRIEFING;
-const RANKING_TASK = MOON_SURVIVAL;
+import { mergeCheckpointIntoSession } from "./checkpoint-merge";
+import { normalizeCondition, seedConditions, sortConditions } from "./conditions";
+import { newFormingSession } from "./forming-session";
+import type { TerminationCompensation } from "./participation";
+import { ParticipationStore } from "./participation.store";
+import { json, toDate } from "./prisma-values";
+import {
+  SESSION_INCLUDE,
+  SESSION_SUMMARY_SELECT,
+  conditionData,
+  conditionFromRow,
+  participantCreateData,
+  roundFromRow,
+  sessionFromRow,
+  sessionSummary,
+  sessionSummaryFromRow,
+  type RoundState,
+} from "./row-mappers";
+import { persistRuntimeCheckpoint } from "./runtime-checkpoint";
+import { persistSessionSnapshot, upsertSurvey } from "./session-snapshot";
 
 const EMPTY_STUDY_SETTINGS: StudySettings = {
   compensationUrl: "",
@@ -52,47 +48,12 @@ const EMPTY_STUDY_SETTINGS: StudySettings = {
   technicalFailureUrl: "",
 };
 
-const STAGE_ORDER: ParticipationStage[] = [
-  "arrived",
-  "consent",
-  "entry",
-  "waiting",
-  "chat",
-  "exit",
-  "done",
-  "terminated",
-];
-
-const SESSION_INCLUDE = {
-  participants: {
-    include: { surveys: true },
-    orderBy: { createdAt: "asc" },
-  },
-  messages: {
-    include: { reactions: true },
-    orderBy: { timestamp: "asc" },
-  },
-  rankingHistory: {
-    orderBy: { position: "asc" },
-  },
-  interventions: {
-    orderBy: { timestamp: "asc" },
-  },
-  windowEvaluations: {
-    orderBy: { windowIndex: "asc" },
-  },
-} satisfies Prisma.SessionRecordInclude;
-
-type SessionRow = Prisma.SessionRecordGetPayload<{
-  include: typeof SESSION_INCLUDE;
-}>;
-
-/** A study round as stored (without the derived per-round counts). */
-interface RoundState {
-  id: number;
-  label: string;
-  startedAt: string; // ISO 8601
-  endedAt?: string;
+/** A lobby aborted by the store, with the status it had before. */
+export interface AbortedLobby {
+  id: string;
+  createdAt: string;
+  participantCount: number;
+  priorStatus: "waiting" | "provisioning";
 }
 
 /**
@@ -102,28 +63,26 @@ interface RoundState {
  * Unit tests and ad-hoc non-DB runs fall back to the same in-memory behavior
  * the app previously used, keeping test setup light while making Docker data
  * durable across backend restarts.
+ *
+ * Prolific participation outcomes live in ParticipationStore; row mapping,
+ * condition normalization and the checkpoint merge are pure sibling modules.
  */
 @Injectable()
 export class StoreService implements OnModuleInit {
   private readonly conditions: Condition[] = [];
   private readonly sessions = new Map<string, Session>();
-  private readonly prolificArrivals = new Map<string, ProlificArrival>();
-  private readonly memoryProlificActions = new Map<
-    string,
-    Pick<
-      ParticipationOutcomeRecord,
-      | "returnRequestedAt"
-      | "bonusBatchId"
-      | "paymentSubmittedAt"
-      | "actionError"
-    > & { nextAttemptAt?: string }
-  >();
   private readonly memoryCreds = new Map<string, MatrixCreds>();
   private readonly memorySettings: StudySettings = { ...EMPTY_STUDY_SETTINGS };
   private readonly memoryRounds: RoundState[] = [];
+  private readonly participation: ParticipationStore;
   private seedPromise?: Promise<void>;
 
   constructor(@Optional() private readonly prisma?: PrismaService) {
+    this.participation = new ParticipationStore({
+      dbEnabled: () => this.dbEnabled,
+      db: () => this.db,
+      ensureSeeded: () => this.ensureSeeded(),
+    });
     if (!this.dbEnabled) this.seedMemory();
   }
 
@@ -202,568 +161,116 @@ export class StoreService implements OnModuleInit {
     return this.getStudySettings();
   }
 
-  /** Persist the Prolific IDs before consent/task pages can be abandoned. */
-  async recordProlificArrival(
-    identity: ProlificIdentity,
-  ): Promise<ProlificArrival> {
-    const key = `${identity.studyId}:${identity.sessionId}`;
-    if (!this.dbEnabled) {
-      const existing = this.prolificArrivals.get(key);
-      if (existing) return existing;
-      const arrival = {
-        ...identity,
-        arrivedAt: new Date().toISOString(),
-        stage: "arrived" as const,
-        stageUpdatedAt: new Date().toISOString(),
-        lastSeenAt: new Date().toISOString(),
-      };
-      this.prolificArrivals.set(key, arrival);
-      return arrival;
-    }
+  // ── Prolific participation (ParticipationStore) ──────────────────
 
-    await this.ensureSeeded();
-    const row = await this.db.prolificArrivalRecord.upsert({
-      where: {
-        prolificStudyId_prolificSessionId: {
-          prolificStudyId: identity.studyId,
-          prolificSessionId: identity.sessionId,
-        },
-      },
-      create: {
-        prolificPid: identity.participantId,
-        prolificStudyId: identity.studyId,
-        prolificSessionId: identity.sessionId,
-      },
-      // A submission's participant identity is immutable. The service checks
-      // a mismatching PID and returns a conflict instead of letting a second
-      // request overwrite the original linkage.
-      update: {},
-    });
-    return prolificArrivalFromRow(row);
+  /** Persist the Prolific IDs before consent/task pages can be abandoned. */
+  recordProlificArrival(identity: ProlificIdentity): Promise<ProlificArrival> {
+    return this.participation.recordProlificArrival(identity);
   }
 
-  async getProlificArrival(
+  getProlificArrival(
     identity: ProlificIdentity,
   ): Promise<ProlificArrival | undefined> {
-    const key = arrivalKey(identity);
-    if (!this.dbEnabled) return this.prolificArrivals.get(key);
-    const row = await this.db.prolificArrivalRecord.findUnique({
-      where: {
-        prolificStudyId_prolificSessionId: {
-          prolificStudyId: identity.studyId,
-          prolificSessionId: identity.sessionId,
-        },
-      },
-    });
-    return row ? prolificArrivalFromRow(row) : undefined;
+    return this.participation.getProlificArrival(identity);
   }
 
   /** Active Prolific arrivals whose browser has stopped sending heartbeats. */
-  async listStaleProlificArrivals(
+  listStaleProlificArrivals(
     cutoff: Date,
-    limit = 100,
+    limit?: number,
   ): Promise<ProlificArrival[]> {
-    const activeStages: ParticipationStage[] = [
-      "arrived",
-      "consent",
-      "entry",
-      "waiting",
-      "chat",
-      "exit",
-    ];
-    if (!this.dbEnabled) {
-      return [...this.prolificArrivals.values()]
-        .filter(
-          (arrival) =>
-            !arrival.outcome &&
-            activeStages.includes(arrival.stage) &&
-            Date.parse(arrival.lastSeenAt) <= cutoff.getTime(),
-        )
-        .sort((a, b) => a.lastSeenAt.localeCompare(b.lastSeenAt))
-        .slice(0, limit);
-    }
-    const rows = await this.db.prolificArrivalRecord.findMany({
-      where: {
-        outcome: null,
-        stage: { in: activeStages },
-        lastSeenAt: { lte: cutoff },
-      },
-      orderBy: { lastSeenAt: "asc" },
-      take: limit,
-    });
-    return rows.map(prolificArrivalFromRow);
+    return this.participation.listStaleProlificArrivals(cutoff, limit);
   }
 
   /** Advance a server-validated journey milestone; terminal outcomes are immutable. */
-  async recordParticipationStage(
+  recordParticipationStage(
     identity: ProlificIdentity,
     stage: Exclude<ParticipationStage, "done" | "terminated">,
   ): Promise<ProlificArrival> {
-    const arrival = await this.recordProlificArrival(identity);
-    const now = new Date();
-    if (!this.dbEnabled) {
-      if (arrival.outcome) return arrival;
-      arrival.lastSeenAt = now.toISOString();
-      if (
-        !arrival.outcome &&
-        STAGE_ORDER.indexOf(stage) >= STAGE_ORDER.indexOf(arrival.stage)
-      ) {
-        arrival.stage = stage;
-        arrival.stageUpdatedAt = now.toISOString();
-      }
-      return arrival;
-    }
-
-    if (arrival.outcome) return arrival;
-    const earlierStages = STAGE_ORDER.slice(0, STAGE_ORDER.indexOf(stage));
-    const row = await this.db.$transaction(async (tx) => {
-      const advanced = await tx.prolificArrivalRecord.updateMany({
-        where: {
-          prolificStudyId: identity.studyId,
-          prolificSessionId: identity.sessionId,
-          outcome: null,
-          stage: { in: earlierStages },
-        },
-        data: { stage, stageUpdatedAt: now, lastSeenAt: now },
-      });
-      if (advanced.count > 0) {
-        const current = await tx.prolificArrivalRecord.findUniqueOrThrow({
-          where: {
-            prolificStudyId_prolificSessionId: {
-              prolificStudyId: identity.studyId,
-              prolificSessionId: identity.sessionId,
-            },
-          },
-        });
-        await tx.participationEventRecord.create({
-          data: {
-            prolificArrivalId: current.id,
-            type: "stage",
-            stage,
-          },
-        });
-        return current;
-      }
-      // Same/later-stage heartbeat. The outcome predicate ensures a timeout
-      // that won the race cannot be overwritten or revived.
-      await tx.prolificArrivalRecord.updateMany({
-        where: {
-          prolificStudyId: identity.studyId,
-          prolificSessionId: identity.sessionId,
-          outcome: null,
-        },
-        data: { lastSeenAt: now },
-      });
-      return tx.prolificArrivalRecord.findUniqueOrThrow({
-        where: {
-          prolificStudyId_prolificSessionId: {
-            prolificStudyId: identity.studyId,
-            prolificSessionId: identity.sessionId,
-          },
-        },
-      });
-    });
-    return prolificArrivalFromRow(row);
+    return this.participation.recordParticipationStage(identity, stage);
   }
 
   /** Atomically persist one terminal outcome and its idempotent Prolific action. */
-  async terminateProlificParticipation(
+  terminateProlificParticipation(
     identity: ProlificIdentity,
     outcome: Exclude<ParticipationOutcome, "completed">,
     reason: string,
-    compensationKind: "none" | "partial" | "manual_review",
+    compensationKind: TerminationCompensation,
     compensationAmountPence?: number,
   ): Promise<ParticipationOutcomeRecord> {
-    const arrival = await this.recordProlificArrival(identity);
-    if (arrival.outcome) {
-      return this.getParticipationOutcome(identity) as Promise<ParticipationOutcomeRecord>;
-    }
-    const now = new Date();
-    const elapsedSeconds = Math.max(
-      0,
-      Math.floor((now.getTime() - Date.parse(arrival.arrivedAt)) / 1_000),
+    return this.participation.terminateProlificParticipation(
+      identity,
+      outcome,
+      reason,
+      compensationKind,
+      compensationAmountPence,
     );
-    if (!this.dbEnabled) {
-      Object.assign(arrival, {
-        stage: "terminated",
-        stageUpdatedAt: now.toISOString(),
-        lastSeenAt: now.toISOString(),
-        outcome,
-        outcomeReason: reason,
-        endedAt: now.toISOString(),
-        elapsedSeconds,
-        compensationKind,
-        compensationAmountPence,
-        prolificActionStatus: "pending",
-      });
-      return { id: arrivalKey(identity), ...arrival };
-    }
-
-    const result = await this.db.$transaction(async (tx) => {
-      const current = await tx.prolificArrivalRecord.findUniqueOrThrow({
-        where: {
-          prolificStudyId_prolificSessionId: {
-            prolificStudyId: identity.studyId,
-            prolificSessionId: identity.sessionId,
-          },
-        },
-        include: { compensation: true },
-      });
-      if (current.outcome) return current;
-      return tx.prolificArrivalRecord.update({
-        where: { id: current.id },
-        data: {
-          stage: "terminated",
-          stageUpdatedAt: now,
-          lastSeenAt: now,
-          outcome,
-          outcomeReason: reason.slice(0, 500),
-          endedAt: now,
-          elapsedSeconds,
-          compensationKind,
-          compensationAmountPence,
-          events: {
-            create: {
-              type: "terminated",
-              stage: "terminated",
-              detail: json({ outcome, reason: reason.slice(0, 500) }),
-            },
-          },
-          compensation: {
-            upsert: {
-              create: {
-                kind: compensationKind,
-                amountPence: compensationAmountPence,
-                status: "pending",
-                nextAttemptAt: now,
-              },
-              update: {},
-            },
-          },
-        },
-        include: { compensation: true },
-      });
-    });
-    return participationOutcomeFromRow(result);
   }
 
-  /**
-   * Claim a stale heartbeat atomically. A heartbeat that lands after the stale
-   * scan but before this write wins, so an active participant is never kicked
-   * on an outdated read.
-   */
-  async terminateStaleProlificParticipation(
+  /** Claim a stale heartbeat atomically (a racing heartbeat wins). */
+  terminateStaleProlificParticipation(
     identity: ProlificIdentity,
     cutoff: Date,
     outcome: Exclude<ParticipationOutcome, "completed">,
     reason: string,
-    compensationKind: "none" | "partial" | "manual_review",
+    compensationKind: TerminationCompensation,
     compensationAmountPence?: number,
   ): Promise<ParticipationOutcomeRecord | null> {
-    const now = new Date();
-    if (!this.dbEnabled) {
-      const arrival = this.prolificArrivals.get(arrivalKey(identity));
-      if (
-        !arrival ||
-        arrival.outcome ||
-        Date.parse(arrival.lastSeenAt) > cutoff.getTime()
-      ) {
-        return null;
-      }
-      const elapsedSeconds = Math.max(
-        0,
-        Math.floor((now.getTime() - Date.parse(arrival.arrivedAt)) / 1_000),
-      );
-      Object.assign(arrival, {
-        stage: "terminated",
-        stageUpdatedAt: now.toISOString(),
-        lastSeenAt: now.toISOString(),
-        outcome,
-        outcomeReason: reason,
-        endedAt: now.toISOString(),
-        elapsedSeconds,
-        compensationKind,
-        compensationAmountPence,
-        prolificActionStatus: "pending",
-      });
-      return { id: arrivalKey(identity), ...arrival };
-    }
-
-    const result = await this.db.$transaction(async (tx) => {
-      const current = await tx.prolificArrivalRecord.findUnique({
-        where: {
-          prolificStudyId_prolificSessionId: {
-            prolificStudyId: identity.studyId,
-            prolificSessionId: identity.sessionId,
-          },
-        },
-      });
-      if (current && !current.outcome && current.lastSeenAt <= cutoff) {
-        const elapsedSeconds = Math.max(
-          0,
-          Math.floor((now.getTime() - current.arrivedAt.getTime()) / 1_000),
-        );
-        const claimed = await tx.prolificArrivalRecord.updateMany({
-          where: {
-            id: current.id,
-            outcome: null,
-            lastSeenAt: { lte: cutoff },
-          },
-          data: {
-            stage: "terminated",
-            stageUpdatedAt: now,
-            lastSeenAt: now,
-            outcome,
-            outcomeReason: reason.slice(0, 500),
-            endedAt: now,
-            elapsedSeconds,
-            compensationKind,
-            compensationAmountPence,
-          },
-        });
-        if (claimed.count === 0) return null;
-        await tx.participationEventRecord.create({
-          data: {
-            prolificArrivalId: current.id,
-            type: "terminated",
-            stage: "terminated",
-            detail: json({ outcome, reason: reason.slice(0, 500) }),
-          },
-        });
-        await tx.prolificCompensationRecord.upsert({
-          where: { prolificArrivalId: current.id },
-          create: {
-            prolificArrivalId: current.id,
-            kind: compensationKind,
-            amountPence: compensationAmountPence,
-            status: "pending",
-            nextAttemptAt: now,
-          },
-          update: {},
-        });
-        return tx.prolificArrivalRecord.findUniqueOrThrow({
-          where: { id: current.id },
-          include: { compensation: true },
-        });
-      }
-      return null;
-    });
-    return result ? participationOutcomeFromRow(result) : null;
+    return this.participation.terminateStaleProlificParticipation(
+      identity,
+      cutoff,
+      outcome,
+      reason,
+      compensationKind,
+      compensationAmountPence,
+    );
   }
 
-  async completeProlificParticipation(
+  completeProlificParticipation(
     identity: ProlificIdentity,
   ): Promise<ParticipationOutcomeRecord> {
-    const arrival = await this.recordProlificArrival(identity);
-    const existing = await this.getParticipationOutcome(identity);
-    if (existing?.outcome) return existing;
-    const now = new Date();
-    const elapsedSeconds = Math.max(
-      0,
-      Math.floor((now.getTime() - Date.parse(arrival.arrivedAt)) / 1_000),
-    );
-    if (!this.dbEnabled) {
-      Object.assign(arrival, {
-        stage: "done",
-        stageUpdatedAt: now.toISOString(),
-        lastSeenAt: now.toISOString(),
-        outcome: "completed",
-        endedAt: now.toISOString(),
-        elapsedSeconds,
-        compensationKind: "full",
-        prolificActionStatus: "not_required",
-      });
-      return { id: arrivalKey(identity), ...arrival };
-    }
-    const row = await this.db.prolificArrivalRecord.update({
-      where: {
-        prolificStudyId_prolificSessionId: {
-          prolificStudyId: identity.studyId,
-          prolificSessionId: identity.sessionId,
-        },
-      },
-      data: {
-        stage: "done",
-        stageUpdatedAt: now,
-        lastSeenAt: now,
-        outcome: "completed",
-        endedAt: now,
-        elapsedSeconds,
-        compensationKind: "full",
-        events: { create: { type: "completed", stage: "done" } },
-        compensation: {
-          upsert: {
-            create: { kind: "full", status: "not_required" },
-            update: { kind: "full", status: "not_required" },
-          },
-        },
-      },
-      include: { compensation: true },
-    });
-    return participationOutcomeFromRow(row);
+    return this.participation.completeProlificParticipation(identity);
   }
 
-  async getParticipationOutcome(
+  getParticipationOutcome(
     identity: ProlificIdentity,
   ): Promise<ParticipationOutcomeRecord | undefined> {
-    if (!this.dbEnabled) {
-      const arrival = this.prolificArrivals.get(arrivalKey(identity));
-      if (!arrival) return undefined;
-      const id = arrivalKey(identity);
-      return { id, ...arrival, ...this.memoryProlificActions.get(id) };
-    }
-    const row = await this.db.prolificArrivalRecord.findUnique({
-      where: {
-        prolificStudyId_prolificSessionId: {
-          prolificStudyId: identity.studyId,
-          prolificSessionId: identity.sessionId,
-        },
-      },
-      include: { compensation: true },
-    });
-    return row ? participationOutcomeFromRow(row) : undefined;
+    return this.participation.getParticipationOutcome(identity);
   }
 
-  async listParticipationOutcomes(): Promise<ParticipationOutcomeRecord[]> {
-    if (!this.dbEnabled) {
-      return [...this.prolificArrivals.entries()].map(([id, arrival]) => ({
-        id,
-        ...arrival,
-        ...this.memoryProlificActions.get(id),
-      }));
-    }
-    const rows = await this.db.prolificArrivalRecord.findMany({
-      include: { compensation: true },
-      orderBy: { arrivedAt: "desc" },
-    });
-    return rows.map(participationOutcomeFromRow);
+  listParticipationOutcomes(): Promise<ParticipationOutcomeRecord[]> {
+    return this.participation.listParticipationOutcomes();
   }
 
-  async getParticipationOutcomeById(
+  getParticipationOutcomeById(
     id: string,
   ): Promise<ParticipationOutcomeRecord | undefined> {
-    if (!this.dbEnabled) {
-      return this.listParticipationOutcomes().then((rows) =>
-        rows.find((row) => row.id === id),
-      );
-    }
-    const row = await this.db.prolificArrivalRecord.findUnique({
-      where: { id },
-      include: { compensation: true },
-    });
-    return row ? participationOutcomeFromRow(row) : undefined;
+    return this.participation.getParticipationOutcomeById(id);
   }
 
-  async markProlificAction(
+  markProlificAction(
     arrivalId: string,
-    patch: {
-      status: string;
-      returnRequestedAt?: Date;
-      bonusBatchId?: string;
-      paymentSubmittedAt?: Date;
-      actionError?: string | null;
-      nextAttemptAt?: Date | null;
-    },
+    patch: Parameters<ParticipationStore["markProlificAction"]>[1],
   ): Promise<void> {
-    if (!this.dbEnabled) {
-      const outcome = await this.getParticipationOutcomeById(arrivalId);
-      if (!outcome) return;
-      const current = this.memoryProlificActions.get(arrivalId) ?? {};
-      this.memoryProlificActions.set(arrivalId, {
-        ...current,
-        ...(patch.returnRequestedAt
-          ? { returnRequestedAt: patch.returnRequestedAt.toISOString() }
-          : {}),
-        ...(patch.bonusBatchId ? { bonusBatchId: patch.bonusBatchId } : {}),
-        ...(patch.paymentSubmittedAt
-          ? { paymentSubmittedAt: patch.paymentSubmittedAt.toISOString() }
-          : {}),
-        ...(patch.actionError !== undefined
-          ? { actionError: patch.actionError ?? undefined }
-          : {}),
-        ...(patch.nextAttemptAt !== undefined
-          ? { nextAttemptAt: patch.nextAttemptAt?.toISOString() }
-          : {}),
-      });
-      const arrival = this.prolificArrivals.get(
-        arrivalKey({
-          participantId: outcome.participantId,
-          studyId: outcome.studyId,
-          sessionId: outcome.sessionId,
-        }),
-      );
-      if (arrival) {
-        arrival.prolificActionStatus =
-          patch.status as ProlificArrival["prolificActionStatus"];
-      }
-      return;
-    }
-    await this.db.prolificCompensationRecord.update({
-      where: { prolificArrivalId: arrivalId },
-      data: { ...patch, attemptCount: { increment: 1 } },
-    });
+    return this.participation.markProlificAction(arrivalId, patch);
   }
 
-  async dueProlificActions(limit = 20): Promise<ParticipationOutcomeRecord[]> {
-    if (!this.dbEnabled) {
-      const now = Date.now();
-      return (await this.listParticipationOutcomes())
-        .filter((outcome) => {
-          if (!outcome.outcome) return false;
-          if (
-            !["pending", "failed"].includes(
-              outcome.prolificActionStatus ?? "",
-            )
-          ) {
-            return false;
-          }
-          const next = this.memoryProlificActions.get(outcome.id)?.nextAttemptAt;
-          return !next || Date.parse(next) <= now;
-        })
-        .slice(0, limit);
-    }
-    const rows = await this.db.prolificArrivalRecord.findMany({
-      where: {
-        compensation: {
-          status: { in: ["pending", "failed"] },
-          attemptCount: { lt: 5 },
-          OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }],
-        },
-      },
-      include: { compensation: true },
-      orderBy: { endedAt: "asc" },
-      take: limit,
-    });
-    return rows.map(participationOutcomeFromRow);
+  dueProlificActions(limit?: number): Promise<ParticipationOutcomeRecord[]> {
+    return this.participation.dueProlificActions(limit);
   }
 
-  async linkProlificArrival(
+  linkProlificArrival(
     identity: ProlificIdentity,
     participantRecordId: string,
   ): Promise<void> {
-    const key = `${identity.studyId}:${identity.sessionId}`;
-    if (!this.dbEnabled) {
-      const arrival = this.prolificArrivals.get(key);
-      if (arrival) arrival.participantRecordId = participantRecordId;
-      return;
-    }
-    await this.db.prolificArrivalRecord.updateMany({
-      where: {
-        prolificStudyId: identity.studyId,
-        prolificSessionId: identity.sessionId,
-      },
-      data: { participantRecordId },
-    });
+    return this.participation.linkProlificArrival(identity, participantRecordId);
   }
 
-  async listProlificArrivals(): Promise<ProlificArrival[]> {
-    if (!this.dbEnabled) return [...this.prolificArrivals.values()];
-    await this.ensureSeeded();
-    const rows = await this.db.prolificArrivalRecord.findMany({
-      orderBy: { arrivedAt: "asc" },
-    });
-    return rows.map(prolificArrivalFromRow);
+  listProlificArrivals(): Promise<ProlificArrival[]> {
+    return this.participation.listProlificArrivals();
   }
+
+  // ── rounds, sessions, participants ───────────────────────────────
 
   /**
    * The study round currently open (endedAt unset). Lazily creates Round 1
@@ -815,7 +322,7 @@ export class StoreService implements OnModuleInit {
     if (this.dbEnabled) {
       const counts = await this.db.sessionRecord.groupBy({
         by: ["roundId", "status"],
-        where: { NOT: { conditionId: { startsWith: "e2e-" } } },
+        where: { NOT: { conditionId: { startsWith: TEST_CONDITION_PREFIX } } },
         _count: { _all: true },
       });
       return rounds
@@ -835,7 +342,7 @@ export class StoreService implements OnModuleInit {
         }));
     }
     const sessions = this.allMemorySessions().filter(
-      (session) => !session.condition.id.startsWith("e2e-"),
+      (session) => !isTestCondition(session.condition.id),
     );
     return rounds
       .sort((a, b) => a.id - b.id)
@@ -965,49 +472,12 @@ export class StoreService implements OnModuleInit {
     }
     await this.ensureSeeded();
     const rows = await this.db.sessionRecord.findMany({
-      select: {
-        id: true,
-        status: true,
-        roundId: true,
-        conditionId: true,
-        conditionSnapshot: true,
-        createdAt: true,
-        startedAt: true,
-        completedAt: true,
-        waitingDeadlineAt: true,
-        roomId: true,
-        _count: {
-          select: {
-            participants: true,
-            messages: true,
-            interventions: true,
-            rankingHistory: true,
-          },
-        },
-      },
+      select: SESSION_SUMMARY_SELECT,
       orderBy: { createdAt: "desc" },
     });
-    return rows.map((row) => {
-      const condition = fromJson<Condition>(row.conditionSnapshot);
-      return {
-        id: row.id,
-        status: row.status as SessionSummary["status"],
-        roundId: row.roundId,
-        conditionId: condition.id,
-        conditionName: condition.name,
-        participantCount: row._count.participants,
-        groupSize: condition.groupSize,
-        messageCount: row._count.messages,
-        interventionCount: row._count.interventions,
-        rankingEditCount: row._count.rankingHistory,
-        createdAt: row.createdAt.toISOString(),
-        startedAt: row.startedAt?.toISOString(),
-        completedAt: row.completedAt?.toISOString(),
-        waitingDeadlineAt: row.waitingDeadlineAt?.toISOString(),
-        roomId: row.roomId ?? undefined,
-      };
-    });
+    return rows.map(sessionSummaryFromRow);
   }
+
 
   /**
    * Resolve an existing seat without hydrating every historical session.
@@ -1142,19 +612,10 @@ export class StoreService implements OnModuleInit {
 
     await this.ensureSeeded();
     await this.db.participantRecord.create({
-      data: {
-        id: participant.id,
-        sessionId,
-        name: participant.name,
-        trackingToken: participant.trackingToken,
-        recruitmentSource: participant.recruitmentSource,
-        prolificPid: participant.prolific?.participantId,
-        prolificStudyId: participant.prolific?.studyId,
-        prolificSessionId: participant.prolific?.sessionId,
-        completedAt: toOptionalDate(participant.completedAt),
-      },
+      data: participantCreateData(sessionId, participant),
     });
   }
+
 
   /**
    * Release a seat only while a lobby is still forming. The Prolific arrival
@@ -1311,21 +772,10 @@ export class StoreService implements OnModuleInit {
       select: { id: true },
     });
     if (!participant) return false;
-    await this.db.surveyRecord.upsert({
-      where: { participantId_kind: { participantId, kind } },
-      create: {
-        participantId,
-        kind,
-        answers: json(survey.answers),
-        submittedAt: toDate(survey.submittedAt),
-      },
-      update: {
-        answers: json(survey.answers),
-        submittedAt: toDate(survey.submittedAt),
-      },
-    });
+    await upsertSurvey(this.db, participantId, kind, survey);
     return true;
   }
+
 
   /** Merge additional keys into an existing exit survey's answers JSON. */
   async patchExitSurveyAnswers(
@@ -1342,8 +792,8 @@ export class StoreService implements OnModuleInit {
       return true;
     }
 
-    const existing = await this.db.surveyRecord.findUnique({
-      where: { participantId_kind: { participantId, kind: "exit" } },
+    const existing = await this.db.surveyRecord.findFirst({
+      where: { participantId, kind: "exit", participant: { sessionId } },
       select: { answers: true },
     });
     if (!existing) return false;
@@ -1390,59 +840,10 @@ export class StoreService implements OnModuleInit {
 
     await this.ensureConditionExists(session.condition);
     await this.db.$transaction(async (tx) => {
-      await tx.sessionRecord.upsert({
-        where: { id: session.id },
-        create: {
-          id: session.id,
-          status: session.status,
-          conditionId: session.condition.id,
-          roundId: session.roundId,
-          conditionSnapshot: json(session.condition),
-          bot: json(session.bot),
-          briefing: json(session.briefing),
-          rankingTask: json(session.rankingTask),
-          ranking: json(session.ranking),
-          polls: json(session.polls),
-          behavioralEvents: json(session.behavioralEvents),
-          classifications: json(session.contributionClassifications),
-          classificationFailures: json(session.classificationFailures ?? []),
-          processedEventIds: json(session.processedEventIds ?? []),
-          runtimeState: json(session.runtimeState ?? {}),
-          checkpointRevision: session.checkpointRevision ?? 0,
-          durationMinutes: session.durationMinutes,
-          roomId: session.roomId,
-          waitingDeadlineAt: toOptionalDate(session.waitingDeadlineAt),
-          createdAt: toDate(session.createdAt),
-          startedAt: toOptionalDate(session.startedAt),
-          completedAt: toOptionalDate(session.completedAt),
-        },
-        update: {
-          status: session.status,
-          conditionId: session.condition.id,
-          roundId: session.roundId,
-          conditionSnapshot: json(session.condition),
-          bot: json(session.bot),
-          briefing: json(session.briefing),
-          rankingTask: json(session.rankingTask),
-          polls: json(session.polls),
-          durationMinutes: session.durationMinutes,
-          roomId: session.roomId,
-          waitingDeadlineAt: toOptionalDate(session.waitingDeadlineAt),
-          startedAt: toOptionalDate(session.startedAt),
-          ...(session.completedAt
-            ? { completedAt: toDate(session.completedAt) }
-            : {}),
-        },
-      });
-
-      await this.saveParticipants(tx, session);
-      await this.persistRuntimeCheckpoint(
-        tx,
-        session.id,
-        checkpointFromSession(session),
-      );
+      await persistSessionSnapshot(tx, session);
     });
   }
+
 
   /**
    * Persist only live chat-owned fields; never overwrite lifecycle/surveys.
@@ -1461,7 +862,7 @@ export class StoreService implements OnModuleInit {
     }
 
     await this.db.$transaction(async (tx) => {
-      await this.persistRuntimeCheckpoint(tx, sessionId, checkpoint);
+      await persistRuntimeCheckpoint(tx, sessionId, checkpoint);
     }, {
       // The default interactive-transaction timeout is five seconds. During a
       // recruitment wave, waiting briefly for a connection is safer than
@@ -1498,26 +899,37 @@ export class StoreService implements OnModuleInit {
   }
 
   /**
-   * Abort waiting lobbies in one targeted update. With `olderThan`, also clean
-   * up a provisioning group that has been unable to start for the full lobby
-   * timeout. Rows are retained for audit/export; only lifecycle state changes.
+   * Abort every waiting lobby (a new study round starts). Rows are retained
+   * for audit/export; only lifecycle state changes.
    */
-  async abortWaitingSessions(
-    olderThan?: Date,
-  ): Promise<Array<{ id: string; createdAt: string; participantCount: number }>> {
+  async abortWaitingSessions(): Promise<AbortedLobby[]> {
+    return this.abortLobbies(["waiting"]);
+  }
+
+  /** Abort every lobby whose durable deadline has passed. */
+  async abortExpiredWaitingSessions(now = new Date()): Promise<AbortedLobby[]> {
+    return this.abortLobbies(["waiting", "provisioning"], now);
+  }
+
+  /**
+   * Flip matching lobbies to aborted, each with a conditional update so a
+   * group that started (or was aborted) concurrently is left alone. With
+   * `deadlinePassedAt`, only lobbies whose waiting deadline has passed match.
+   */
+  private async abortLobbies(
+    statuses: AbortedLobby["priorStatus"][],
+    deadlinePassedAt?: Date,
+  ): Promise<AbortedLobby[]> {
     if (!this.dbEnabled) {
-      const aborted: Array<{
-        id: string;
-        createdAt: string;
-        participantCount: number;
-      }> = [];
+      const aborted: AbortedLobby[] = [];
       for (const session of this.sessions.values()) {
-        const abortableStatus = olderThan
-          ? session.status === "waiting" || session.status === "provisioning"
-          : session.status === "waiting";
+        const priorStatus = session.status;
         if (
-          !abortableStatus ||
-          (olderThan && new Date(session.createdAt) >= olderThan)
+          (priorStatus !== "waiting" && priorStatus !== "provisioning") ||
+          !statuses.includes(priorStatus) ||
+          (deadlinePassedAt &&
+            (!session.waitingDeadlineAt ||
+              Date.parse(session.waitingDeadlineAt) > deadlinePassedAt.getTime()))
         ) {
           continue;
         }
@@ -1526,87 +938,19 @@ export class StoreService implements OnModuleInit {
           id: session.id,
           createdAt: session.createdAt,
           participantCount: session.participants.length,
+          priorStatus,
         });
       }
       return aborted;
     }
 
     await this.ensureSeeded();
-    const abortableStatuses = olderThan
-      ? ["waiting", "provisioning"]
-      : ["waiting"];
+    const where = {
+      status: { in: statuses },
+      ...(deadlinePassedAt ? { waitingDeadlineAt: { lte: deadlinePassedAt } } : {}),
+    };
     const rows = await this.db.sessionRecord.findMany({
-      where: {
-        status: { in: abortableStatuses },
-        ...(olderThan ? { createdAt: { lt: olderThan } } : {}),
-      },
-      select: {
-        id: true,
-        createdAt: true,
-        _count: { select: { participants: true } },
-      },
-    });
-    const aborted = [];
-    for (const row of rows) {
-      const changed = await this.db.sessionRecord.updateMany({
-        where: {
-          id: row.id,
-          status: { in: abortableStatuses },
-        },
-        data: { status: "aborted" },
-      });
-      if (changed.count > 0) aborted.push(row);
-    }
-    return aborted.map((row) => ({
-      id: row.id,
-      createdAt: row.createdAt.toISOString(),
-      participantCount: row._count.participants,
-    }));
-  }
-
-  /** Abort every lobby whose durable deadline has passed. */
-  async abortExpiredWaitingSessions(
-    now = new Date(),
-  ): Promise<
-    Array<{
-      id: string;
-      createdAt: string;
-      participantCount: number;
-      priorStatus: "waiting" | "provisioning";
-    }>
-  > {
-    if (!this.dbEnabled) {
-      const expired: Array<{
-        id: string;
-        createdAt: string;
-        participantCount: number;
-        priorStatus: "waiting" | "provisioning";
-      }> = [];
-      for (const session of this.sessions.values()) {
-        if (
-          (session.status !== "waiting" && session.status !== "provisioning") ||
-          !session.waitingDeadlineAt ||
-          Date.parse(session.waitingDeadlineAt) > now.getTime()
-        ) {
-          continue;
-        }
-        const priorStatus = session.status;
-        session.status = "aborted";
-        expired.push({
-          id: session.id,
-          createdAt: session.createdAt,
-          participantCount: session.participants.length,
-          priorStatus,
-        });
-      }
-      return expired;
-    }
-
-    const rows = await this.db.sessionRecord.findMany({
-      where: {
-        status: { in: ["waiting", "provisioning"] },
-        waitingDeadlineAt: { lte: now },
-      },
+      where,
       select: {
         id: true,
         status: true,
@@ -1614,24 +958,22 @@ export class StoreService implements OnModuleInit {
         _count: { select: { participants: true } },
       },
     });
-    const aborted = [];
+    const aborted: AbortedLobby[] = [];
     for (const row of rows) {
       const changed = await this.db.sessionRecord.updateMany({
-        where: {
-          id: row.id,
-          status: { in: ["waiting", "provisioning"] },
-          waitingDeadlineAt: { lte: now },
-        },
+        where: { id: row.id, ...where },
         data: { status: "aborted" },
       });
-      if (changed.count > 0) aborted.push(row);
+      if (changed.count > 0) {
+        aborted.push({
+          id: row.id,
+          createdAt: row.createdAt.toISOString(),
+          participantCount: row._count.participants,
+          priorStatus: row.status as AbortedLobby["priorStatus"],
+        });
+      }
     }
-    return aborted.map((row) => ({
-      id: row.id,
-      createdAt: row.createdAt.toISOString(),
-      participantCount: row._count.participants,
-      priorStatus: row.status as "waiting" | "provisioning",
-    }));
+    return aborted;
   }
 
   /** Running sessions only, for Chat Service crash recovery. */
@@ -1652,48 +994,15 @@ export class StoreService implements OnModuleInit {
 
   async createForming(condition: Condition): Promise<Session> {
     const now = new Date().toISOString();
-    const waitingMinutes = Math.max(
-      1,
-      Number(process.env.WAITING_TIMEOUT_MINUTES ?? 5) || 5,
-    );
-    const session: Session = {
-      id: randomUUID(),
-      status: "waiting",
-      // Stamped once from the open round; the session never changes rounds.
-      roundId: (await this.currentRound()).id,
+    const session = newFormingSession(
       condition,
-      bot: { llmEnabled: condition.config.llmMode === "active", condition },
-      participants: [],
-      chat: { messages: [] },
-      briefing: BRIEFING,
-      rankingTask: RANKING_TASK,
-      ranking: {
-        taskId: RANKING_TASK.id,
-        // Shuffle once when the group session is created. The persisted order
-        // is then shared with every participant in that session.
-        order: condition.config.workspaceMode === "etherpad" ? [] : shuffleRankingOrder(RANKING_TASK.items.map((i) => i.id)),
-        updatedAt: now,
-        updatedBy: "system",
-      },
-      interventions: [],
-      behavioralEvents: [],
-      contributionClassifications: [],
-      windowEvaluations: [],
-      classificationFailures: [],
-      processedEventIds: [],
-      redactedReactionEventIds: [],
-      reactionEvents: [],
-      runtimeState: {},
-      polls: [],
-      durationMinutes: condition.durationMinutes,
-      waitingDeadlineAt: new Date(
-        Date.parse(now) + waitingMinutes * 60_000,
-      ).toISOString(),
-      createdAt: now,
-    };
+      (await this.currentRound()).id,
+      now,
+    );
     await this.saveSession(session);
     return session;
   }
+
 
   async setParticipantCreds(
     participantId: string,
@@ -1808,1029 +1117,4 @@ export class StoreService implements OnModuleInit {
     });
     return rows.map(sessionFromRow);
   }
-
-  private async saveParticipants(
-    tx: Prisma.TransactionClient,
-    session: Session,
-  ): Promise<void> {
-    for (const participant of session.participants) {
-      await tx.participantRecord.upsert({
-        where: { id: participant.id },
-        create: {
-          id: participant.id,
-          sessionId: session.id,
-          name: participant.name,
-          trackingToken: participant.trackingToken,
-          recruitmentSource: participant.recruitmentSource,
-          prolificPid: participant.prolific?.participantId,
-          prolificStudyId: participant.prolific?.studyId,
-          prolificSessionId: participant.prolific?.sessionId,
-          completedAt: toOptionalDate(participant.completedAt),
-        },
-        update: {
-          sessionId: session.id,
-          name: participant.name,
-          trackingToken: participant.trackingToken,
-          recruitmentSource: participant.recruitmentSource,
-          prolificPid: participant.prolific?.participantId,
-          prolificStudyId: participant.prolific?.studyId,
-          prolificSessionId: participant.prolific?.sessionId,
-          // A stale aggregate snapshot must never clear compensation
-          // eligibility written independently by completeParticipant().
-          ...(participant.completedAt
-            ? { completedAt: toDate(participant.completedAt) }
-            : {}),
-        },
-      });
-      await this.saveSurvey(tx, participant, "entry", participant.entrySurvey);
-      await this.saveSurvey(tx, participant, "exit", participant.exitSurvey);
-    }
-  }
-
-  private async saveSurvey(
-    tx: Prisma.TransactionClient,
-    participant: Participant,
-    kind: "entry" | "exit",
-    survey: Survey | undefined,
-  ): Promise<void> {
-    if (!survey) return;
-    await tx.surveyRecord.upsert({
-      where: {
-        participantId_kind: {
-          participantId: participant.id,
-          kind,
-        },
-      },
-      create: {
-        participantId: participant.id,
-        kind,
-        answers: json(survey.answers),
-        submittedAt: toDate(survey.submittedAt),
-      },
-      update: {
-        answers: json(survey.answers),
-        submittedAt: toDate(survey.submittedAt),
-      },
-    });
-  }
-
-  /**
-   * Merge a full Chat Service snapshot into normalized research tables.
-   * Every operation is idempotent. No message/ranking/intervention row is
-   * deleted, which makes retrying after a timeout safe and crash-resilient.
-   */
-  private async persistRuntimeCheckpoint(
-    tx: Prisma.TransactionClient,
-    sessionId: string,
-    checkpoint: CheckpointSessionRequest,
-  ): Promise<void> {
-    const current = await tx.sessionRecord.findUnique({
-      where: { id: sessionId },
-      select: {
-        ranking: true,
-        conditionSnapshot: true,
-        rankingHistory: {
-          select: { position: true, ranking: true },
-          orderBy: { position: "asc" },
-        },
-        behavioralEvents: true,
-        classifications: true,
-        classificationFailures: true,
-        processedEventIds: true,
-        runtimeState: true,
-        checkpointRevision: true,
-      },
-    });
-    if (!current) throw new Error(`Unknown session ${sessionId}`);
-    if (fromJson<Condition>(current.conditionSnapshot).config.workspaceMode === "etherpad") checkpoint = withoutRanking(checkpoint);
-    const incomingRevision = checkpoint.revision;
-    const acceptsMutableState =
-      incomingRevision === undefined ||
-      incomingRevision >= current.checkpointRevision;
-
-    const messages = checkpoint.messages ?? [];
-    if (messages.length > 0) {
-      await tx.messageRecord.createMany({
-        data: messages.map((message) => ({
-          id: message.id,
-          sessionId,
-          timestamp: toDate(message.timestamp),
-          senderId: message.senderId,
-          recipientId: message.recipientId ?? null,
-          text: message.text,
-        })),
-        skipDuplicates: true,
-      });
-
-      // New checkpoints carry the immutable Matrix annotation event id. Keep
-      // legacy semantic matching only to upgrade pre-migration active rows.
-      const messageIds = messages.map((message) => message.id);
-      const existingReactions = await tx.reactionRecord.findMany({
-        where: { messageId: { in: messageIds } },
-        select: {
-          id: true,
-          eventId: true,
-          messageId: true,
-          key: true,
-          senderId: true,
-        },
-      });
-      const seenEventIds = new Set(
-        existingReactions.flatMap((reaction) =>
-          reaction.eventId ? [reaction.eventId] : [],
-        ),
-      );
-      const legacyByKey = new Map(
-        existingReactions
-          .filter((reaction) => !reaction.eventId)
-          .map((reaction) => [
-            reactionKey(reaction.messageId, reaction.key, reaction.senderId),
-            reaction.id,
-          ]),
-      );
-      const legacySeen = new Set(legacyByKey.keys());
-      const reactions: Prisma.ReactionRecordCreateManyInput[] = [];
-      for (const message of messages) {
-        for (const reaction of message.reactions) {
-          const key = reactionKey(message.id, reaction.key, reaction.senderId);
-          if (reaction.eventId) {
-            if (seenEventIds.has(reaction.eventId)) continue;
-            const legacyId = legacyByKey.get(key);
-            if (legacyId) {
-              await tx.reactionRecord.update({
-                where: { id: legacyId },
-                data: { eventId: reaction.eventId },
-              });
-              legacyByKey.delete(key);
-            } else {
-              reactions.push({
-                eventId: reaction.eventId,
-                messageId: message.id,
-                key: reaction.key,
-                senderId: reaction.senderId,
-                timestamp: toDate(reaction.timestamp),
-              });
-            }
-            seenEventIds.add(reaction.eventId);
-            continue;
-          }
-          if (legacySeen.has(key)) continue;
-          legacySeen.add(key);
-          reactions.push({
-            messageId: message.id,
-            key: reaction.key,
-            senderId: reaction.senderId,
-            timestamp: toDate(reaction.timestamp),
-          });
-        }
-      }
-      if (reactions.length > 0) {
-        await tx.reactionRecord.createMany({ data: reactions, skipDuplicates: true });
-      }
-    }
-
-    const reactionEvents = checkpoint.reactionEvents ?? [];
-    if (reactionEvents.length > 0) {
-      await tx.reactionRecord.createMany({
-        data: reactionEvents.map((reaction) => ({
-          eventId: reaction.eventId,
-          messageId: reaction.messageId,
-          key: reaction.key,
-          senderId: reaction.senderId,
-          timestamp: toDate(reaction.timestamp),
-          redacted: reaction.redacted,
-          redactionEventId: reaction.redactionEventId,
-          redactedAt: toOptionalDate(reaction.redactedAt),
-        })),
-        skipDuplicates: true,
-      });
-      // Redaction is monotonic. Never let a late active snapshot resurrect a
-      // reaction event that a newer checkpoint has already marked inactive.
-      for (const reaction of reactionEvents) {
-        if (!reaction.redacted) continue;
-        await tx.reactionRecord.updateMany({
-          where: { eventId: reaction.eventId },
-          data: {
-            redacted: true,
-            ...(reaction.redactionEventId
-              ? { redactionEventId: reaction.redactionEventId }
-              : {}),
-            ...(reaction.redactedAt
-              ? { redactedAt: toDate(reaction.redactedAt) }
-              : {}),
-          },
-        });
-      }
-    }
-    const redactedReactionEventIds = checkpoint.redactedReactionEventIds ?? [];
-    if (redactedReactionEventIds.length > 0) {
-      await tx.reactionRecord.updateMany({
-        where: { eventId: { in: redactedReactionEventIds } },
-        data: { redacted: true },
-      });
-    }
-
-    const rankingHistory = checkpoint.rankingHistory ?? [];
-    const storedRankings = current.rankingHistory.map((entry) =>
-      fromJson<Ranking>(entry.ranking),
-    );
-    const seenRankings = new Set(storedRankings.map(rankingKey));
-    const newRankings = rankingHistory.filter((ranking) => {
-      const key = rankingKey(ranking);
-      if (seenRankings.has(key)) return false;
-      seenRankings.add(key);
-      return true;
-    });
-    if (newRankings.length > 0) {
-      const nextPosition =
-        Math.max(-1, ...current.rankingHistory.map((entry) => entry.position)) + 1;
-      await tx.rankingHistoryRecord.createMany({
-        data: newRankings.map((ranking, offset) => ({
-          sessionId,
-          position: nextPosition + offset,
-          ranking: json(ranking),
-          updatedAt: toDate(ranking.updatedAt),
-        })),
-      });
-    }
-
-    const interventions = checkpoint.interventions ?? [];
-    if (interventions.length > 0) {
-      await tx.interventionRecord.createMany({
-        data: interventions.map((intervention) => ({
-          id: intervention.id,
-          sessionId,
-          roomId: intervention.roomId,
-          conditionId: intervention.conditionId,
-          mode: intervention.mode,
-          audience: intervention.audience,
-          timestamp: toDate(intervention.timestamp),
-          trigger: intervention.trigger,
-          threshold: intervention.threshold,
-          contributionWindowMinutes: intervention.contributionWindowMinutes,
-          message: intervention.message,
-          payload: json(intervention),
-        })),
-        skipDuplicates: true,
-      });
-    }
-
-    const evaluations = checkpoint.windowEvaluations ?? [];
-    if (evaluations.length > 0) {
-      await tx.windowEvaluationRecord.createMany({
-        data: evaluations.map((evaluation) => ({
-          id: evaluation.id,
-          sessionId,
-          conditionId: evaluation.conditionId,
-          windowIndex: evaluation.windowIndex,
-          windowStart: toDate(evaluation.windowStart),
-          windowEnd: toDate(evaluation.windowEnd),
-          outcome: evaluation.outcome,
-          llmMode: evaluation.llmMode,
-          payload: json(evaluation),
-        })),
-        skipDuplicates: true,
-      });
-    }
-
-    const currentBehavior = fromJson<BehavioralEvent[]>(current.behavioralEvents);
-    const currentClassifications = fromJson<ContributionClassification[]>(
-      current.classifications,
-    );
-    const currentFailures = fromJson<ClassificationFailure[]>(
-      current.classificationFailures,
-    );
-    const currentProcessed = fromJson<string[]>(current.processedEventIds);
-    const currentRuleState = fromJson<Record<string, unknown>>(current.runtimeState);
-    const latestRanking =
-      incomingRevision !== undefined
-        ? (rankingHistory.at(-1) ?? fromJson<Ranking>(current.ranking))
-        : storedRankings.length === 0
-          ? (rankingHistory.at(-1) ?? fromJson<Ranking>(current.ranking))
-          : newestRanking(fromJson<Ranking>(current.ranking), ...rankingHistory);
-
-    await tx.sessionRecord.update({
-      where: { id: sessionId },
-      data: {
-        ...(acceptsMutableState && rankingHistory.length > 0
-          ? { ranking: json(latestRanking) }
-          : {}),
-        behavioralEvents: json(
-          mergeCheckpointValues(
-            currentBehavior,
-            checkpoint.behavioralEvents ?? [],
-            (event) => event.id,
-            acceptsMutableState,
-          ),
-        ),
-        classifications: json(
-          mergeCheckpointValues(
-            currentClassifications,
-            checkpoint.contributionClassifications ?? [],
-            (classification) => classification.messageId,
-            acceptsMutableState,
-          ),
-        ),
-        classificationFailures: json(
-          mergeCheckpointValues(
-            currentFailures,
-            checkpoint.classificationFailures ?? [],
-            (failure) => failure.messageId,
-            acceptsMutableState,
-          ),
-        ),
-        processedEventIds: json([
-          ...new Set([...currentProcessed, ...(checkpoint.processedEventIds ?? [])]),
-        ]),
-        runtimeState: acceptsMutableState
-          ? json({
-              ...currentRuleState,
-              ...checkpoint.ruleState,
-            })
-          : json(currentRuleState),
-        ...(acceptsMutableState && incomingRevision !== undefined
-          ? { checkpointRevision: incomingRevision }
-          : {}),
-      },
-    });
-  }
-}
-
-function checkpointFromSession(session: Session): CheckpointSessionRequest {
-  return {
-    revision: session.checkpointRevision,
-    messages: session.chat.messages,
-    rankingHistory: session.rankingHistory ?? [],
-    interventions: session.interventions,
-    behavioralEvents: session.behavioralEvents,
-    contributionClassifications: session.contributionClassifications,
-    windowEvaluations: session.windowEvaluations ?? [],
-    classificationFailures: session.classificationFailures ?? [],
-    processedEventIds: session.processedEventIds ?? [],
-    redactedReactionEventIds: session.redactedReactionEventIds ?? [],
-    reactionEvents: session.reactionEvents ?? [],
-    ruleState: session.runtimeState ?? {},
-  };
-}
-
-/** In-memory equivalent of the durable, monotonic checkpoint merge. */
-function mergeCheckpointIntoSession(
-  session: Session,
-  checkpoint: CheckpointSessionRequest,
-): void {
-  if (session.condition.config.workspaceMode === "etherpad") checkpoint = withoutRanking(checkpoint);
-  const incomingRevision = checkpoint.revision;
-  const acceptsMutableState =
-    incomingRevision === undefined ||
-    incomingRevision >= (session.checkpointRevision ?? 0);
-  const hadRankingHistory = (session.rankingHistory?.length ?? 0) > 0;
-  session.reactionEvents = mergeRecordedReactions(
-    session.reactionEvents ?? [],
-    checkpoint.reactionEvents ?? [],
-  );
-  const redactedReactionEventIds = new Set([
-    ...(session.redactedReactionEventIds ?? []),
-    ...(checkpoint.redactedReactionEventIds ?? []),
-    ...session.reactionEvents
-      .filter((reaction) => reaction.redacted)
-      .map((reaction) => reaction.eventId),
-  ]);
-  session.redactedReactionEventIds = [...redactedReactionEventIds];
-  session.chat.messages = mergeMessages(
-    session.chat.messages,
-    checkpoint.messages ?? [],
-    redactedReactionEventIds,
-  );
-  session.rankingHistory = appendUnique(
-    session.rankingHistory ?? [],
-    checkpoint.rankingHistory ?? [],
-    rankingKey,
-  );
-  session.interventions = mergeByKey(
-    session.interventions,
-    checkpoint.interventions ?? [],
-    (intervention) => intervention.id,
-  );
-  session.behavioralEvents = mergeCheckpointValues(
-    session.behavioralEvents,
-    checkpoint.behavioralEvents ?? [],
-    (event) => event.id,
-    acceptsMutableState,
-  );
-  session.contributionClassifications = mergeCheckpointValues(
-    session.contributionClassifications,
-    checkpoint.contributionClassifications ?? [],
-    (classification) => classification.messageId,
-    acceptsMutableState,
-  );
-  session.windowEvaluations = dedupeWindowEvaluations(
-    mergeByKey(
-      session.windowEvaluations ?? [],
-      checkpoint.windowEvaluations ?? [],
-      (evaluation) => evaluation.id,
-    ),
-  );
-  session.classificationFailures = mergeCheckpointValues(
-    session.classificationFailures ?? [],
-    checkpoint.classificationFailures ?? [],
-    (failure) => failure.messageId,
-    acceptsMutableState,
-  );
-  session.processedEventIds = [
-    ...new Set([
-      ...(session.processedEventIds ?? []),
-      ...(checkpoint.processedEventIds ?? []),
-    ]),
-  ];
-  if (acceptsMutableState) {
-    session.runtimeState = {
-      ...session.runtimeState,
-      ...checkpoint.ruleState,
-    };
-    if (incomingRevision !== undefined) {
-      session.checkpointRevision = incomingRevision;
-    }
-  }
-  if (
-    acceptsMutableState &&
-    (checkpoint.rankingHistory?.length ?? 0) > 0
-  ) {
-    session.ranking =
-      incomingRevision !== undefined || !hadRankingHistory
-        ? checkpoint.rankingHistory!.at(-1)!
-        : newestRanking(session.ranking, ...(checkpoint.rankingHistory ?? []));
-  }
-}
-
-function withoutRanking(checkpoint: CheckpointSessionRequest): CheckpointSessionRequest {
-  return { ...checkpoint, rankingHistory: [], behavioralEvents: checkpoint.behavioralEvents?.filter(e => e.type !== "ranking-move") };
-}
-
-function mergeMessages(
-  existing: Message[],
-  incoming: Message[],
-  redactedReactionEventIds: ReadonlySet<string>,
-): Message[] {
-  const merged = new Map(existing.map((message) => [message.id, message]));
-  for (const message of incoming) {
-    const current = merged.get(message.id);
-    if (!current) {
-      merged.set(message.id, {
-        ...message,
-        reactions: message.reactions.filter(
-          (reaction) =>
-            !reaction.eventId ||
-            !redactedReactionEventIds.has(reaction.eventId),
-        ),
-      });
-      continue;
-    }
-    const seenReactions = new Set(
-      current.reactions
-        .filter(
-          (reaction) =>
-            !reaction.eventId ||
-            !redactedReactionEventIds.has(reaction.eventId),
-        )
-        .map((reaction) => reactionIdentityKey(message.id, reaction)),
-    );
-    const reactions = current.reactions.filter(
-      (reaction) =>
-        !reaction.eventId ||
-        !redactedReactionEventIds.has(reaction.eventId),
-    );
-    for (const reaction of message.reactions) {
-      if (
-        reaction.eventId &&
-        redactedReactionEventIds.has(reaction.eventId)
-      ) {
-        continue;
-      }
-      const key = reactionIdentityKey(message.id, reaction);
-      if (seenReactions.has(key)) continue;
-      seenReactions.add(key);
-      reactions.push(reaction);
-    }
-    merged.set(message.id, { ...current, reactions });
-  }
-  return [...merged.values()];
-}
-
-function mergeRecordedReactions(
-  existing: RecordedReaction[],
-  incoming: RecordedReaction[],
-): RecordedReaction[] {
-  const merged = new Map(existing.map((reaction) => [reaction.eventId, reaction]));
-  for (const reaction of incoming) {
-    const current = merged.get(reaction.eventId);
-    if (!current) {
-      merged.set(reaction.eventId, reaction);
-      continue;
-    }
-    merged.set(reaction.eventId, {
-      ...current,
-      ...reaction,
-      redacted: current.redacted || reaction.redacted,
-      redactionEventId:
-        reaction.redactionEventId ?? current.redactionEventId,
-      redactedAt: reaction.redactedAt ?? current.redactedAt,
-    });
-  }
-  return [...merged.values()];
-}
-
-function reactionIdentityKey(messageId: string, reaction: Reaction): string {
-  return reaction.eventId
-    ? `event:${reaction.eventId}`
-    : reactionKey(messageId, reaction.key, reaction.senderId);
-}
-
-function appendUnique<T>(
-  existing: T[],
-  incoming: T[],
-  key: (item: T) => string,
-): T[] {
-  const seen = new Set(existing.map(key));
-  const appended = [...existing];
-  for (const item of incoming) {
-    const itemKey = key(item);
-    if (seen.has(itemKey)) continue;
-    seen.add(itemKey);
-    appended.push(item);
-  }
-  return appended;
-}
-
-function rankingKey(ranking: Ranking): string {
-  if (ranking.eventId) return `event:${ranking.eventId}`;
-  const movement = ranking.movement
-    ? `${ranking.movement.itemId}:${ranking.movement.from}:${ranking.movement.to}`
-    : "";
-  return [
-    ranking.taskId,
-    ranking.updatedAt,
-    ranking.updatedBy,
-    ranking.order.join("\u0001"),
-    movement,
-  ].join("\u0000");
-}
-
-function newestRanking(first: Ranking, ...rest: Ranking[]): Ranking {
-  return rest.reduce((latest, candidate) => {
-    const latestTime = Date.parse(latest.updatedAt);
-    const candidateTime = Date.parse(candidate.updatedAt);
-    if (!Number.isFinite(candidateTime)) return latest;
-    if (!Number.isFinite(latestTime) || candidateTime >= latestTime) {
-      return candidate;
-    }
-    return latest;
-  }, first);
-}
-
-/**
- * Newer snapshots may replace a value with the same logical key (for example
- * a retried classification). A late snapshot may only contribute previously
- * unseen records; it cannot roll a newer value back.
- */
-function mergeCheckpointValues<T>(
-  existing: T[],
-  incoming: T[],
-  key: (item: T) => string,
-  acceptsReplacement: boolean,
-): T[] {
-  return acceptsReplacement
-    ? mergeByKey(existing, incoming, (item) => key(item))
-    : appendUnique(existing, incoming, key);
-}
-
-function mergeByKey<T>(
-  existing: T[],
-  incoming: T[],
-  key: (item: T, index: number) => string,
-): T[] {
-  const merged = new Map<string, T>();
-  existing.forEach((item, index) => merged.set(key(item, index), item));
-  incoming.forEach((item, index) => merged.set(key(item, index), item));
-  return [...merged.values()];
-}
-
-function reactionKey(messageId: string, key: string, senderId: string): string {
-  return `${messageId}\u0000${key}\u0000${senderId}`;
-}
-
-/** Unbiased Fisher-Yates shuffle for a new shared-ranking starting order. */
-export function shuffleRankingOrder(
-  itemIds: string[],
-  pickIndex: (maxExclusive: number) => number = randomInt,
-): string[] {
-  const shuffled = itemIds.slice();
-  for (let index = shuffled.length - 1; index > 0; index--) {
-    const swapWith = pickIndex(index + 1);
-    [shuffled[index], shuffled[swapWith]] = [
-      shuffled[swapWith],
-      shuffled[index],
-    ];
-  }
-  return shuffled;
-}
-
-/**
- * The study's delivery-only design: a silent baseline plus public and
- * private nudge delivery. Both nudging arms use rule + LLM detection
- * (`llmMode: "active"`); the baseline never posts and skips the classifier.
- */
-function seedConditions(): Condition[] {
-  const arms: {
-    id: string;
-    name: string;
-    mode: InterventionMode;
-    llmMode: "off" | "active";
-  }[] = [
-    { id: "baseline", name: "Baseline", mode: "baseline", llmMode: "off" },
-    { id: "public-llm", name: "Public × Rule+LLM", mode: "public", llmMode: "active" },
-    { id: "private-llm", name: "Private × Rule+LLM", mode: "private", llmMode: "active" },
-  ];
-
-  return arms.map((arm) =>
-    normalizeCondition({
-      id: arm.id,
-      name: arm.name,
-      active: true,
-      goal: 5,
-      durationMinutes: 10,
-      groupSize: 3,
-      config: {
-        ...DEFAULT_INTERVENTION_CONFIG,
-        interventionMode: arm.mode,
-        llmMode: arm.llmMode,
-        scoreWeights: { ...DEFAULT_INTERVENTION_CONFIG.scoreWeights },
-      },
-    }),
-  );
-}
-
-function normalizeCondition(condition: Condition): Condition {
-  return {
-    ...condition,
-    // Admin input can arrive empty/NaN — clamp to values a session can run
-    // with (duration 0 would mean a countdown that never starts).
-    id: String(condition.id ?? "").trim().slice(0, 128),
-    name: String(condition.name ?? "").trim().slice(0, 160),
-    active: condition.active === true,
-    goal: clampInt(condition.goal, 0, 100_000),
-    durationMinutes: clampInt(condition.durationMinutes, 1, 240),
-    groupSize: clampInt(condition.groupSize, 2, 50),
-    config: {
-      ...DEFAULT_INTERVENTION_CONFIG,
-      ...condition.config,
-      // Conditions stored before the tone axis was retired carry old mode
-      // strings like "public-engaging" — fold them onto the delivery axis.
-      interventionMode: normalizeInterventionMode(
-        condition.config.interventionMode ??
-          DEFAULT_INTERVENTION_CONFIG.interventionMode,
-      ),
-      // External iframe support is opt-in. Old, missing or malformed values
-      // always retain the existing structured ranking workspace.
-      workspaceMode:
-        condition.config.workspaceMode === "etherpad" ? "etherpad" : condition.config.workspaceMode === "external" ? "external" : "ranking",
-      scoreWeights: {
-        ...DEFAULT_INTERVENTION_CONFIG.scoreWeights,
-        ...condition.config.scoreWeights,
-      },
-      dominanceWeights: {
-        ...DEFAULT_INTERVENTION_CONFIG.dominanceWeights,
-        ...condition.config.dominanceWeights,
-      },
-      // Warm-up can be 0 (none); fractions allowed like the window.
-      protectedStartMinutes: clampNonNegative(
-        condition.config.protectedStartMinutes ??
-          DEFAULT_INTERVENTION_CONFIG.protectedStartMinutes,
-        DEFAULT_INTERVENTION_CONFIG.protectedStartMinutes,
-        240,
-      ),
-      // Fractional minutes allowed (pilots/tests use sub-minute windows).
-      contributionWindowMinutes: clampMinutes(
-        condition.config.contributionWindowMinutes ??
-          DEFAULT_INTERVENTION_CONFIG.contributionWindowMinutes,
-        DEFAULT_INTERVENTION_CONFIG.contributionWindowMinutes,
-        240,
-      ),
-      contributionThreshold: clampFraction(
-        condition.config.contributionThreshold ??
-          DEFAULT_INTERVENTION_CONFIG.contributionThreshold,
-        DEFAULT_INTERVENTION_CONFIG.contributionThreshold,
-      ),
-    },
-  };
-}
-
-/** Non-negative (possibly fractional) minutes (NaN/empty → the fallback). */
-function clampNonNegative(
-  value: number,
-  fallback: number,
-  maximum: number,
-): number {
-  if (!Number.isFinite(value)) return fallback;
-  return Math.max(0, Math.min(maximum, value));
-}
-
-/** Lower-bound a minutes value at 0.1, keeping fractions (NaN → fallback). */
-function clampMinutes(
-  value: number,
-  fallback: number,
-  maximum: number,
-): number {
-  if (!Number.isFinite(value)) return fallback;
-  return Math.max(0.1, Math.min(maximum, value));
-}
-
-/** Clamp a 0..1 fraction from admin input (NaN/empty → the fallback). */
-function clampFraction(value: number, fallback: number): number {
-  if (!Number.isFinite(value)) return fallback;
-  return Math.max(0.01, Math.min(1, value));
-}
-
-/** Round to an integer and enforce a lower bound (NaN → the bound). */
-function clampInt(value: number, min: number, max: number): number {
-  const rounded = Math.round(value);
-  return Number.isFinite(rounded)
-    ? Math.max(min, Math.min(max, rounded))
-    : min;
-}
-
-function conditionData(condition: Condition): Prisma.ConditionRecordCreateInput {
-  return {
-    id: condition.id,
-    name: condition.name,
-    active: condition.active,
-    goal: condition.goal,
-    durationMinutes: condition.durationMinutes,
-    groupSize: condition.groupSize,
-    config: json(condition.config),
-  };
-}
-
-function conditionFromRow(row: {
-  id: string;
-  name: string;
-  active: boolean;
-  goal: number;
-  durationMinutes: number;
-  groupSize: number;
-  config: Prisma.JsonValue;
-}): Condition {
-  return normalizeCondition({
-    id: row.id,
-    name: row.name,
-    active: row.active,
-    goal: row.goal,
-    durationMinutes: row.durationMinutes,
-    groupSize: row.groupSize,
-    config: fromJson<Condition["config"]>(row.config),
-  });
-}
-
-function sessionFromRow(row: SessionRow): Session {
-  const rankingHistory = row.rankingHistory.map(
-    (entry) => fromJson<Ranking>(entry.ranking),
-  );
-  return {
-    id: row.id,
-    status: row.status as Session["status"],
-    roundId: row.roundId,
-    condition: fromJson<Condition>(row.conditionSnapshot),
-    bot: fromJson<BotConfig>(row.bot),
-    participants: row.participants.map(participantFromRow),
-    chat: {
-      messages: row.messages.map(messageFromRow),
-    },
-    briefing: fromJson<Briefing>(row.briefing),
-    rankingTask: fromJson<RankingTask>(row.rankingTask),
-    ranking: fromJson<Ranking>(row.ranking),
-    rankingHistory,
-    interventions: row.interventions.map(
-      (intervention) => fromJson<InterventionLog>(intervention.payload),
-    ),
-    behavioralEvents: fromJson<BehavioralEvent[]>(row.behavioralEvents),
-    contributionClassifications: fromJson<ContributionClassification[]>(
-      row.classifications,
-    ),
-    windowEvaluations: dedupeWindowEvaluations(
-      row.windowEvaluations.map(
-        (evaluation) => fromJson<WindowEvaluation>(evaluation.payload),
-      ),
-    ),
-    classificationFailures: fromJson<ClassificationFailure[]>(
-      row.classificationFailures,
-    ),
-    processedEventIds: fromJson<string[]>(row.processedEventIds),
-    redactedReactionEventIds: row.messages.flatMap((message) =>
-      message.reactions.flatMap((reaction) =>
-        reaction.redacted && reaction.eventId ? [reaction.eventId] : [],
-      ),
-    ),
-    reactionEvents: row.messages.flatMap((message) =>
-      message.reactions.flatMap((reaction) =>
-        reaction.eventId
-          ? [
-              {
-                eventId: reaction.eventId,
-                messageId: message.id,
-                key: reaction.key,
-                senderId: reaction.senderId,
-                timestamp: reaction.timestamp.toISOString(),
-                redacted: reaction.redacted,
-                redactionEventId: reaction.redactionEventId ?? undefined,
-                redactedAt: reaction.redactedAt?.toISOString(),
-              },
-            ]
-          : [],
-      ),
-    ),
-    runtimeState: fromJson<Record<string, unknown>>(row.runtimeState),
-    checkpointRevision: row.checkpointRevision,
-    polls: fromJson<Poll[]>(row.polls),
-    durationMinutes: row.durationMinutes,
-    roomId: row.roomId ?? undefined,
-    waitingDeadlineAt: row.waitingDeadlineAt?.toISOString(),
-    createdAt: row.createdAt.toISOString(),
-    startedAt: row.startedAt?.toISOString(),
-    completedAt: row.completedAt?.toISOString(),
-  };
-}
-
-function sessionSummary(session: Session): SessionSummary {
-  return {
-    id: session.id,
-    status: session.status,
-    roundId: session.roundId,
-    conditionId: session.condition.id,
-    conditionName: session.condition.name,
-    participantCount: session.participants.length,
-    groupSize: session.condition.groupSize,
-    messageCount: session.chat.messages.length,
-    interventionCount: session.interventions.length,
-    rankingEditCount: session.rankingHistory?.length ?? 0,
-    createdAt: session.createdAt,
-    startedAt: session.startedAt,
-    completedAt: session.completedAt,
-    roomId: session.roomId,
-    waitingDeadlineAt: session.waitingDeadlineAt,
-  };
-}
-
-function participantFromRow(
-  row: SessionRow["participants"][number],
-): Participant {
-  const entry = row.surveys.find((survey) => survey.kind === "entry");
-  const exit = row.surveys.find((survey) => survey.kind === "exit");
-  return {
-    id: row.id,
-    name: row.name,
-    trackingToken: row.trackingToken,
-    recruitmentSource: row.recruitmentSource as Participant["recruitmentSource"],
-    prolific:
-      row.prolificPid && row.prolificStudyId && row.prolificSessionId
-        ? {
-            participantId: row.prolificPid,
-            studyId: row.prolificStudyId,
-            sessionId: row.prolificSessionId,
-          }
-        : undefined,
-    completedAt: row.completedAt?.toISOString(),
-    matrixUserId: row.matrixUserId ?? undefined,
-    entrySurvey: entry ? surveyFromRow(entry) : undefined,
-    exitSurvey: exit ? surveyFromRow(exit) : undefined,
-  };
-}
-
-function prolificArrivalFromRow(row: {
-  prolificPid: string;
-  prolificStudyId: string;
-  prolificSessionId: string;
-  participantRecordId: string | null;
-  arrivedAt: Date;
-  stage: string;
-  stageUpdatedAt: Date;
-  lastSeenAt: Date;
-  outcome: string | null;
-  outcomeReason: string | null;
-  endedAt: Date | null;
-  elapsedSeconds: number | null;
-  compensationKind: string | null;
-  compensationAmountPence: number | null;
-}): ProlificArrival {
-  return {
-    participantId: row.prolificPid,
-    studyId: row.prolificStudyId,
-    sessionId: row.prolificSessionId,
-    participantRecordId: row.participantRecordId ?? undefined,
-    arrivedAt: row.arrivedAt.toISOString(),
-    stage: row.stage as ParticipationStage,
-    stageUpdatedAt: row.stageUpdatedAt.toISOString(),
-    lastSeenAt: row.lastSeenAt.toISOString(),
-    outcome: (row.outcome as ParticipationOutcome | null) ?? undefined,
-    outcomeReason: row.outcomeReason ?? undefined,
-    endedAt: row.endedAt?.toISOString(),
-    elapsedSeconds: row.elapsedSeconds ?? undefined,
-    compensationKind:
-      (row.compensationKind as ProlificArrival["compensationKind"]) ?? undefined,
-    compensationAmountPence: row.compensationAmountPence ?? undefined,
-  };
-}
-
-function participationOutcomeFromRow(
-  row: Parameters<typeof prolificArrivalFromRow>[0] & {
-    id: string;
-    compensation: {
-      status: string;
-      returnRequestedAt: Date | null;
-      bonusBatchId: string | null;
-      paymentSubmittedAt: Date | null;
-      actionError: string | null;
-    } | null;
-  },
-): ParticipationOutcomeRecord {
-  return {
-    id: row.id,
-    ...prolificArrivalFromRow(row),
-    prolificActionStatus:
-      (row.compensation?.status as ParticipationOutcomeRecord["prolificActionStatus"]) ??
-      undefined,
-    returnRequestedAt: row.compensation?.returnRequestedAt?.toISOString(),
-    bonusBatchId: row.compensation?.bonusBatchId ?? undefined,
-    paymentSubmittedAt:
-      row.compensation?.paymentSubmittedAt?.toISOString(),
-    actionError: row.compensation?.actionError ?? undefined,
-  };
-}
-
-function arrivalKey(identity: ProlificIdentity): string {
-  return `${identity.studyId}:${identity.sessionId}`;
-}
-
-function surveyFromRow(row: SessionRow["participants"][number]["surveys"][number]): Survey {
-  return {
-    answers: fromJson<Survey["answers"]>(row.answers),
-    submittedAt: row.submittedAt.toISOString(),
-  };
-}
-
-function messageFromRow(row: SessionRow["messages"][number]): Message {
-  return {
-    id: row.id,
-    timestamp: row.timestamp.toISOString(),
-    senderId: row.senderId,
-    recipientId: row.recipientId,
-    text: row.text,
-    reactions: row.reactions
-      .filter((reaction) => !reaction.redacted)
-      .map((reaction) => ({
-        ...(reaction.eventId ? { eventId: reaction.eventId } : {}),
-        key: reaction.key,
-        senderId: reaction.senderId,
-        timestamp: reaction.timestamp.toISOString(),
-      })),
-  };
-}
-
-function sortConditions(a: Condition, b: Condition): number {
-  const order = seedConditions().map((condition) => condition.id);
-  const ai = order.indexOf(a.id);
-  const bi = order.indexOf(b.id);
-  if (ai === -1 && bi === -1) return a.name.localeCompare(b.name);
-  if (ai === -1) return 1;
-  if (bi === -1) return -1;
-  return ai - bi;
-}
-
-function roundFromRow(row: {
-  id: number;
-  label: string;
-  startedAt: Date;
-  endedAt: Date | null;
-}): RoundState {
-  return {
-    id: row.id,
-    label: row.label,
-    startedAt: row.startedAt.toISOString(),
-    endedAt: row.endedAt?.toISOString(),
-  };
-}
-
-function toDate(value: string): Date {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? new Date() : date;
-}
-
-function toOptionalDate(value: string | undefined): Date | undefined {
-  return value ? toDate(value) : undefined;
-}
-
-function json(value: unknown): Prisma.InputJsonValue {
-  return value as Prisma.InputJsonValue;
-}
-
-function fromJson<T>(value: Prisma.JsonValue): T {
-  return value as unknown as T;
 }

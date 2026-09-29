@@ -24,6 +24,9 @@ export default defineConfig({
         // The Prisma/Postgres paths are exercised for real by the
         // Testcontainers suite (pnpm test:integration), not these unit tests.
         "src/store/store.service.ts",
+        "src/store/participation.store.ts",
+        "src/store/runtime-checkpoint.ts",
+        "src/store/session-snapshot.ts",
         "src/prisma/prisma.service.ts",
       ],
       reporter: ["text", "text-summary"],

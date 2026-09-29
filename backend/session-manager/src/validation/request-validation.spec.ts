@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { MOON_SURVIVAL } from "@gdm/shared";
 import {
+  validateCheckpointRequest,
   validateCompensationUrl,
   validateOpenSessionRequest,
+  validateParticipationProgressRequest,
   validateSurveyAnswers,
   validateSurveyRequest,
 } from "./request-validation";
@@ -95,5 +97,34 @@ describe("request validation", () => {
     expect(() => validateCompensationUrl("http://example.com/done")).toThrow(
       "must use HTTPS",
     );
+  });
+
+  it("accepts only client-reportable participation stages", () => {
+    const prolific = {
+      participantId: "aaaaaaaaaaaaaaaaaaaaaaaa",
+      studyId: "bbbbbbbbbbbbbbbbbbbbbbbb",
+      sessionId: "cccccccccccccccccccccccc",
+    };
+    for (const stage of ["arrived", "consent", "entry", "waiting", "chat", "exit"]) {
+      expect(() => validateParticipationProgressRequest({ prolific, stage })).not.toThrow();
+    }
+    for (const stage of ["done", "terminated", "bogus"]) {
+      expect(() => validateParticipationProgressRequest({ prolific, stage })).toThrow(
+        "Invalid participation stage",
+      );
+    }
+  });
+
+  it("shape-checks checkpoint bodies without requiring every collection", () => {
+    expect(() => validateCheckpointRequest({})).not.toThrow();
+    expect(() =>
+      validateCheckpointRequest({ revision: 3, messages: [], ruleState: {} }),
+    ).not.toThrow();
+    expect(() => validateCheckpointRequest({ revision: Number.NaN })).toThrow("revision");
+    expect(() => validateCheckpointRequest({ interventions: {} })).toThrow(
+      "interventions must be an array",
+    );
+    expect(() => validateCheckpointRequest({ ruleState: [] })).toThrow("ruleState");
+    expect(() => validateCheckpointRequest([])).toThrow("Invalid checkpoint");
   });
 });

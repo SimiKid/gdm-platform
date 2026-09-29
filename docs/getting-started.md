@@ -41,7 +41,7 @@ sh stop.sh --volumes    # stop containers and wipe all data (clean slate)
 | Admin dashboard | http://localhost:3003 | Researcher-facing condition management and exports |
 | Session Manager API | http://localhost:3001/api | Backend REST API for sessions, conditions, surveys, Prolific, exports |
 | Chat Service | http://localhost:3002 | Bot runtime that monitors Matrix rooms |
-| Synapse (Matrix) | http://localhost:8010 | Matrix homeserver (`SYNAPSE_HTTP_PORT`; the compose fallback when the variable is unset is 8008) |
+| Synapse (Matrix) | http://localhost:8010 | Matrix homeserver (host port `SYNAPSE_HTTP_PORT`; 8010 is also the compose fallback when the variable is unset; inside the compose network Synapse listens on 8008) |
 | Research Postgres | `localhost:5433` | Study data (sessions, surveys, interventions) |
 
 The participant frontend's nginx reverse-proxies `/api/` to the session manager and `/_matrix/` to Synapse, so the browser only talks to `localhost:3000`.
@@ -79,11 +79,11 @@ In each tab:
 3. **About You** — fill in the demographic questionnaire (age, gender, education, English proficiency). A shared 5-minute questionnaire countdown starts after consent.
 4. **About You (attitudes)** — answer the AI-attitude and personality matrices plus teamwork, chat-comfort and topic-familiarity questions using the remaining questionnaire time. At expiry, entered answers are kept, unanswered fields remain absent, and the individual ranking task begins.
 5. **Ranking Task** — complete the individual Moon Survival ranking (5-minute timer)
-6. **Group Intro** — read the group discussion explanation, continue
+6. **Group Intro** — read the group discussion explanation, continue (Consent, Ranking Task and Group Intro quote the configured group size — Group Intro also the discussion length — from `GET /api/study/info`)
 7. **Waiting Room** — shows "N / 3 people joined" and the remaining lobby time (`WAITING_TIMEOUT_MINUTES`, default 5), waits for all tabs to arrive
 8. **Chat** — once the group is full, a Matrix room is created and all participants enter the chat. A timer counts down based on `durationMinutes`.
 9. **Exit Survey** — after the discussion ends, participants get 2 minutes for their final individual ranking, then a shared 5 minutes for both reflection pages. Ranking expiry keeps the current order and advances; questionnaire expiry submits entered answers automatically. Failed submissions offer a retry without dropping answers.
-10. **Debriefing** — study explanation, optional feedback box, and completion link
+10. **Debriefing** — study explanation, optional feedback box, and a **Finish study** button (Prolific participants get the **Return to Prolific** completion link from Settings instead)
 
 ### 4. Observe bot behavior
 
@@ -154,18 +154,17 @@ All environment variables live in `infra/.env` (template: `infra/.env.example`).
 |---|---|
 | `GDM_ENV` | `development` (default) or `production` — in production the backends refuse to start with weak secrets, a localhost `MATRIX_PUBLIC_URL`, or a missing `ANTHROPIC_API_KEY` (see [deployment.md](deployment.md)) |
 | `SYNAPSE_SERVER_NAME` | Matrix server name (`localhost`); immutable after Synapse's first start |
-| `SYNAPSE_REPORT_STATS` | Synapse anonymous statistics opt-in (`no`) |
-| `SYNAPSE_HTTP_PORT` | Host port for Synapse (`8010`; compose falls back to `8008` if unset) |
+| `SYNAPSE_HTTP_PORT` | Host port for Synapse in local dev (`8010`; compose also falls back to `8010` if unset) |
 | `SYNAPSE_DB_NAME` / `SYNAPSE_DB_USER` / `SYNAPSE_DB_PASSWORD` | Synapse Postgres credentials (`synapse` / `synapse` / `synapse_secret`) |
 | `RESEARCH_DB_NAME` / `RESEARCH_DB_USER` / `RESEARCH_DB_PASSWORD` | Research Postgres credentials (`gdm_research` / `gdm` / `gdm_secret`) |
 | `DATABASE_URL` | Host-side connection string for local Prisma commands |
-| `SYNAPSE_SIGNING_KEY_PATH` | Listed in the template but not consumed anywhere: the dev `homeserver.yaml` hardcodes the path and the production template derives it from `SYNAPSE_SERVER_NAME` |
-| `MATRIX_PUBLIC_URL` | Browser-facing Matrix URL returned to participants (`http://localhost:3000`; the code falls back to `http://localhost:8008` if unset) |
+| `MATRIX_PUBLIC_URL` | Browser-facing Matrix URL returned to participants (`http://localhost:3000`; compose substitutes the same value if unset — only a Session Manager started outside compose falls back to `http://localhost:8008`) |
 | `PARTICIPANT_PUBLIC_URL` | Recruiting link shown in the admin dashboard (baked into its image at build time; production images carry the CI value) |
 | `PUBLIC_HOST`, `ACME_EMAIL` | Production reverse-proxy host and Let's Encrypt contact — see [deployment.md](deployment.md) |
 | `ADMIN_API_TOKEN` | Protects researcher endpoints; empty = open (dev only); production requires ≥ 32 characters |
 | `INTERNAL_API_TOKEN` | Shared secret between Session Manager and Chat Service; empty = open (dev only); production requires ≥ 32 characters |
-| `CORS_ORIGINS` | Optional comma-separated extra browser origins for development/staging; production is same-origin |
+| `CORS_ORIGINS` | Comma-separated browser origins allowed to call the Session Manager cross-origin in development/staging (ignored with `GDM_ENV=production`, which is same-origin). Empty or blank = the local defaults (`http://localhost` and `http://127.0.0.1` on ports 3000, 3003, 5173 and 5174); a non-empty value **replaces** these defaults, so list every origin you need |
+| `SESSION_MANAGER_BODY_LIMIT` | Session Manager JSON request-body limit (empty = `10mb`, sized for a complete live-session checkpoint) |
 | `MATRIX_SERVICE_PASSWORD` | Password of the stable `gdm_orchestrator` Matrix account (`gdm-dev-orchestrator-password`); production requires a fresh ≥ 32-character secret |
 | `MATRIX_RATE_LIMIT_RETRIES`, `MATRIX_RETRY_MAX_DELAY_MS`, `MATRIX_REQUEST_TIMEOUT_MS` | Bounded retries on Synapse `M_LIMIT_EXCEEDED` (`8`, `30000`, `15000`), used by both backends |
 | `MATRIX_SYNC_REQUEST_TIMEOUT_MS` | Chat Service `/sync` HTTP timeout (`40000`; must exceed the 30-second long-poll) |
@@ -182,8 +181,10 @@ All environment variables live in `infra/.env` (template: `infra/.env.example`).
 | `LLM_MODE` | Optional global override: `off` kill switch for the classifier, `active` forces it on everywhere (including baseline); any other value is ignored; leave empty normally |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | Used for fresh nudge wording in both nudging arms, for the classifier, and for moderation (`claude-haiku-4-5-20251001`); without a key classifications are recorded as failures, dominance drops to 0.9 × share and nudges use fixed fallback text; in production the Chat Service refuses to start without it |
 | `MODERATION` | `on` enables LLM moderation of participant messages (abusive messages are redacted and the sender warned privately); anything else = off |
+| `ETHERPAD_CONTROL_TOKEN` | Shared secret between the Session Manager and the Etherpad container's supervisor/API (`gdm-local-etherpad-control-token`; compose substitutes the same value if unset, production compose refuses to start without it) — see [etherpad.md](etherpad.md) |
+| `ETHERPAD_DB_PASSWORD` | Password of Etherpad's own Postgres (`gdm-local-etherpad-db`; same fallback and production rule as the control token) |
 
-Variables read by the code but not listed in the template: `SESSION_MANAGER_BODY_LIMIT` (request body cap), `PORT` (each backend's listen port), `MATRIX_INTERNAL_URL`, `SESSION_MANAGER_URL`, `CHAT_SERVICE_URL` (set by compose for the container network), `IMAGE_PREFIX` / `IMAGE_TAG` / `SYNAPSE_CONFIG_SHA` (production compose and `deploy.sh`), and `VITE_PAYMENT_URL` (build-time completion-link fallback of the participant frontend).
+Variables read by the code but not listed in the template: `PORT` (each backend's listen port), `MATRIX_INTERNAL_URL`, `SESSION_MANAGER_URL`, `CHAT_SERVICE_URL`, `ETHERPAD_INTERNAL_URL`, `ETHERPAD_CONTROL_URL` (set by compose for the container network), `IMAGE_PREFIX` / `IMAGE_TAG` / `SYNAPSE_CONFIG_SHA` (production compose and `deploy.sh`), `BACKUP_DIR` (`infra/backup.sh` target directory, default `infra/backups`), and the frontends' build-time `VITE_SESSION_MANAGER_URL`, `VITE_MATRIX_HOMESERVER` and `VITE_PARTICIPANT_URL` (set by compose and the Dockerfiles). The participant completion link has no build-time fallback: it comes only from admin Settings.
 
 The Synapse `homeserver.yaml` at `infra/synapse/homeserver.yaml` has its own DB credentials that must match the `.env` values (Synapse reads static YAML, not environment variables). Production uses `homeserver.prod.yaml` instead, rendered from a template by `infra/render-homeserver.sh`.
 

@@ -274,8 +274,8 @@ From an allowed UZH network or the Remote Access VPN, open
 https://gdmproject.ifi.uzh.ch/admin/ and enter `ADMIN_API_TOKEN` (the
 dashboard keeps it in the browser's `localStorage` under `gdm-admin-token`).
 Caddy rejects both the dashboard shell and the researcher-only API routes
-(`/api/admin*`, `/api/conditions*`, `/api/interventions`, `/api/export/*`,
-`/api/reports*`, `/api/rounds*`, `/api/settings`, and `GET /api/sessions`)
+(`/api/admin*`, `/api/conditions*`, `/api/export/*`, `/api/rounds*`,
+`/api/settings`, and `GET /api/sessions`)
 from other source networks with 403. The Session Manager still requires the
 token as a second layer; network access alone never authorizes a researcher
 request.
@@ -296,10 +296,13 @@ Then open http://localhost:3003 and enter the same token.
 
 ## Backup & restore
 
-The state worth protecting is both Postgres databases plus Synapse's signing
-key/media volume. Every deployment with a running stack creates and verifies
-a complete backup set (on a fresh VM with no databases yet, `backup.sh` exits
-without producing one):
+The state worth protecting is the research and Synapse Postgres databases,
+the Etherpad Postgres database (once it has been created), and Synapse's
+signing key/media volume. Every deployment with a running stack creates and
+verifies a complete backup set (on a fresh VM with no databases yet,
+`backup.sh` exits without producing one). Sets are written to `BACKUP_DIR`
+(default `infra/backups/`; it can be set in the environment or in
+`infra/.env`, which the script sources):
 
 ```bash
 cd ~/gdm-platform/infra
@@ -308,7 +311,7 @@ ls -lh backups/
 ```
 
 The script reads the actual database names from `.env`, uses restrictive file
-permissions, validates both custom-format PostgreSQL archives with
+permissions, validates every custom-format PostgreSQL archive with
 `pg_restore --list`, verifies the Synapse gzip archive, and writes portable
 SHA-256 checksums. It does not delete old sets automatically. Copy every new
 set off the VM (`scp` from your machine — `/var` is small). During active

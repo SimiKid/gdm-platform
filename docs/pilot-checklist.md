@@ -53,9 +53,9 @@ Open in 3 tabs (one per participant). Repeat for each condition:
 
 For each participant tab:
 
-- [ ] Recruiting parameters are removed from the browser URL (`?p=`/`?c=`
-      tracking links and the three Prolific parameters are stripped after
-      being read)
+- [ ] Recruiting parameters are removed from the browser URL (`?p=` and the
+      three Prolific parameters are stripped after being read; a forced
+      condition `?c=` is rewritten to `?conditionId=` and kept)
 - [ ] Consent page accepts (all three checkboxes) and advances
 - [ ] About You questionnaire (demographics) completes; entering an age under
       18 or English proficiency "None" ends participation as ineligible
@@ -64,6 +64,10 @@ For each participant tab:
 - [ ] Individual Moon Survival ranking completes (5-min timer; the timer
       turns red for the last 2 minutes and auto-completes on expiry)
 - [ ] Group Intro page advances to waiting room
+- [ ] Consent, Ranking Task and Group Intro quote the configured group size
+      (Group Intro also the discussion length) — the forced condition's values
+      on a pilot link; on the generic link neutral wording appears when the
+      recruiting arms differ or none is recruiting
 - [ ] Waiting room count increments
 - [ ] Chat opens once the group is full
 - [ ] Shared ranking edits sync across participants
@@ -73,8 +77,10 @@ For each participant tab:
 - [ ] Timer ends the discussion and opens the exit survey
 - [ ] Exit survey (final ranking → confidence + group dynamics →
       psychological safety + bot perception) can submit
-- [ ] Debriefing page shows study explanation, the optional feedback box,
-      and the compensation link (enabled after the acknowledgement checkbox)
+- [ ] Debriefing page shows study explanation and the optional feedback box,
+      then **Finish study** for direct participants (the local pilot links) or
+      **Return to Prolific** for Prolific participants (disabled with a notice
+      while the Full completion URL in Settings is empty)
 
 ## 4. Trigger Bot Behavior
 
@@ -121,7 +127,7 @@ In the admin dashboard:
       split, message text) is present in the nudge-events export
       (`/api/export/interventions`) or the full JSON dump — the dashboard
       itself only shows counts
-- [ ] `GET /api/reports/summary` (with the admin token) lists the pilot session in the per-condition descriptives
+- [ ] Overview → **Completed per Condition (current round)** counts the finished pilot session for its arm
 - [ ] Overview-tab downloads work: **Research Data (CSV)** zip and, under
       Advanced, the **Full data dump** JSON
 - [ ] Research exports download by URL with the admin token (participants/sessions-analysis/windows/rankings CSVs and `research.zip` with codebook)

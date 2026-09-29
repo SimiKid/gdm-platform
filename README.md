@@ -2,7 +2,7 @@
 
 A study platform for researching AI-supported group decision-making. Groups discuss a shared task in a real-time chat environment while a bot monitors contribution balance and intervenes when participation becomes uneven.
 
-The project investigates whether in-the-moment AI nudges can improve both decision quality and group experience, using a between-subjects design with public vs. private nudge delivery (both with rule+LLM detection) plus a no-intervention baseline. Data collection is organized into numbered study rounds with per-round recruiting goals.
+The project investigates whether in-the-moment AI nudges can improve both decision quality and group experience, using a between-subjects design with public vs. private nudge delivery (both with rule+LLM detection) plus a no-intervention baseline. Data collection is organized into numbered study rounds; each arm has a single recruiting goal (number of group sessions), which is counted afresh in every round.
 
 ## Repository Structure
 
@@ -10,13 +10,12 @@ The project investigates whether in-the-moment AI nudges can improve both decisi
 packages/shared/          Shared TypeScript types, DTOs, and defaults
 backend/session-manager/  Matchmaking, session state, conditions, study rounds, surveys, Prolific lifecycle, reports/exports (NestJS + Prisma)
 backend/chat-service/     Bot runtime: Matrix sync, message recording, intervention rules, LLM classifier, nudge wording, optional moderation (NestJS)
-backend/export-service/   Empty placeholder for a possible future standalone export service
 frontend/participant/     Participant study flow: recruiting, consent, surveys, ranking task, chat, exit survey, debriefing (React)
 frontend/admin-dashboard/ Researcher dashboard: overview with session inspector, settings (rounds, parameters, Prolific exit paths), bot testing (React)
 e2e/                      Playwright end-to-end suite against the compose stack
 loadtest/                 k6 load-test harness (profiles, scripts, monitoring)
 infra/                    Docker Compose stack (dev + prod), Synapse config + render script, Caddyfile, deploy + backup scripts
-docs/                     Architecture (+ Structurizr model), bot rulebook, data export, testing, deployment, pilot checklist, Prolific runbook
+docs/                     Architecture (+ Structurizr model), bot rulebook, data export, testing, deployment, pilot checklist, Prolific runbook, Etherpad mode, local mocks
 ```
 
 ## Quick Start
@@ -42,6 +41,8 @@ See [docs/getting-started.md](docs/getting-started.md) for prerequisites, ports,
 | [Pilot Checklist](docs/pilot-checklist.md) | Step-by-step verification for local pilot runs |
 | [Deployment](docs/deployment.md) | Production runbook: first-time setup, updates, rollback, backups |
 | [Prolific Integration](docs/prolific-integration.md) | Full Prolific study, account/API, URL parameter, completion-path, compensation, launch, and reconciliation runbook |
+| [Etherpad Study Mode](docs/etherpad.md) | Optional global Etherpad text workspace: switching on/off, draining, limits, exports |
+| [Local Mocks](docs/local-mocks.md) | Local stack with mocked Anthropic and Prolific integrations |
 | [Load Testing](loadtest/README.md) | k6 load-test harness: profiles, run scripts, monitoring |
 
 ## Current Deferrals

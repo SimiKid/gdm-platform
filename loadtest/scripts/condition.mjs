@@ -50,18 +50,19 @@ if (action === "create") {
     goal,
     durationMinutes,
     groupSize,
+    // Mirrors the shared InterventionConfig (DEFAULT_INTERVENTION_CONFIG),
+    // with the silent baseline arm so the bot never delivers nudges.
     config: {
+      workspaceMode: "ranking",
       interventionMode: "baseline",
       llmMode: "off",
       contributionThreshold: 0.4,
       protectedStartMinutes: 3,
       protectedEndMinutes: 2,
-      interventionWindowMinutes: 4,
       contributionWindowMinutes: 4,
-      scoreWeights: { messages: 1, characters: 0.01 },
-      ignoredGraceSeconds: 75,
-      ignoredMinSubsequentMessages: 2
-    }
+      scoreWeights: { messages: 1, words: 0.05 },
+      dominanceWeights: { share: 0.9, meaningfulness: 0.1 },
+    },
   };
 
   await putCondition(condition);

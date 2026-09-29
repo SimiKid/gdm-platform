@@ -1,12 +1,14 @@
 import { useMemo, useState } from "react";
+import { isTestCondition } from "@gdm/shared";
 import type {
   Condition,
   ConditionProgress,
   SessionSummary,
 } from "@gdm/shared";
-import { isTestCondition } from "../api";
+import { putCondition } from "../api";
+import { plural } from "../format";
+import ArmBadge from "./ArmBadge";
 import { PilotLinksCard, SessionsTable } from "./Overview";
-import { ArmBadges, putCondition } from "./Settings";
 
 interface Props {
   rows: ConditionProgress[];
@@ -196,7 +198,7 @@ function TestConditions({
                   <tr key={row.condition.id}>
                     <td>
                       <strong>{row.condition.name}</strong>
-                      <ArmBadges condition={row.condition} />
+                      <ArmBadge condition={row.condition} />
                     </td>
                     <td>
                       {row.createdAt ? formatCreated(row.createdAt) : "unknown"}
@@ -279,10 +281,6 @@ function SwitchOffButton({
       {state === "error" && <span className="bad">Error</span>}
     </>
   );
-}
-
-function plural(count: number, singular: string): string {
-  return `${count} ${count === 1 ? singular : `${singular}s`}`;
 }
 
 function formatCreated(value: string): string {

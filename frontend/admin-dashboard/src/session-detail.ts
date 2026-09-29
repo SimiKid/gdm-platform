@@ -1,6 +1,7 @@
 import {
   FALLBACK_IDENTITY,
   buildIdentities,
+  formatMmSs,
   identityFor,
   isServiceUser,
 } from "@gdm/shared";
@@ -162,7 +163,6 @@ function toTimelineNudge(log: InterventionLog): TimelineNudge {
 export interface ComparisonCell {
   share: number;
   messageCount: number;
-  dominanceScore: number;
 }
 
 export interface ComparisonRow {
@@ -253,14 +253,11 @@ export function nudgeComparisons(session: Session, now = Date.now()): NudgeCompa
   });
 }
 
-const EMPTY_CELL: ComparisonCell = { share: 0, messageCount: 0, dominanceScore: 0 };
+const EMPTY_CELL: ComparisonCell = { share: 0, messageCount: 0 };
 
 function windowCells(split: ContributionShare[]): Map<string, ComparisonCell> {
   return new Map(
-    split.map((s) => [
-      s.userId,
-      { share: s.share, messageCount: s.messageCount, dominanceScore: s.dominanceScore },
-    ]),
+    split.map((s) => [s.userId, { share: s.share, messageCount: s.messageCount }]),
   );
 }
 
@@ -275,7 +272,6 @@ function messageShareCells(
       {
         share: total > 0 ? c.messageCount / total : 0,
         messageCount: c.messageCount,
-        dominanceScore: 0,
       },
     ]),
   );
@@ -430,12 +426,9 @@ export function spreadLabels(ys: number[], gap: number, min: number, max: number
   return out;
 }
 
-/** Milliseconds → `m:ss`. */
+/** Milliseconds → `m:ss`, rounded to the nearest second. */
 export function formatClock(ms: number): string {
-  const totalSeconds = Math.max(0, Math.round(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  return formatMmSs(Math.round(ms / 1000));
 }
 
 /** Share (0..1) → `62%`. */

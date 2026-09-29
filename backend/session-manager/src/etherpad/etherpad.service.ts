@@ -6,9 +6,27 @@ import { EtherpadRepository } from "./etherpad.repository";
 import { StoreService } from "../store/store.service";
 
 interface Admission { owner: string; mode: StudyTaskMode; expiresAt: number; sessionId?: string; participantId?: string; done?: boolean }
-export interface PadRecord extends StudyPad { owner?: string; sessionId?: string; participantId?: string; conditionId?: string; roundId?: number }
+interface PadRecord extends StudyPad { owner?: string; sessionId?: string; participantId?: string; conditionId?: string; roundId?: number }
 type Control = Omit<EtherpadStatus, "activeParticipants"> & { transitionAt?: number };
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+
+/** How often the supervisor state is reconciled with Etherpad. */
+const RECONCILE_INTERVAL_MS = 5_000;
+/** A fresh writing admission stays valid this long before the entry task. */
+const ADMISSION_TTL_MS = 30 * 60_000;
+/** Once seated, the admission outlives the discussion by this margin. */
+const ADMISSION_AFTER_DISCUSSION_MS = 20 * 60_000;
+/** Writing time of the private entry and exit pads. */
+const ENTRY_PAD_MINUTES = 5;
+const EXIT_PAD_MINUTES = 2;
+/** Signed pad access stays valid this long past the pad deadline. */
+const PAD_ACCESS_GRACE_MS = 60_000;
+/** Maximum accepted pad text length, in Unicode code points. */
+const MAX_PAD_TEXT_CODE_POINTS = 1000;
+/** Timeout of one Etherpad control/internal API request. */
+const ETHERPAD_REQUEST_TIMEOUT_MS = 10_000;
+/** Give up (error state) when the Etherpad server is not ready after this. */
+const ETHERPAD_START_TIMEOUT_MS = 90_000;
 
 @Injectable()
 export class EtherpadService implements OnModuleInit, OnModuleDestroy {
@@ -18,7 +36,7 @@ export class EtherpadService implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly repo: EtherpadRepository, private readonly store: StoreService) {}
   onModuleInit() {
     if (!process.env.ETHERPAD_CONTROL_URL) return;
-    this.timer = setInterval(() => void this.serial(() => this.reconcile()).catch(e => this.log.warn(String(e))), 5000);
+    this.timer = setInterval(() => void this.serial(() => this.reconcile()).catch(e => this.log.warn(String(e))), RECONCILE_INTERVAL_MS);
     this.timer.unref();
     void this.serial(() => this.reconcile()).catch(e => this.log.warn(String(e)));
   }
@@ -37,7 +55,7 @@ export class EtherpadService implements OnModuleInit, OnModuleDestroy {
     const response = await fetch(`${base}${path}`, {
       method: body === undefined ? "GET" : "POST",
       headers: { Authorization: `Bearer ${process.env.ETHERPAD_CONTROL_TOKEN}`, "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(10000),
+      body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(ETHERPAD_REQUEST_TIMEOUT_MS),
     });
     if (!response.ok) throw new ServiceUnavailableException(`Etherpad ${path} failed (${response.status})`);
     return response.json();
@@ -68,7 +86,7 @@ export class EtherpadService implements OnModuleInit, OnModuleDestroy {
       const control = await this.control();
       if (control.enabled && control.state !== "ready") throw new ServiceUnavailableException("The writing workspace is starting. Please retry shortly.");
       const mode = control.enabled ? "etherpad" : "ranking";
-      await this.repo.put<Admission>(`admission:${owner}`, { owner, mode, expiresAt: Date.now() + 30 * 60_000 });
+      await this.repo.put<Admission>(`admission:${owner}`, { owner, mode, expiresAt: Date.now() + ADMISSION_TTL_MS });
       return { mode };
     });
   }
@@ -93,7 +111,7 @@ export class EtherpadService implements OnModuleInit, OnModuleDestroy {
     const admission = await this.repo.get<Admission>(`admission:${owner}`);
     if (!admission || admission.mode !== "etherpad") throw new ConflictException("Missing writing admission");
     admission.sessionId = session.id; admission.participantId = participantId;
-    admission.expiresAt = Date.now() + (session.durationMinutes + 20) * 60_000;
+    admission.expiresAt = Date.now() + session.durationMinutes * 60_000 + ADMISSION_AFTER_DISCUSSION_MS;
     await this.repo.put(`admission:${owner}`, admission);
     for (const doc of await this.repo.list<PadRecord>("pad:")) {
       if (doc.owner !== owner) continue;
@@ -131,7 +149,7 @@ export class EtherpadService implements OnModuleInit, OnModuleDestroy {
         if (phase === "entry" && admission.sessionId) throw new ConflictException("Entry task already ended");
         const deadline = phase === "group"
           ? new Date(session!.startedAt!).getTime() + session!.durationMinutes * 60_000
-          : Date.now() + (phase === "entry" ? 5 : 2) * 60_000;
+          : Date.now() + (phase === "entry" ? ENTRY_PAD_MINUTES : EXIT_PAD_MINUTES) * 60_000;
         const id = `gdm-${randomUUID()}`;
         doc = { id, phase, deadline: new Date(deadline).toISOString(), state: "open", text: null, revision: null,
           ...(phase !== "group" ? { owner, participantId: admission.participantId } : {}),
@@ -150,7 +168,7 @@ export class EtherpadService implements OnModuleInit, OnModuleDestroy {
         const identity = phase === "group" && participant?.matrixUserId
           ? identityFor(buildIdentities(session!.participants.flatMap(p => p.matrixUserId ? [p.matrixUserId] : [])), participant.matrixUserId)
           : { name: "Participant", color: "#000000" };
-        const payload = Buffer.from(JSON.stringify({ padId: doc.id, exp: Date.parse(doc.deadline) + 60_000,
+        const payload = Buffer.from(JSON.stringify({ padId: doc.id, exp: Date.parse(doc.deadline) + PAD_ACCESS_GRACE_MS,
           authorToken: `t.${hash(owner + doc.id)}`, authorName: identity.name, authorColor: identity.color })).toString("base64url");
         const signature = createHmac("sha256", process.env.ETHERPAD_CONTROL_TOKEN!).update(payload).digest("base64url");
         publicDoc.embedUrl = `/etherpad/p/${doc.id}#gdm=${payload}.${signature}`;
@@ -176,7 +194,7 @@ export class EtherpadService implements OnModuleInit, OnModuleDestroy {
     if (doc.state === "captured") return doc;
     try {
       const captured = await this.request("/gdm/close", { padId: doc.id }) as { text: string; revision: number };
-      if (typeof captured.text !== "string" || [...captured.text].length > 1000) throw new Error("Invalid Etherpad snapshot");
+      if (typeof captured.text !== "string" || [...captured.text].length > MAX_PAD_TEXT_CODE_POINTS) throw new Error("Invalid Etherpad snapshot");
       Object.assign(doc, { text: captured.text, revision: captured.revision, state: "captured", capturedAt: new Date().toISOString() });
       delete doc.error;
       await this.repo.put(`pad:${doc.id}`, doc);
@@ -187,10 +205,9 @@ export class EtherpadService implements OnModuleInit, OnModuleDestroy {
       throw error;
     }
   }
-  private async ensureServer(): Promise<boolean> {
+  private async ensureServer(): Promise<void> {
     const status = await this.request("/start", {}, true) as { ready: boolean };
     if (!status.ready) throw new ServiceUnavailableException("Writing workspace is starting; please retry");
-    return true;
   }
   async reconcile(): Promise<void> {
     const control = await this.control();
@@ -222,7 +239,7 @@ export class EtherpadService implements OnModuleInit, OnModuleDestroy {
         const server = await this.request("/start", {}, true) as { ready: boolean };
         if (!server.ready) {
           const transitionAt = control.transitionAt ?? Date.now();
-          if (Date.now() - transitionAt > 90_000) throw new Error("Etherpad did not start within 90 seconds. Check the server logs and retry.");
+          if (Date.now() - transitionAt > ETHERPAD_START_TIMEOUT_MS) throw new Error("Etherpad did not start within 90 seconds. Check the server logs and retry.");
           await this.repo.put("control", { ...control, state: "starting", transitionAt }); return;
         }
         for (const doc of uncaptured) {

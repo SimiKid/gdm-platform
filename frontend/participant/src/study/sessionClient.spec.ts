@@ -108,22 +108,6 @@ describe("httpSessionManager", () => {
     );
   });
 
-  it("completeSession POSTs to /complete", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true })));
-    await httpSessionManager.completeSession("s");
-    expect(fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/sessions/s/complete"),
-      expect.objectContaining({ method: "POST" }),
-    );
-  });
-
-  it("completeSession throws on a non-ok response", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 500 })));
-    await expect(httpSessionManager.completeSession("s")).rejects.toThrow(
-      /completeSession failed/,
-    );
-  });
-
   it("completes one participant and returns the compensation URL", async () => {
     vi.stubGlobal(
       "fetch",
@@ -135,6 +119,30 @@ describe("httpSessionManager", () => {
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining("/sessions/s/participants/p/complete"),
       expect.objectContaining({ method: "POST" }),
+    );
+  });
+});
+
+describe("httpSessionManager – public study info", () => {
+  it("fetches the study info without a participant token", async () => {
+    sessionStorage.clear();
+    vi.stubGlobal("fetch", okJson({ groupSize: 3, durationMinutes: 12 }));
+    await expect(httpSessionManager.getStudyInfo()).resolves.toEqual({
+      groupSize: 3,
+      durationMinutes: 12,
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/study\/info$/),
+      expect.any(Object),
+    );
+  });
+
+  it("scopes the study info to a forced condition", async () => {
+    vi.stubGlobal("fetch", okJson({ groupSize: null, durationMinutes: null }));
+    await httpSessionManager.getStudyInfo("cond a");
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/study\/info\?conditionId=cond\+a$/),
+      expect.any(Object),
     );
   });
 });
@@ -215,6 +223,7 @@ describe("httpSessionManager – Prolific lifecycle and error paths", () => {
     ["submitSurvey", () => httpSessionManager.submitSurvey({ sessionId: "s", participantId: "p", kind: "exit", survey: { answers: {}, submittedAt: "" } })],
     ["submitDebriefFeedback", () => httpSessionManager.submitDebriefFeedback("s", "p", "x")],
     ["completeParticipant", () => httpSessionManager.completeParticipant("s", "p")],
+    ["getStudyInfo", () => httpSessionManager.getStudyInfo()],
   ])("%s rejects with the HTTP status on a non-ok response", async (name, call) => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 503 })));
     await expect(call()).rejects.toThrow(new RegExp(`${name} failed: 503`));

@@ -16,12 +16,19 @@ workspace "GDM Study Platform" "AI-supported group decision-making study" {
                 chatService = container "Chat Service" "Runtime glue between the session entity, the bot and Matrix during a session; live checkpoints; optional chat moderation" "NestJS"
                 bot = container "Bot / Rule Engine" "Rule+LLM contribution-dominance detector; sends group or private nudges" "Node module inside Chat Service"
                 matrix = container "Matrix Server" "Real-time chat; rooms = groups; durable message store; E2EE off on study rooms" "Synapse"
-                exportService = container "Export Service" "Empty placeholder (backend/export-service); exports currently live in Session Manager" "NestJS" {
+                etherpad = container "Etherpad" "Optional shared text workspace (workspace mode etherpad); a small supervisor starts/stops the server when the admin switch is toggled" "Etherpad, Node.js" {
                     tags "Optional"
                 }
                 db = container "Research Database" "Sessions, surveys, messages, interventions" "PostgreSQL" {
                     tags "Database"
                 }
+                etherpadDb = container "Etherpad Database" "Pad contents and revisions (separate from the research store)" "PostgreSQL" {
+                    tags "Database"
+                }
+            }
+
+            group "Edge (production)" {
+                proxy = container "Reverse Proxy" "Single public entry point: TLS via Let's Encrypt; routes /, /api, /_matrix, /admin and /etherpad; researcher paths limited to UZH networks" "Caddy"
             }
         }
 
@@ -37,6 +44,12 @@ workspace "GDM Study Platform" "AI-supported group decision-making study" {
 
         participant -> spa "Uses" "HTTPS"
         researcher -> admin "Uses" "HTTPS"
+
+        # Production traffic enters through Caddy (dev exposes the ports directly)
+        proxy -> spa "Serves the participant SPA; /etherpad/* via its nginx" "HTTP"
+        proxy -> admin "Proxies /admin/*" "HTTP"
+        proxy -> sessionManager "Proxies /api/* (internal-only routes rejected)" "HTTP"
+        proxy -> matrix "Proxies the /_matrix client API (no federation)" "HTTP"
 
         spa -> sessionManager "Opens session, submits surveys; receives session object" "HTTPS/JSON"
         spa -> matrix "Real-time chat: messages, ranking edits, typing (no reactions per study protocol)" "Matrix C-S API"
@@ -59,9 +72,9 @@ workspace "GDM Study Platform" "AI-supported group decision-making study" {
         bot -> llm "Generates nudge wording; classifies message contributions (nudging arms)"
         sessionManager -> prolific "Validates submissions, requests returns, pays bonuses (when API token configured)" "HTTPS/JSON"
 
-        exportService -> db "Would read for JSON / CSV export (not implemented)" "SQL" {
-            tags "Optional"
-        }
+        spa -> etherpad "Edits the group pad in an embedded editor (Etherpad workspace mode)" "HTTPS/WebSocket via /etherpad/"
+        sessionManager -> etherpad "Creates pads and author sessions, captures pad text; starts/stops the server" "HTTP API"
+        etherpad -> etherpadDb "Stores pads" "SQL"
 
         # NOTE: Synapse also keeps its own internal Postgres (durable message store).
         # It is the fallback if the backend crashes before end-of-session persistence.

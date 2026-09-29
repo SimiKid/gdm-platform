@@ -1,4 +1,5 @@
 import { afterEach, describe, it, expect, beforeEach, vi } from "vitest";
+import { BadRequestException } from "@nestjs/common";
 import { SessionsService } from "./sessions.service";
 import { StoreService } from "../store/store.service";
 import type { MatrixService } from "../matrix/matrix.service";
@@ -567,7 +568,7 @@ describe("SessionsService (session-manager)", () => {
     await expect(svc.getSession("nope")).rejects.toThrow();
   });
 
-  it("lists sessions and interventions for admin/debug views", async () => {
+  it("lists sessions and persists finalized interventions", async () => {
     const res = await svc.openSession(open());
     const summaries = await svc.listSessions();
     expect(summaries[0]).toMatchObject({
@@ -599,10 +600,7 @@ describe("SessionsService (session-manager)", () => {
       }],
     });
     expect(session.interventions).toHaveLength(1);
-    expect((await svc.listInterventions())[0]).toMatchObject({
-      sessionId: res.session.id,
-      message: "hi",
-    });
+    expect(session.interventions[0]).toMatchObject({ message: "hi" });
   });
 
   it("submitSurvey attaches entry and exit surveys to the participant", async () => {
@@ -1134,5 +1132,61 @@ describe("SessionsService (session-manager)", () => {
     const session = await svc.getSession(full.session.id);
     expect(session.status).toBe("running");
     expect(session.roundId).toBe(1);
+  });
+
+  it("rejects bot recovery without a bot user id as a bad request", async () => {
+    await expect(svc.recoverRunningSessions("")).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  describe("studyInfo", () => {
+    it("returns the requested condition's facts", async () => {
+      const baseline = (await store.listConditions())[0];
+      await store.upsertCondition({ ...baseline, groupSize: 4, durationMinutes: 12 });
+      await expect(svc.studyInfo(baseline.id)).resolves.toEqual({
+        groupSize: 4,
+        durationMinutes: 12,
+      });
+    });
+
+    it("uses the value all recruiting arms share, ignoring test and unknown conditions", async () => {
+      const [first] = await store.listConditions();
+      await store.upsertCondition({
+        ...first,
+        id: "e2e-run",
+        groupSize: 9,
+        durationMinutes: 1,
+      });
+      await expect(svc.studyInfo("no-such-arm")).resolves.toEqual({
+        groupSize: 3,
+        durationMinutes: 10,
+      });
+      await expect(svc.studyInfo()).resolves.toEqual({
+        groupSize: 3,
+        durationMinutes: 10,
+      });
+    });
+
+    it("returns null where recruiting arms disagree", async () => {
+      const [first, second] = await store.listConditions();
+      await store.upsertCondition({ ...second, durationMinutes: 15 });
+      // An inactive or full arm no longer recruits and cannot cause a mismatch.
+      await store.upsertCondition({ ...first, groupSize: 5, active: false });
+      await expect(svc.studyInfo()).resolves.toEqual({
+        groupSize: 3,
+        durationMinutes: null,
+      });
+    });
+
+    it("returns nulls when no arm is recruiting", async () => {
+      for (const condition of await store.listConditions()) {
+        await store.upsertCondition({ ...condition, goal: 0 });
+      }
+      await expect(svc.studyInfo()).resolves.toEqual({
+        groupSize: null,
+        durationMinutes: null,
+      });
+    });
   });
 });

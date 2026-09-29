@@ -307,4 +307,33 @@ describe("Chat telemetry", () => {
       "First line\nSecond line",
     );
   });
+
+  it("labels the input and links it to the mention picker's active option", () => {
+    const { client } = createClient([], [
+      "@participant:test",
+      "@other-a:test",
+      "@other-b:test",
+    ]);
+    render(<Chat client={client} session={null} />);
+    const input = screen.getByRole("textbox", { name: "Message" });
+    expect(input).not.toHaveAttribute("aria-activedescendant");
+
+    fireEvent.change(input, { target: { value: "@" } });
+    const listbox = screen.getByRole("listbox", { name: "Mention a participant" });
+    const options = screen.getAllByRole("option");
+    expect(options).toHaveLength(2);
+    expect(input).toHaveAttribute("aria-controls", listbox.id);
+    expect(input).toHaveAttribute("aria-activedescendant", options[0].id);
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(input).toHaveAttribute("aria-activedescendant", options[1].id);
+    expect(options[1]).toHaveAttribute("aria-selected", "true");
+
+    const chosen = options[1].textContent;
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(input).toHaveValue(`@${chosen} `);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(input).not.toHaveAttribute("aria-controls");
+  });
 });
+

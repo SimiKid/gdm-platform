@@ -221,17 +221,6 @@ export function sendReaction(
   });
 }
 
-export async function redactEvent(
-  user: MatrixUser,
-  roomId: string,
-  eventId: string,
-): Promise<void> {
-  await matrixFetch(
-    `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/redact/${encodeURIComponent(eventId)}/t${txnCounter++}`,
-    { method: "PUT", token: user.accessToken, body: "{}" },
-  );
-}
-
 export function sendRanking(
   user: MatrixUser,
   roomId: string,
@@ -305,6 +294,7 @@ export function testCondition(
       protectedEndMinutes: 0,
       contributionWindowMinutes: 30,
       scoreWeights: { messages: 1, words: 0.05 },
+      dominanceWeights: { share: 0.9, meaningfulness: 0.1 },
     },
     ...overrides,
   };

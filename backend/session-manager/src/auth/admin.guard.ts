@@ -5,7 +5,8 @@ import {
   Logger,
   UnauthorizedException,
 } from "@nestjs/common";
-import { bearerToken, safeTokenEqual } from "./bearer-token";
+import { safeTokenEqual } from "@gdm/shared/server";
+import { bearerToken } from "./bearer-token";
 
 interface IncomingRequest {
   headers: Record<string, string | string[] | undefined>;

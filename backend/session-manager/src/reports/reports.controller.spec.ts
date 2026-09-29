@@ -5,7 +5,6 @@ import type { ReportsService } from "./reports.service";
 
 function build() {
   const reports = {
-    summary: vi.fn(async () => ({ generatedAt: "now", conditions: [] })),
     exportParticipants: vi.fn(async () => ({ generatedAt: "now", participants: [] })),
     exportParticipantsCsv: vi.fn(async () => "participant_id\n"),
     exportSessionsAnalysis: vi.fn(async () => ({ generatedAt: "now", sessions: [] })),
@@ -27,8 +26,8 @@ const EVERYTHING = { conditionIds: [], roundIds: [] };
 describe("ReportsController", () => {
   it("parses the condition and round query axes into one research filter", async () => {
     const { ctrl, reports } = build();
-    await ctrl.summary(" baseline, public-llm ,,", "1, x, 0, -3, 2.5, 2");
-    expect(reports.summary).toHaveBeenCalledWith({
+    await ctrl.exportParticipants(" baseline, public-llm ,,", "1, x, 0, -3, 2.5, 2");
+    expect(reports.exportParticipants).toHaveBeenCalledWith({
       conditionIds: ["baseline", "public-llm"],
       roundIds: [1, 2],
     });
@@ -36,8 +35,8 @@ describe("ReportsController", () => {
 
   it("treats absent query axes as 'everything'", async () => {
     const { ctrl, reports } = build();
-    await ctrl.summary();
-    expect(reports.summary).toHaveBeenCalledWith(EVERYTHING);
+    await ctrl.exportParticipants();
+    expect(reports.exportParticipants).toHaveBeenCalledWith(EVERYTHING);
   });
 
   const delegations: Array<

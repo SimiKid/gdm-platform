@@ -20,7 +20,6 @@ export default defineConfig({
         "src/main.tsx",
         "src/test-setup.ts",
         "src/test-utils.ts",
-        "src/vite-env.d.ts",
       ],
       reporter: ["text", "text-summary"],
       thresholds: {

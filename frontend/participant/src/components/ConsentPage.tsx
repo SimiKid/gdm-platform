@@ -2,13 +2,19 @@ import { useState } from "react";
 import { CONSENT_ITEMS } from "../study/consent";
 
 interface Props {
+  /** Participants per group; null (unknown) keeps the wording number-free. */
+  groupSize?: number | null;
   /** Called once all consent boxes are ticked and "Continue" is pressed. */
   onBegin: () => void;
   onDecline?: () => void;
 }
 
 /** Page 1 — Study Introduction & Informed Consent (two internal steps). */
-export default function ConsentPage({ onBegin, onDecline }: Props) {
+export default function ConsentPage({
+  groupSize = null,
+  onBegin,
+  onDecline,
+}: Props) {
   const [showConsent, setShowConsent] = useState(false);
   const [introAcknowledged, setIntroAcknowledged] = useState(false);
   const [checked, setChecked] = useState<boolean[]>(
@@ -34,8 +40,11 @@ export default function ConsentPage({ onBegin, onDecline }: Props) {
           <strong>
             The study will take approximately 25–35 minutes to complete.
           </strong>{" "}
-          The main task is a timed group decision with three fully anonymized
-          participants in total, who are randomly assigned to groups.
+          The main task is a timed group decision with{" "}
+          {groupSize === null
+            ? "fully anonymized participants"
+            : `${groupSize} fully anonymized participants in total`}
+          , who are randomly assigned to groups.
         </p>
 
         <h2>Please Note</h2>

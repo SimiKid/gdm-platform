@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildIdentities, identityFor, isBot } from "./identity";
+import { buildIdentities, identityFor, isBot } from "@gdm/shared";
 
 describe("identity", () => {
   it("isBot detects the study bot user only", () => {

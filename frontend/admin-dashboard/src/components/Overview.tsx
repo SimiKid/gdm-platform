@@ -1,15 +1,17 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { isTestCondition } from "@gdm/shared";
 import type {
   ConditionProgress,
   RoundsResponse,
   Session,
   SessionSummary,
 } from "@gdm/shared";
-import { PARTICIPANT_BASE, apiFetch, isTestCondition } from "../api";
+import { PARTICIPANT_BASE, apiFetch } from "../api";
 import { STATUS_LABEL } from "../labels";
+import { useTimeout } from "../use-timeout";
 import AuthenticatedDownloadLink from "./AuthenticatedDownloadLink";
+import ProgressBar from "./ProgressBar";
 import SessionDetail from "./SessionDetail";
-
 
 interface Props {
   rows: ConditionProgress[];
@@ -92,7 +94,7 @@ function Metric({
   return (
     <div>
       <span className="label">
-        {label} {live && <span className="live-dot" aria-label="live" />}
+        {label} {live && <span className="live-dot" role="img" aria-label="live" />}
       </span>
       <strong>{value}</strong>
     </div>
@@ -110,8 +112,7 @@ function StudyLinkCard() {
         assigned to an active condition automatically.
       </p>
       <div className="copy-row">
-        <input readOnly value={link} onFocus={(e) => e.target.select()} />
-        <CopyButton text={link} />
+        <CopyField value={link} />
       </div>
     </section>
   );
@@ -131,8 +132,7 @@ export function PilotLinksCard({ rows }: { rows: ConditionProgress[] }) {
         return (
           <div className="copy-row" key={condition.id}>
             <span className="pilot-name">{condition.name}</span>
-            <input readOnly value={pilot} onFocus={(e) => e.target.select()} />
-            <CopyButton text={pilot} />
+            <CopyField value={pilot} />
           </div>
         );
       })}
@@ -140,20 +140,39 @@ export function PilotLinksCard({ rows }: { rows: ConditionProgress[] }) {
   );
 }
 
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
+/**
+ * Read-only link plus a copy button. Where the Clipboard API is unavailable
+ * or refused (plain-http origin, denied permission) the link is selected
+ * instead, so the researcher can copy it with the keyboard.
+ */
+function CopyField({ value }: { value: string }) {
+  const [state, setState] = useState<"idle" | "copied" | "manual">("idle");
+  const input = useRef<HTMLInputElement>(null);
+  const later = useTimeout();
+
+  function copy() {
+    const write = navigator.clipboard?.writeText(value) ?? Promise.reject(new Error("no clipboard"));
+    write.then(
+      () => {
+        setState("copied");
+        later(() => setState("idle"), 1500);
+      },
+      () => {
+        setState("manual");
+        input.current?.focus();
+        input.current?.select();
+        later(() => setState("idle"), 4000);
+      },
+    );
+  }
+
   return (
-    <button
-      type="button"
-      onClick={() => {
-        void navigator.clipboard.writeText(text).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        });
-      }}
-    >
-      {copied ? "Copied ✓" : "Copy"}
-    </button>
+    <>
+      <input ref={input} readOnly value={value} onFocus={(e) => e.target.select()} />
+      <button type="button" onClick={copy}>
+        {state === "copied" ? "Copied ✓" : state === "manual" ? "Press Ctrl/⌘+C" : "Copy"}
+      </button>
+    </>
   );
 }
 
@@ -201,8 +220,6 @@ function ConditionTracking({ rows }: { rows: ConditionProgress[] }) {
 }
 
 function TrackingRow({ row }: { row: ConditionProgress }) {
-  const pct =
-    row.goal > 0 ? Math.min(100, (row.completed / row.goal) * 100) : 0;
   const remaining = Math.max(0, row.goal - row.completed);
   return (
     <div className="tracking-row">
@@ -210,9 +227,7 @@ function TrackingRow({ row }: { row: ConditionProgress }) {
         {row.condition.name}
         {!row.condition.active && <em className="off"> (off)</em>}
       </span>
-      <div className="bar">
-        <span style={{ width: `${pct}%` }} />
-      </div>
+      <ProgressBar completed={row.completed} goal={row.goal} />
       <span className="tracking-count">
         {row.completed} / {row.goal}
         <span className="muted">{remaining} remaining</span>
@@ -232,25 +247,37 @@ export function SessionsTable({
   emptyMessage?: string;
   label?: string;
 }) {
+  // The open row is tracked separately from its loaded detail: a response
+  // only lands if its session is still the open one, so a slow reply can
+  // neither re-open a collapsed inspector nor show another session.
+  const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Session | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
 
-  // Keep an open detail in sync with the dashboard poll (e.g. message counts
-  // land when the chat service finalizes the session).
-  const detailId = detail?.id;
+  // Load the open detail, and refresh it with every dashboard poll (e.g.
+  // message counts land when the chat service finalizes the session).
   useEffect(() => {
-    if (!detailId) return;
-    void apiFetch(`/admin/sessions/${detailId}`).then(async (res) => {
-      if (res.ok) setDetail((await res.json()) as Session);
-    });
-  }, [detailId, sessions]);
+    if (!openId) return;
+    const request = new AbortController();
+    apiFetch(`/admin/sessions/${openId}`, { signal: request.signal })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`Could not load this session (${res.status}).`);
+        const loaded = (await res.json()) as Session;
+        if (request.signal.aborted) return;
+        setDetail(loaded);
+        setDetailError(null);
+      })
+      .catch((err: unknown) => {
+        if (request.signal.aborted) return;
+        setDetailError(err instanceof Error ? err.message : "Could not load this session.");
+      });
+    return () => request.abort();
+  }, [openId, sessions]);
 
-  async function open(id: string) {
-    if (detail?.id === id) {
-      setDetail(null); // click again to close
-      return;
-    }
-    const res = await apiFetch(`/admin/sessions/${id}`);
-    if (res.ok) setDetail((await res.json()) as Session);
+  function toggle(id: string) {
+    setOpenId((current) => (current === id ? null : id)); // click again to close
+    setDetail(null);
+    setDetailError(null);
   }
 
   return (
@@ -260,8 +287,10 @@ export function SessionsTable({
       {sessions.length > 0 && (
         <SessionRows
           sessions={sessions}
-          detail={detail}
-          onOpen={open}
+          openId={openId}
+          detail={detail?.id === openId ? detail : null}
+          detailError={detailError}
+          onToggle={toggle}
           label={label}
         />
       )}
@@ -273,28 +302,31 @@ const COLUMNS = 7;
 
 function SessionRows({
   sessions,
+  openId,
   detail,
-  onOpen,
+  detailError,
+  onToggle,
   label,
 }: {
   sessions: SessionSummary[];
+  openId: string | null;
   detail: Session | null;
-  onOpen: (id: string) => Promise<void>;
+  detailError: string | null;
+  onToggle: (id: string) => void;
   label: string;
 }) {
-  const selectedId = detail?.id;
   const selectedRow = useRef<HTMLTableRowElement>(null);
 
   // The height cap is lifted while a session is expanded, which resets the
   // list's own scroll position — bring the opened row back into view.
   useEffect(() => {
-    if (selectedId) selectedRow.current?.scrollIntoView?.({ block: "start", behavior: "smooth" });
-  }, [selectedId]);
+    if (openId) selectedRow.current?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+  }, [openId]);
 
   return (
     // Uncapped while a session is expanded so the inspector grows with the
     // page instead of scrolling inside the 420px list box.
-    <div className={detail ? "table-wrap" : "table-wrap compact"} aria-label={label}>
+    <div className={openId ? "table-wrap" : "table-wrap compact"} aria-label={label}>
       <table>
         <thead>
           <tr>
@@ -311,11 +343,18 @@ function SessionRows({
           {sessions.map((session) => (
             <Fragment key={session.id}>
               <tr
-                ref={selectedId === session.id ? selectedRow : undefined}
+                ref={openId === session.id ? selectedRow : undefined}
                 className={
-                  selectedId === session.id ? "clickable selected" : "clickable"
+                  openId === session.id ? "clickable selected" : "clickable"
                 }
-                onClick={() => void onOpen(session.id)}
+                tabIndex={0}
+                aria-expanded={openId === session.id}
+                onClick={() => onToggle(session.id)}
+                onKeyDown={(event: KeyboardEvent<HTMLTableRowElement>) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  onToggle(session.id);
+                }}
               >
                 <td>
                   <strong>{session.id.slice(0, 8)}</strong>
@@ -333,10 +372,19 @@ function SessionRows({
                 <td>{formatTime(session.startedAt)}</td>
                 <td>{formatTime(session.completedAt)}</td>
               </tr>
-              {detail?.id === session.id && (
+              {openId === session.id && (
                 <tr className="detail-row">
                   <td colSpan={COLUMNS}>
-                    <SessionDetail session={detail} />
+                    {detailError && (
+                      <p className="error" role="alert">
+                        {detailError}
+                      </p>
+                    )}
+                    {detail ? (
+                      <SessionDetail session={detail} />
+                    ) : (
+                      !detailError && <p className="empty">Loading session…</p>
+                    )}
                   </td>
                 </tr>
               )}

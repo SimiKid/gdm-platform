@@ -1,12 +1,22 @@
 import {
+  ConflictException,
   Injectable,
   Logger,
+  NotFoundException,
   OnModuleDestroy,
   OnModuleInit,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import type { ParticipationOutcomeRecord } from "@gdm/shared";
 import { StoreService } from "../store/store.service";
+import { prolificApiFetch, prolificApiToken } from "./prolific-api";
+
+/** How often opt-in automation processes due Prolific actions. */
+const AUTOMATION_INTERVAL_MS = 30_000;
+/** Back-off before a failed automatic action is attempted again. */
+const FAILED_ACTION_RETRY_MS = 5 * 60_000;
+/** Timeout of one Prolific API request. */
+const PROLIFIC_REQUEST_TIMEOUT_MS = 8_000;
 
 /**
  * Server-only, auditable Prolific writes. Automatic processing is opt-in and
@@ -22,7 +32,7 @@ export class ProlificActionsService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit(): void {
     if (process.env.PROLIFIC_PAYMENT_AUTOMATION !== "true") return;
-    this.timer = setInterval(() => void this.processDue(), 30_000);
+    this.timer = setInterval(() => void this.processDue(), AUTOMATION_INTERVAL_MS);
     this.timer.unref?.();
   }
 
@@ -70,7 +80,9 @@ export class ProlificActionsService implements OnModuleInit, OnModuleDestroy {
   async prepareBonusById(id: string): Promise<ParticipationOutcomeRecord> {
     const outcome = await this.requireOutcome(id);
     if (outcome.compensationKind !== "partial") {
-      throw new Error("Only partial-compensation outcomes can prepare a bonus");
+      throw new ConflictException(
+        "Only partial-compensation outcomes can prepare a bonus",
+      );
     }
     if (outcome.bonusBatchId) return outcome;
     if (!outcome.returnRequestedAt) {
@@ -142,7 +154,9 @@ export class ProlificActionsService implements OnModuleInit, OnModuleDestroy {
 
   private async prepareBonus(outcome: ParticipationOutcomeRecord): Promise<void> {
     const amountPence = outcome.compensationAmountPence ?? 0;
-    if (amountPence <= 0) throw new Error("partial payment amount is empty");
+    if (amountPence <= 0) {
+      throw new ConflictException("partial payment amount is empty");
+    }
     const response = await this.prolificFetch("/submissions/bonus-payments/", {
       method: "POST",
       body: JSON.stringify({
@@ -162,11 +176,13 @@ export class ProlificActionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async payBonus(outcome: ParticipationOutcomeRecord): Promise<void> {
-    if (!outcome.bonusBatchId) throw new Error("bonus has not been prepared");
-    if (outcome.prolificActionStatus !== "bonus_prepared") {
-      throw new Error("bonus is not in a payable state");
+    if (!outcome.bonusBatchId) {
+      throw new ConflictException("bonus has not been prepared");
     }
-    if (!process.env.PROLIFIC_API_TOKEN?.trim()) {
+    if (outcome.prolificActionStatus !== "bonus_prepared") {
+      throw new ConflictException("bonus is not in a payable state");
+    }
+    if (!prolificApiToken()) {
       throw new ServiceUnavailableException("PROLIFIC_API_TOKEN is not configured");
     }
 
@@ -226,25 +242,22 @@ export class ProlificActionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async prolificFetch(path: string, init: RequestInit): Promise<Response> {
-    const token = process.env.PROLIFIC_API_TOKEN?.trim();
+    const token = prolificApiToken();
     if (!token) {
       throw new ServiceUnavailableException("PROLIFIC_API_TOKEN is not configured");
     }
-    return fetch(`https://api.prolific.com/api/v1${path}`, {
+    return prolificApiFetch(token, path, {
       ...init,
-      headers: {
-        Authorization: `Token ${token}`,
-        "Content-Type": "application/json",
-        ...init.headers,
-      },
-      signal: init.signal ?? AbortSignal.timeout(8_000),
+      headers: { "Content-Type": "application/json", ...init.headers },
+      signal: init.signal ?? AbortSignal.timeout(PROLIFIC_REQUEST_TIMEOUT_MS),
     });
   }
 
   private async requireOutcome(id: string): Promise<ParticipationOutcomeRecord> {
     const outcome = await this.store.getParticipationOutcomeById(id);
-    if (!outcome?.outcome || outcome.outcome === "completed") {
-      throw new Error("No actionable terminal outcome");
+    if (!outcome) throw new NotFoundException("No actionable terminal outcome");
+    if (!outcome.outcome || outcome.outcome === "completed") {
+      throw new ConflictException("No actionable terminal outcome");
     }
     return outcome;
   }
@@ -255,7 +268,7 @@ export class ProlificActionsService implements OnModuleInit, OnModuleDestroy {
     await this.store.markProlificAction(id, {
       status: "failed",
       actionError: message.slice(0, 500),
-      nextAttemptAt: new Date(Date.now() + 5 * 60_000),
+      nextAttemptAt: new Date(Date.now() + FAILED_ACTION_RETRY_MS),
     });
   }
 }

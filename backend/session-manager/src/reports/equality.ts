@@ -1,5 +1,9 @@
-import { DEFAULT_INTERVENTION_CONFIG, isServiceUser } from "@gdm/shared";
-import type { Session } from "@gdm/shared";
+import {
+  DEFAULT_INTERVENTION_CONFIG,
+  countWords,
+  isServiceUser,
+} from "@gdm/shared";
+import type { ContributionClassification, Session } from "@gdm/shared";
 
 /**
  * Participation-equality metrics over a whole session, computed from the
@@ -7,10 +11,6 @@ import type { Session } from "@gdm/shared";
  * weights from the session's condition snapshot) — but over ALL participant
  * messages, not a single window. Bot messages never count.
  */
-
-export function countWords(text: string): number {
-  return text.trim().split(/\s+/).filter(Boolean).length;
-}
 
 /** Per-participant contribution scores, ordered like session.participants. */
 export function contributionScores(session: Session): number[] {
@@ -67,4 +67,11 @@ export function meanOf(values: Array<number | null | undefined>): number | null 
   const present = values.filter((value): value is number => value != null);
   if (present.length === 0) return null;
   return present.reduce((sum, value) => sum + value, 0) / present.length;
+}
+
+/** Mean LLM meaningfulness score of one participant's classified messages. */
+export function meanMeaningfulnessScore(
+  classifications: Pick<ContributionClassification, "meaningfulnessScore">[],
+): number | null {
+  return meanOf(classifications.map((item) => item.meaningfulnessScore));
 }

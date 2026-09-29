@@ -3,6 +3,7 @@ import { NestFactory } from "@nestjs/core";
 import { Logger } from "@nestjs/common";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import { AppModule } from "./app.module";
+import { corsOrigins } from "./cors";
 import { configureRequestBodyLimit } from "./request-body";
 
 /**
@@ -80,14 +81,7 @@ async function bootstrap() {
   // Production frontends and API are same-origin. Development may opt into a
   // short allowlist rather than reflecting arbitrary websites.
   if (process.env.GDM_ENV !== "production") {
-    const origins = (
-      process.env.CORS_ORIGINS ??
-      "http://localhost:3000,http://localhost:3003,http://localhost:5173,http://localhost:5174,http://127.0.0.1:3000,http://127.0.0.1:3003,http://127.0.0.1:5173,http://127.0.0.1:5174"
-    )
-      .split(",")
-      .map((origin) => origin.trim())
-      .filter(Boolean);
-    app.enableCors({ origin: origins });
+    app.enableCors({ origin: corsOrigins() });
   }
   app.setGlobalPrefix("api");
   // Let in-flight checkpoint transactions finish before Prisma disconnects

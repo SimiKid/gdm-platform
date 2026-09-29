@@ -1,5 +1,6 @@
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { PERSONAS, lineFor } from "../support/discussion-script";
+import { rankAllItems, walkToWaitingRoom } from "../support/e2e-helpers";
 
 /**
  * Real-study simulation: N independent participants open the public study
@@ -62,7 +63,18 @@ async function runParticipant(browser: Browser, seat: number): Promise<Outcome> 
   try {
     // Stagger arrivals over ~20 s so it looks like real traffic.
     await page.waitForTimeout(seat * 2_000);
-    await walkToWaitingRoom(page, seat);
+    // No conditionId: matchmaking assigns the real active arms. Answers vary
+    // a little per seat; different seats rank from different pool positions.
+    await walkToWaitingRoom(page, {
+      entry: {
+        age: 22 + seat,
+        gender: seat % 2 ? "Woman" : "Man",
+        degree: seat % 3 ? "Bachelor's degree" : "Master's degree",
+        // "moderately" exists on both the 5-point AI and 7-point personality scales.
+        scale: seat % 2 ? /: Agree moderately$/i : /: Disagree moderately$/i,
+      },
+      rankingSeat: seat,
+    });
 
     // Either the group forms and the chat opens, or the lobby times out.
     const chatInput = page.getByPlaceholder("Type a message");
@@ -72,7 +84,7 @@ async function runParticipant(browser: Browser, seat: number): Promise<Outcome> 
       return { seat, result: "unmatched (lobby ended)", messages, nudgesSeen };
     }
 
-    const almostDone = page.getByRole("heading", { name: "Almost done!" });
+    const exitSurvey = page.getByRole("heading", { name: "Final Task Reflection (1/3)" });
     const botMessages = page.locator(".bot-message");
     const say = async (text: string): Promise<boolean> => {
       try {
@@ -82,7 +94,7 @@ async function runParticipant(browser: Browser, seat: number): Promise<Outcome> 
         messages += 1;
         return true;
       } catch (err) {
-        if (!(await almostDone.isVisible())) {
+        if (!(await exitSurvey.isVisible())) {
           console.warn(`seat ${seat + 1} could not send: ${String(err).slice(0, 120)}`);
         }
         return false;
@@ -93,7 +105,7 @@ async function runParticipant(browser: Browser, seat: number): Promise<Outcome> 
     let quietUntil = 0;
     await page.waitForTimeout(3_000 + (seat % 5) * 1_500);
     for (let i = 0; ; i += 1) {
-      if (await almostDone.isVisible()) break;
+      if (await exitSurvey.isVisible()) break;
       if (!(await chatInput.isVisible())) break;
 
       // React to a nudge that just appeared (public: everyone sees it;
@@ -133,69 +145,13 @@ async function runParticipant(browser: Browser, seat: number): Promise<Outcome> 
       await page.waitForTimeout(persona.everyMs * PACE * paceFactor);
     }
 
-    await expect(almostDone).toBeVisible({ timeout: (MINUTES + 3) * 60_000 });
+    await expect(exitSurvey).toBeVisible({ timeout: (MINUTES + 3) * 60_000 });
     await finishExitFlow(page);
     return { seat, result: "completed", messages, nudgesSeen };
   } catch (err) {
     return { seat, result: `failed: ${String(err).slice(0, 200)}`, messages, nudgesSeen };
   } finally {
     await context.close().catch(() => undefined);
-  }
-}
-
-/** Recruiting → intro → consent → about-you → attitudes → individual ranking → group intro. */
-async function walkToWaitingRoom(page: Page, seat: number): Promise<void> {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Start" }).click();
-
-  await expect(page.getByRole("heading", { name: "Welcome to the Study" })).toBeVisible();
-  await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: /continue to the consent form/i }).click();
-  for (const box of await page.getByRole("checkbox").all()) await box.check();
-  await page.getByRole("button", { name: "Begin study" }).click();
-
-  // About you — vary the answers a little per seat.
-  await page.locator("#about-age").fill(String(22 + seat));
-  await page.getByRole("radio", { name: seat % 2 ? "Woman" : "Man", exact: true }).check();
-  await page.getByRole("radio", { name: seat % 3 ? "Bachelor's degree" : "Master's degree" }).check();
-  await page.getByRole("radio", { name: "Fluent (advanced)" }).check();
-  await page.getByRole("button", { name: "Continue" }).click();
-
-  // Attitudes & personality (7-point scale).
-  const scale = seat % 2 ? /: Agree a little$/i : /: Disagree a little$/i;
-  for (const radio of await page.getByRole("radio", { name: scale }).all()) await radio.check();
-  await page.getByRole("group", { name: /work in teams/ }).getByRole("radio", { name: "Sometimes" }).check();
-  await page
-    .getByRole("group", { name: /communicating via text chat/ })
-    .getByRole("radio", { name: "Rather comfortable" })
-    .check();
-  await page
-    .getByRole("group", { name: /spaceflight-related/ })
-    .getByRole("radio", { name: "Rather unfamiliar" })
-    .check();
-  await page
-    .getByRole("group", { name: /wilderness.*survival/i })
-    .getByRole("radio", { name: "Rather unfamiliar" })
-    .check();
-  await page.getByRole("button", { name: "Continue" }).click();
-
-  // Individual ranking.
-  await expect(page.getByRole("heading", { name: "Task: Survival on the Moon" })).toBeVisible();
-  await rankAllItems(page, seat);
-  await page.getByRole("button", { name: "Submit my ranking" }).click();
-
-  // Group intro → waiting room.
-  await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "Join chat" }).click();
-  await expect(page.getByRole("heading", { name: "Waiting room" })).toBeVisible();
-}
-
-/** Add every pool item; different seats pick from different positions so rankings differ. */
-async function rankAllItems(page: Page, seat: number): Promise<void> {
-  const addButtons = page.getByRole("button", { name: /^Add .* to the ranking$/ });
-  while ((await addButtons.count()) > 0) {
-    const count = await addButtons.count();
-    await addButtons.nth(seat % Math.min(3, count)).click();
   }
 }
 

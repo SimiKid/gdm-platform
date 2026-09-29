@@ -65,6 +65,18 @@ describe("API guards", () => {
     }
   });
 
+  it("leaves internal endpoints open when no internal token is configured", () => {
+    const previous = process.env.INTERNAL_API_TOKEN;
+    delete process.env.INTERNAL_API_TOKEN;
+    try {
+      const guard = new InternalGuard();
+      expect(guard.canActivate(context({ headers: {} }))).toBe(true);
+      expect(guard.canActivate(context({ headers: {} }))).toBe(true);
+    } finally {
+      if (previous !== undefined) process.env.INTERNAL_API_TOKEN = previous;
+    }
+  });
+
   it("binds participant credentials to the requested session and participant", async () => {
     const hasParticipantAccess = vi.fn(async () => true);
     const guard = new ParticipantGuard({
