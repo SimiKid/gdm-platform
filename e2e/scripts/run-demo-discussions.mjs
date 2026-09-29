@@ -68,14 +68,18 @@ async function walkToWaitingRoom(page, arm, seat) {
   await page.getByRole("button", { name: "Begin study" }).click();
 
   await page.locator("#about-age").fill(String(21 + seat * 3 + ARMS.indexOf(arm)));
-  await page.getByRole("radio", { name: "Man" }).check();
+  await page.getByRole("radio", { name: "Man", exact: true }).check();
   await page.getByRole("radio", { name: "Bachelor's degree" }).check();
   await page.getByRole("radio", { name: "Fluent (advanced)" }).check();
   await page.getByRole("button", { name: "Continue" }).click();
 
-  // Attitudes & personality page: fill all matrix radios + single items.
-  for (const radio of await page.getByRole("radio", { name: /: Disagree strongly$/i }).all()) {
-    await radio.check();
+  // Attitudes & Traits 1/2 (AI) then 2/2 (personality): first scale option
+  // for every matrix row, one screen at a time; then Skills & Experience.
+  for (let screen = 0; screen < 2; screen++) {
+    for (const radio of await page.getByRole("radio", { name: /: Disagree strongly$/i }).all()) {
+      await radio.check();
+    }
+    await page.getByRole("button", { name: "Continue" }).click();
   }
   await page
     .getByRole("group", { name: /work in teams/ })
@@ -98,7 +102,7 @@ async function walkToWaitingRoom(page, arm, seat) {
   // Individual ranking: each seat adds items in a different order so the
   // NASA error scores vary between participants.
   await page
-    .getByRole("heading", { name: "Task: Survival on the Moon" })
+    .getByRole("heading", { name: "Study Task Description" })
     .waitFor({ timeout: 20_000 });
   const addButtons = page.getByRole("button", { name: /^Add .* to the ranking$/ });
   while ((await addButtons.count()) > 0) {
@@ -113,7 +117,7 @@ async function walkToWaitingRoom(page, arm, seat) {
 
 /** Send messages (and the odd shared-ranking move) until the exit survey appears. */
 async function chatPhase(page, arm, seat) {
-  const exitHeading = page.getByRole("heading", { name: "Almost done!" });
+  const exitHeading = page.getByRole("heading", { name: "Final Task Reflection (1/3)" });
   const lines = seat === 0 ? DOMINANT_LINES : QUIET_LINES[seat - 1];
   const cadence = seat === 0 ? 24_000 : 55_000;
   const deadline = Date.now() + 16 * 60_000;
@@ -147,7 +151,7 @@ async function chatPhase(page, arm, seat) {
 async function exitSurvey(page, confidence) {
   // Step 1: final ranking
   await page
-    .getByRole("heading", { name: "Almost done!" })
+    .getByRole("heading", { name: "Final Task Reflection (1/3)" })
     .waitFor({ timeout: 60_000 });
   const addButtons = page.getByRole("button", { name: /^Add .* to the ranking$/ });
   while ((await addButtons.count()) > 0) await addButtons.first().click();

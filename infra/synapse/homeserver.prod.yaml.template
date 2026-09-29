@@ -63,7 +63,9 @@ suppress_key_server_warning: true
 encryption_enabled_by_default_for_room_type: "off"
 
 # ── Application services (Bot / Rule Engine) ──────────
-# STUB: uncomment when the bot appservice lands (see docker-compose.yml).
+# Not used: the Chat Service bot is an ordinary registered Matrix user. Only if
+# a bot appservice is ever added: uncomment this and the matching volume mount
+# in docker-compose.yml (the registration file does not exist yet).
 # app_service_config_files:
 #   - /data/appservice-registration.yaml
 

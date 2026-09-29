@@ -4,11 +4,11 @@ import DebriefingDisclosure from "./DebriefingDisclosure";
 import StudyShell from "./StudyShell";
 
 /**
- * Page 6 — Debriefing & Compensation, the final page of the study.
- * Reveals the withheld study focus and shows the compensation link.
- * The link itself is set by the researcher in the admin dashboard
- * (Settings → Compensation Link), with the build-time VITE_PAYMENT_URL
- * as fallback.
+ * Debriefing — the final page after the exit survey. Reveals the withheld
+ * study focus and collects optional feedback. Prolific participants get the
+ * completion link, set by the researcher in the admin dashboard (Settings →
+ * "Prolific completion and exit paths" → Full completion); direct
+ * participants just finish.
  */
 interface Props {
   /** Returned for Prolific participants after the exit survey. */
@@ -24,8 +24,7 @@ export default function DebriefingPage({
   sessionId,
   participantId,
 }: Props) {
-  const paymentUrl = completionUrl || import.meta.env.VITE_PAYMENT_URL || "#";
-  const paymentConfigured = paymentUrl !== "" && paymentUrl !== "#";
+  const paymentConfigured = completionUrl !== "";
   const [feedback, setFeedback] = useState("");
   const [directFinished, setDirectFinished] = useState(false);
 
@@ -87,7 +86,7 @@ export default function DebriefingPage({
           ) : paymentConfigured ? (
             <a
               className="btn btn-primary"
-              href={paymentUrl}
+              href={completionUrl}
               onClick={handleReturn}
             >
               Return to Prolific

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { DragEvent } from "react";
+import { insertBeforeAnchor } from "../study/ranking";
 
 interface Item {
   id: string;
@@ -34,14 +35,8 @@ export default function RankingBoard({ items, ranked, onChange, poolBelow }: Pro
   const [dropIndex, setDropIndex] = useState<number | null>(null);
 
   function placeInRanking(id: string, index: number | null) {
-    // Anchor on the item we drop before, not its index: removing the dragged
-    // item first shifts indices, which landed downward drags one slot low.
-    const anchor = index === null ? null : ranked[index];
-    if (anchor === id) return;
-    const without = ranked.filter((x) => x !== id);
-    const at = anchor === null ? without.length : without.indexOf(anchor);
-    without.splice(at < 0 ? without.length : at, 0, id);
-    onChange(without);
+    const next = insertBeforeAnchor(ranked, id, index);
+    if (next) onChange(next);
   }
 
   function returnToPool(id: string) {

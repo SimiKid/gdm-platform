@@ -23,7 +23,6 @@ describe("SessionsController", () => {
     listSessions: vi.fn(async () => [{ id: "s" }]),
     getSession: vi.fn(async () => ({ id: "s" })),
     getPublicSession: vi.fn(async () => ({ id: "s" })),
-    listInterventions: vi.fn(async () => [{ sessionId: "s" }]),
     exportBundle: vi.fn(async () => ({ generatedAt: "now", sessions: [] })),
     exportCsv: vi.fn(async () => "session_id\n"),
     exportMessages: vi.fn(async () => ({ generatedAt: "now", messages: [] })),
@@ -39,6 +38,10 @@ describe("SessionsController", () => {
       compensationUrl: "https://pay.example",
     })),
     finalizeSession: vi.fn(async () => ({ id: "s" })),
+    checkpointSession: vi.fn(async () => undefined),
+    submitDebriefFeedback: vi.fn(async () => undefined),
+    recoverRunningSessions: vi.fn(async () => []),
+    studyInfo: vi.fn(async () => ({ groupSize: 3, durationMinutes: 10 })),
   } as unknown as SessionsService;
   const store = {
     listConditions: async () => [{ id: "c1", name: "C1", goal: 5 }],
@@ -142,6 +145,55 @@ describe("SessionsController", () => {
     });
   });
 
+  it("rejects malformed checkpoint and finalize bodies", async () => {
+    expect(() => ctrl.checkpoint("s", { messages: "nope" } as never)).toThrow(
+      /messages must be an array/,
+    );
+    expect(() => ctrl.finalize("s", { revision: -1 } as never)).toThrow(
+      /revision/,
+    );
+    expect(() => ctrl.finalize("s", undefined as never)).toThrow(
+      /Invalid checkpoint/,
+    );
+    await expect(
+      ctrl.checkpoint("s", { messages: [], rankingHistory: [], revision: 2 }),
+    ).resolves.toEqual({ ok: true });
+  });
+
+  it("validates debrief feedback and truncates long text", async () => {
+    await expect(
+      ctrl.submitDebriefFeedback({ sessionId: "s", participantId: "", feedback: "x" }),
+    ).rejects.toThrow(/participantId/);
+    await expect(
+      ctrl.submitDebriefFeedback({ sessionId: "s", participantId: "p", feedback: 3 } as never),
+    ).rejects.toThrow(/feedback must be a string/);
+    await ctrl.submitDebriefFeedback({
+      sessionId: "s",
+      participantId: "p",
+      feedback: "y".repeat(5_000),
+    });
+    expect(sessions.submitDebriefFeedback).toHaveBeenCalledWith(
+      "s",
+      "p",
+      "y".repeat(4_000),
+    );
+  });
+
+  it("recovers sessions for the restarted bot", async () => {
+    await ctrl.recover({ botUserId: "@bot:localhost" });
+    expect(sessions.recoverRunningSessions).toHaveBeenCalledWith("@bot:localhost");
+  });
+
+  it("serves public study info, ignoring oversized condition ids", async () => {
+    await expect(ctrl.studyInfo("baseline")).resolves.toEqual({
+      groupSize: 3,
+      durationMinutes: 10,
+    });
+    expect(sessions.studyInfo).toHaveBeenLastCalledWith("baseline");
+    await ctrl.studyInfo("x".repeat(200));
+    expect(sessions.studyInfo).toHaveBeenLastCalledWith(undefined);
+  });
+
   it("progress maps completed count and goal per condition", async () => {
     const progress = await ctrl.progress();
     expect(progress[0]).toMatchObject({
@@ -173,10 +225,6 @@ describe("SessionsController", () => {
       id: "c1",
     });
     expect(store.upsertCondition).toHaveBeenCalledWith(condition);
-  });
-
-  it("lists intervention summaries", async () => {
-    await expect(ctrl.interventions()).resolves.toEqual([{ sessionId: "s" }]);
   });
 
   it("exports JSON and CSV with optional condition filters", async () => {

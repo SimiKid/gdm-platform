@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Survey } from "@gdm/shared";
+import type { StudyInfoResponse, StudyTaskMode, Survey } from "@gdm/shared";
 import StudyShell from "./StudyShell";
 import ConsentPage from "./ConsentPage";
 import { CONSENT_ITEMS } from "../study/consent";
@@ -12,7 +12,9 @@ import GroupIntroPage from "./GroupIntroPage";
 import EtherpadTask from "./EtherpadTask";
 
 interface Props {
-  taskMode?: "ranking" | "etherpad";
+  taskMode?: StudyTaskMode;
+  /** Live group size / discussion length; null until loaded or if unknown. */
+  studyInfo?: StudyInfoResponse | null;
   /** Called with the assembled entry survey (incl. the individual ranking). */
   onComplete: (survey: Survey) => void;
   onDecline?: () => void;
@@ -38,6 +40,7 @@ const STEP_NUMBER: Record<Step, 1 | 2 | 3 | 4> = {
  */
 export default function Survey({
   taskMode = "ranking",
+  studyInfo = null,
   onComplete,
   onDecline,
   onIneligible,
@@ -74,7 +77,11 @@ export default function Survey({
   return (
     <StudyShell step={STEP_NUMBER[step]} onWithdraw={step === "consent" ? undefined : onWithdraw}>
       {step === "consent" && (
-        <ConsentPage onBegin={() => setStep("about")} onDecline={onDecline} />
+        <ConsentPage
+          groupSize={studyInfo?.groupSize ?? null}
+          onBegin={() => setStep("about")}
+          onDecline={onDecline}
+        />
       )}
 
       {step === "about" && (
@@ -96,9 +103,18 @@ export default function Survey({
         />
       )}
 
-      {step === "task" && taskMode === "etherpad" && <EtherpadTask phase="entry" onComplete={pad => { setTask({ entryEtherpadId: pad.id }); setStep("group"); }} />}
+      {step === "task" && taskMode === "etherpad" && (
+        <EtherpadTask
+          phase="entry"
+          onComplete={(pad) => {
+            setTask({ entryEtherpadId: pad.id });
+            setStep("group");
+          }}
+        />
+      )}
       {step === "task" && taskMode !== "etherpad" && (
         <RankingTaskPage
+          groupSize={studyInfo?.groupSize ?? null}
           onComplete={(answers) => {
             setTask({ ...answers });
             setStep("group");
@@ -106,7 +122,14 @@ export default function Survey({
         />
       )}
 
-      {step === "group" && <GroupIntroPage onJoin={finish} taskMode={taskMode} />}
+      {step === "group" && (
+        <GroupIntroPage
+          onJoin={finish}
+          taskMode={taskMode}
+          groupSize={studyInfo?.groupSize ?? null}
+          durationMinutes={studyInfo?.durationMinutes ?? null}
+        />
+      )}
     </StudyShell>
   );
 }

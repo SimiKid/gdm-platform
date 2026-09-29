@@ -193,7 +193,6 @@ test("@exports every researcher export is downloadable, authenticated and exclud
       if (ADMIN_TOKEN) {
         expect((await fetch(`${API}/export/linkage.csv`)).status).toBe(401);
         expect((await fetch(`${API}/export/research.zip`)).status).toBe(401);
-        expect((await fetch(`${API}/reports/summary`)).status).toBe(401);
       }
     });
 

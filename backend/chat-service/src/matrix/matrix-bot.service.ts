@@ -1,5 +1,14 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { randomBytes, randomUUID } from "node:crypto";
+import {
+  delay,
+  fetchWithRateLimitRetry,
+  nonNegativeInt,
+  positiveInt,
+} from "@gdm/shared/server";
+
+/** Pause before the next /sync attempt after an error or non-ok response. */
+const SYNC_ERROR_BACKOFF_MS = 2000;
 
 /** A normalised timeline event handed to the session runtime / rules. */
 export interface TimelineEvent {
@@ -9,19 +18,18 @@ export interface TimelineEvent {
   eventId: string;
   ts: number;
   content: Record<string, unknown>;
-  /** For m.room.redaction: the id of the event being redacted. */
-  redacts?: string;
 }
 
 type EventHandler = (event: TimelineEvent) => void;
 
 /**
  * The Chat Service's Matrix presence: a single bot user that joins every
- * managed room and tails the /sync stream. Open registration is enabled on the
- * dev homeserver, so no appservice registration is needed for this skeleton.
+ * managed room and tails the /sync stream. The bot registers itself as a
+ * regular user on startup (the homeserver allows registration), which is all
+ * the recorder and the rules need.
  *
- * (A production version would register a proper application service via the
- * homeserver.yaml stubs, but this bot-user approach is enough to run rules.)
+ * Registering a proper Matrix application service instead is still deferred
+ * (see the README); until then this bot-user approach is the production path.
  */
 @Injectable()
 export class MatrixBotService implements OnModuleInit {
@@ -283,7 +291,7 @@ export class MatrixBotService implements OnModuleInit {
         });
         if (!res.ok) {
           this.syncConnected = false;
-          if (this.running) await this.delay(2000);
+          if (this.running) await delay(SYNC_ERROR_BACKOFF_MS);
           continue;
         }
         this.syncConnected = true;
@@ -300,7 +308,7 @@ export class MatrixBotService implements OnModuleInit {
         if (!this.running) break;
         this.syncConnected = false;
         this.log.error(`sync error: ${String(err)}`);
-        await this.delay(2000);
+        await delay(SYNC_ERROR_BACKOFF_MS);
       } finally {
         if (this.syncAbort === controller) this.syncAbort = undefined;
       }
@@ -308,63 +316,20 @@ export class MatrixBotService implements OnModuleInit {
   }
 
   /** Respect Synapse's retry hint while keeping retries and delay bounded. */
-  private async fetchWithRateLimitRetry(
+  private fetchWithRateLimitRetry(
     operation: string,
     request: () => Promise<Response>,
   ): Promise<Response> {
-    for (let attempt = 0; ; attempt += 1) {
-      const response = await request();
-      if (response.status !== 429 || attempt >= this.rateLimitRetries) {
-        return response;
-      }
-      const hintedDelayMs = Math.min(
-        this.maxRetryDelayMs,
-        await matrixRetryAfterMs(response),
-      );
-      // Positive jitter keeps a burst from waking and being throttled again as
-      // one synchronized wave.
-      const retryAfterMs = Math.min(
-        this.maxRetryDelayMs,
-        hintedDelayMs +
-          Math.floor(Math.random() * Math.min(1000, hintedDelayMs / 4)),
-      );
-      this.log.warn(
-        `${operation} rate-limited; retrying in ${retryAfterMs}ms ` +
-          `(${attempt + 1}/${this.rateLimitRetries})`,
-      );
-      await this.delay(retryAfterMs);
-    }
+    return fetchWithRateLimitRetry(request, {
+      retries: this.rateLimitRetries,
+      maxDelayMs: this.maxRetryDelayMs,
+      onRetry: (retryAfterMs, attempt) =>
+        this.log.warn(
+          `${operation} rate-limited; retrying in ${retryAfterMs}ms ` +
+            `(${attempt}/${this.rateLimitRetries})`,
+        ),
+    });
   }
-
-  private delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-}
-
-async function matrixRetryAfterMs(response: Response): Promise<number> {
-  const header = response.headers?.get?.("retry-after");
-  const headerSeconds = header ? Number(header) : Number.NaN;
-  if (Number.isFinite(headerSeconds) && headerSeconds >= 0) {
-    return Math.max(1, Math.round(headerSeconds * 1000));
-  }
-  try {
-    const body = (await response.clone().json()) as { retry_after_ms?: unknown };
-    const value = Number(body.retry_after_ms);
-    if (Number.isFinite(value) && value >= 0) return Math.max(1, Math.round(value));
-  } catch {
-    // Plain test doubles and malformed 429 responses use a safe fallback.
-  }
-  return 1000;
-}
-
-function nonNegativeInt(value: string | undefined, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : fallback;
-}
-
-function positiveInt(value: string | undefined, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
 function toTimelineEvent(roomId: string, ev: SyncRoomEvent): TimelineEvent {
@@ -375,11 +340,6 @@ function toTimelineEvent(roomId: string, ev: SyncRoomEvent): TimelineEvent {
     eventId: ev.event_id,
     ts: ev.origin_server_ts,
     content: ev.content ?? {},
-    redacts:
-      ev.redacts ??
-      (typeof ev.content?.redacts === "string"
-        ? ev.content.redacts
-        : undefined),
   };
 }
 
@@ -389,7 +349,6 @@ interface SyncRoomEvent {
   event_id: string;
   origin_server_ts: number;
   content?: Record<string, unknown>;
-  redacts?: string;
 }
 
 interface SyncResponse {

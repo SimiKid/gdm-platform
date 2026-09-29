@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { createClient, ClientEvent } from "matrix-js-sdk";
 import type { MatrixClient } from "matrix-js-sdk";
-import type { ProlificIdentity, PublicSession, Survey } from "@gdm/shared";
+import { formatMmSs } from "@gdm/shared";
+import type {
+  ParticipationOutcomeResponse,
+  ProlificIdentity,
+  PublicSession,
+  Survey,
+} from "@gdm/shared";
 import { httpSessionManager } from "../study/sessionClient";
+import { createMatrixClient, syncMatrixClient } from "../study/matrixClient";
 import { saveProgress } from "../study/progress";
 import StudyShell from "./StudyShell";
 import DinoGame from "./DinoGame";
@@ -18,7 +24,7 @@ interface Props {
     session: PublicSession,
     participantId: string,
   ) => void;
-  onTerminated?: (outcome: import("@gdm/shared").ParticipationOutcomeResponse) => void;
+  onTerminated?: (outcome: ParticipationOutcomeResponse) => void;
   onWithdraw?: () => void;
 }
 
@@ -51,11 +57,13 @@ export default function WaitingRoom({
   const [attempt, setAttempt] = useState(0);
 
   const pollRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  // Keep the latest onReady without making it an effect dependency.
+  // Keep the latest callbacks without making them effect dependencies.
   const onReadyRef = useRef(onReady);
-  onReadyRef.current = onReady;
   const onTerminatedRef = useRef(onTerminated);
-  onTerminatedRef.current = onTerminated;
+  useEffect(() => {
+    onReadyRef.current = onReady;
+    onTerminatedRef.current = onTerminated;
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -94,24 +102,9 @@ export default function WaitingRoom({
           });
         }
 
-        const client = createClient({
-          baseUrl: res.matrix.homeserverUrl,
-          accessToken: res.matrix.accessToken,
-          userId: res.matrix.userId,
-        });
+        const client = createMatrixClient(res.matrix);
         matrixClient = client;
-        await client.startClient({ initialSyncLimit: 20 });
-        await new Promise<void>((resolve, reject) => {
-          const timeout = setTimeout(
-            () => reject(new Error("Could not connect to the chat server")),
-            15000,
-          );
-          client.once(ClientEvent.Sync, (state: string) => {
-            clearTimeout(timeout);
-            if (state === "PREPARED") resolve();
-            else reject(new Error(`Chat connection failed (${state})`));
-          });
-        });
+        await syncMatrixClient(client);
         if (cancelled) {
           client.stopClient();
           return;
@@ -211,7 +204,10 @@ export default function WaitingRoom({
         <div className="study-card narrow centered">
           <h1>Waiting room</h1>
           <p className="error">{error}</p>
-          <p>The study may be full, or the servers aren't running.</p>
+          <p>
+            The study may be full, or we are having technical difficulties.
+            Please try again in a moment.
+          </p>
           <div className="card-actions">
             <button
               type="button"
@@ -242,8 +238,8 @@ export default function WaitingRoom({
         <DinoGame />
         {secondsRemaining !== null && (
           <p className="action-hint" role="timer">
-            If a complete group cannot be formed, waiting ends in {Math.floor(secondsRemaining / 60)}:
-            {(secondsRemaining % 60).toString().padStart(2, "0")} and partial compensation is reviewed.
+            If a complete group cannot be formed, waiting ends in{" "}
+            {formatMmSs(secondsRemaining)} and partial compensation is reviewed.
           </p>
         )}
       </div>

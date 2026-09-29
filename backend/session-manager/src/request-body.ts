@@ -5,7 +5,7 @@ import type { NestExpressApplication } from "@nestjs/platform-express";
  * audit records. Even an ordinary LLM-enabled session exceeds Express's
  * 100 KB default, so allow a bounded payload sized for a complete session.
  */
-export const DEFAULT_SESSION_BODY_LIMIT = "10mb";
+const DEFAULT_SESSION_BODY_LIMIT = "10mb";
 
 export function configureRequestBodyLimit(app: NestExpressApplication): void {
   const limit =

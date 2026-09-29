@@ -107,7 +107,8 @@ timestamp cannot be parsed is counted unconditionally). Older messages fall
 off, so the score reflects recent activity, not cumulative history. Emoji
 reactions never count — the intervention is about turn-taking in
 talking/typing, and the chat UI no longer offers reactions at all (removed
-per study protocol for a cleaner design).
+per study protocol for a cleaner design; the Chat Service ignores `m.reaction`
+events).
 
 In the nudging arms (`llmMode: "active"`), a message the classifier marks
 `invitesParticipation == true` does **not count** toward the split: it is
@@ -209,9 +210,9 @@ flagged. A flagged message is redacted in the Matrix room (reason
 was removed because it violates the study's conduct policy. Please keep the
 discussion respectful."* Moderation fails open: API errors, a missing
 `ANTHROPIC_API_KEY`, or any value other than `on` leave messages untouched.
-Note that the runtime only processes redactions of *reactions*: a
-moderation-redacted message stays in the recorded chat log and still counts
-toward the contribution split. The default in `infra/.env.example` and in
+Note that the runtime processes no redactions at all (and no emoji
+reactions): a moderation-redacted message stays in the recorded chat log and
+still counts toward the contribution split. The default in `infra/.env.example` and in
 Docker Compose is `off`.
 
 ## Participant Identities
@@ -262,7 +263,7 @@ but the dominance formula falls back to the raw share (it only checks for
 | Meaningfulness weight | `dominanceWeights.meaningfulness` | `0.10` | Composite weight of the LLM meaningfulness score |
 | Classifier mode | `llmMode` | `off` | `active` in both nudging arms (composite score; invitations excluded from the split); `off` (raw share, no classifier) in the baseline. Not a study axis |
 
-Defaults are defined in `packages/shared/src/interventions.ts` (`DEFAULT_INTERVENTION_CONFIG`). Conditions are seeded with these defaults by the session manager on first startup (see `seedConditions()` in `backend/session-manager/src/store/store.service.ts`), along with session-level defaults `goal: 5`, `durationMinutes: 10`, `groupSize: 3`.
+Defaults are defined in `packages/shared/src/interventions.ts` (`DEFAULT_INTERVENTION_CONFIG`). Conditions are seeded with these defaults by the session manager on first startup (see `seedConditions()` in `backend/session-manager/src/store/conditions.ts`), along with session-level defaults `goal: 5`, `durationMinutes: 10`, `groupSize: 3`.
 
 Changes to a condition in the admin dashboard affect **future sessions only**. Running sessions use the condition snapshot captured at creation time. To run different parameters for a distinct phase of data collection, start a new **study round** (Settings → Study Rounds): sessions are stamped with the round they were created in, so exports can separate the phases (see `docs/data-export.md`).
 
@@ -282,7 +283,7 @@ Every intervention is recorded as an `InterventionLog` (type in
 
 In addition, the bot records a **`WindowEvaluation` for every window boundary it reaches** — fired or not. Each carries the window's grid index (0-based, computed from the distance to the warm-up end) and time span, the window length and threshold in effect, the detection mode (`llmMode`), the outcome (`nudged`, `no-target`, `baseline-suppressed`, `warm-up`, `wrap-up`, `too-few-participants`), the full contribution split (in the nudging arms without the messages classified as invitations; each entry's `invitationCount` records how many were left out), the over-threshold candidates and the highest dominance score where a split was computed, and a link to the `InterventionLog` when a nudge fired. Baseline sessions therefore carry per-window dominance data comparable to the delivery arms (`baseline-suppressed` marks windows where a nudge *would* have fired) — with the caveat that in the baseline `dominanceScore` equals the raw share and `meaningfulnessScore` is always 0, because the classifier is not called. Failed LLM classification requests are recorded as `ClassificationFailure` entries, so classifier coverage is auditable. Both records are persisted in the research database with their full JSON payload. The bot's own nudge messages are stored in the chat log (with `recipientId` set on private nudges) but never count toward contribution scores.
 
-These records are included in the raw exports (`/api/export/sessions`, `/api/export/interventions`), power the per-session nudge response timeline in the dashboard's Overview tab and the monitoring summary (`/api/reports/summary`), and feed the analysis-ready research exports (`/api/export/windows`, `/api/export/research.zip`) — see `docs/data-export.md`.
+These records are included in the raw exports (`/api/export/sessions`, `/api/export/interventions`), power the per-session nudge response timeline in the dashboard's Overview tab, and feed the analysis-ready research exports (`/api/export/windows`, `/api/export/research.zip`) — see `docs/data-export.md`.
 
 ## Meaningfulness Classifier (Rule + LLM Detection)
 

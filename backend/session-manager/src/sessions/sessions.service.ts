@@ -7,26 +7,17 @@ import {
   OnModuleDestroy,
   OnModuleInit,
   Optional,
-  ServiceUnavailableException,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
-import {
-  DEFAULT_INTERVENTION_CONFIG,
-  isServiceUser,
-  normalizeInterventionMode,
-} from "@gdm/shared";
+import { isTestCondition } from "@gdm/shared";
 import type {
   CheckpointSessionRequest,
-  ClassifierRating,
   CompleteParticipantResponse,
   Condition,
-  ContributionAggregate,
   ExportBundle,
-  InterventionSummary,
   OpenSessionRequest,
   OpenSessionResponse,
   Participant,
-  ParticipationOutcome,
   ParticipationOutcomeRecord,
   ParticipationOutcomeResponse,
   ParticipationStage,
@@ -38,53 +29,85 @@ import type {
   SessionSummary,
   StartRoundResponse,
   StartSessionNotification,
-  StudySettings,
+  StudyInfoResponse,
   SubmitSurveyRequest,
 } from "@gdm/shared";
 import { MatrixService, type MatrixCreds } from "../matrix/matrix.service";
 import { StoreService } from "../store/store.service";
-import { toCsv } from "../reports/csv";
+import { checkpointFromSession } from "../store/checkpoint-merge";
+import { waitingTimeoutMinutes } from "../store/waiting-timeout";
 import {
+  filterResearchPads,
   filterResearchSessions,
   type ResearchFilter,
 } from "../reports/filter";
 import { validateSurveyAnswers } from "../validation/request-validation";
 import { ProlificActionsService } from "../prolific/prolific-actions.service";
+import { prolificApiToken } from "../prolific/prolific-api";
 import { EtherpadService } from "../etherpad/etherpad.service";
+import {
+  disconnectCompensationKind,
+  partialPaymentPence,
+  selfTerminationCompensationKind,
+} from "./compensation";
+import {
+  defaultOutcomeReason,
+  toOutcomeResponse,
+} from "./participation-outcomes";
+import {
+  ProlificSubmissionVerifier,
+  assertProlificIdentifiers,
+} from "./prolific-verification";
+import { toPublicSession } from "./public-session";
+import { RoomProvisioner } from "./room-provisioning";
+import {
+  bundlePad,
+  contributionRecords,
+  contributionsCsv,
+  interventionRows,
+  interventionsCsv,
+  messageRows,
+  messagesCsv,
+  sessionSettingsCsv,
+  sessionsCsv,
+  surveyRows,
+  surveysCsv,
+} from "./session-exports";
 
+/** How often expired lobbies and disconnected participants are swept. */
+const LIFECYCLE_SWEEP_INTERVAL_MS = 5_000;
+
+/**
+ * Participant journey and session lifecycle: matchmaking, Prolific
+ * arrivals/outcomes, surveys, runtime checkpoints and lifecycle sweeps.
+ *
+ * Matrix room provisioning (RoomProvisioner), Prolific submission
+ * verification, compensation rules and the legacy export rows live in
+ * sibling modules.
+ */
 @Injectable()
 export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private readonly log = new Logger(SessionsService.name);
   /** URL the browser uses to reach Synapse (returned to the client). */
   private readonly publicUrl =
     process.env.MATRIX_PUBLIC_URL ?? "http://localhost:8008";
-  /** Chat Service that runs the live session (bot rules). */
-  private readonly chatServiceUrl =
-    process.env.CHAT_SERVICE_URL ?? "http://localhost:3002";
   /**
    * Waiting sessions older than this are considered abandoned (no-shows) and
    * are aborted so they stop counting against the condition goal. Prolific
    * participants receive a terminal unmatched outcome and are never requeued.
    */
-  private readonly waitingTimeoutMinutes = Number(
-    process.env.WAITING_TIMEOUT_MINUTES ?? 5,
-  );
+  private readonly waitingTimeoutMinutes = waitingTimeoutMinutes();
   /** A closed or disconnected participant may resume until this grace expires. */
   private readonly reconnectGraceSeconds = Math.max(
     5,
     Number(process.env.PARTICIPANT_RECONNECT_GRACE_SECONDS ?? 30) || 30,
   );
   /** Avoid repeating the Prolific API lookup across arrival → resume → join. */
-  private readonly verifiedProlificSubmissions = new Map<string, number>();
+  private readonly prolificVerifier = new ProlificSubmissionVerifier(this.log);
   /** Serialize durable runtime writes per session without blocking other groups. */
   private readonly runtimeWriteChains = new Map<string, Promise<unknown>>();
-  /** One Matrix credential operation per participant, including re-invites. */
-  private readonly participantAccessChains = new Map<
-    string,
-    Promise<MatrixCreds>
-  >();
-  /** At most one room-provisioning attempt per forming session. */
-  private readonly provisionChains = new Map<string, Promise<Session>>();
+  /** Matrix identities and room provisioning, single-flight per participant/session. */
+  private readonly provisioner: RoomProvisioner;
   private lifecycleSweepTimer?: ReturnType<typeof setInterval>;
   private lifecycleSweepRunning = false;
 
@@ -100,12 +123,16 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     private readonly matrix: MatrixService,
     private readonly prolificActions: ProlificActionsService,
     @Optional() private readonly etherpad?: EtherpadService,
-  ) {}
+  ) {
+    this.provisioner = new RoomProvisioner(store, matrix, this.log, (id) =>
+      this.getSession(id),
+    );
+  }
 
   onModuleInit(): void {
     this.lifecycleSweepTimer = setInterval(
       () => void this.runLifecycleSweep(),
-      5_000,
+      LIFECYCLE_SWEEP_INTERVAL_MS,
     );
     this.lifecycleSweepTimer.unref?.();
   }
@@ -147,24 +174,15 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
     const seat = await this.queueMatchmaking(() => this.reserveSeat(req));
     await this.etherpad?.attach(req.trackingToken, seat.session, seat.participant.id);
-    const creds = await this.ensureParticipantAccess(
+    const creds = await this.provisioner.ensureParticipantAccess(
       seat.session,
       seat.participant,
     );
     const session = await this.getSession(seat.session.id);
-    if (
-      (session.status === "waiting" || session.status === "provisioning") &&
-      session.participants.length >= session.condition.groupSize
-    ) {
-      // The durable seat and credentials are enough to finish this request.
-      // The waiting room polls while slow homeserver work continues, avoiding
-      // enrollment timeouts during a recruitment wave.
-      void this.ensureProvisioned(session.id).catch((error) =>
-        this.log.warn(
-          `background provisioning failed for ${session.id}: ${String(error)}`,
-        ),
-      );
-    }
+    // The durable seat and credentials are enough to finish this request.
+    // The waiting room polls while slow homeserver work continues, avoiding
+    // enrollment timeouts during a recruitment wave.
+    this.provisioner.provisionInBackgroundIfFull(session, "background provisioning");
 
     this.log.log(
       `openSession: ${seat.existing ? "rejoin " : ""}${seat.participant.id} -> ` +
@@ -219,13 +237,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     participant: Participant;
     existing: boolean;
   }> {
-    await this.abortStaleWaiting();
+    // Expired lobbies must free their condition slot before a seat is chosen.
+    await this.sweepExpiredWaitingRooms();
 
     // A token that already holds a seat gets that seat back (browser refresh,
     // duplicate tab) instead of claiming a second slot and ghosting the first.
     const existing = req.prolific
       ? await this.findByProlificSession(req.prolific)
-      : await this.findByTrackingToken(req.trackingToken);
+      : await this.store.findByTrackingToken(req.trackingToken);
     if (existing) {
       if (existing.session.status === "aborted" && req.prolific) {
         throw new ConflictException("This waiting attempt has ended");
@@ -242,7 +261,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const taskMode = await this.etherpad?.modeFor(req.trackingToken);
     const forming = taskMode
       ? await this.store.findForming(req.conditionId, taskMode)
-      : await this.findForming(req.conditionId);
+      : await this.store.findForming(req.conditionId);
     let condition = forming ? undefined : await this.assignCondition(req.conditionId);
     if (condition && taskMode) {
       condition = { ...condition, config: { ...condition.config, workspaceMode: taskMode } };
@@ -263,32 +282,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
 
     return { session, participant, existing: false };
-  }
-
-  /** Mark abandoned waiting groups aborted so they free their condition slot. */
-  private async abortStaleWaiting(): Promise<void> {
-    const stale = await this.store.abortExpiredWaitingSessions();
-    for (const session of stale) {
-      const provisioningFailed = session.priorStatus === "provisioning";
-      await this.terminateSessionParticipants(
-        session.id,
-        provisioningFailed ? "technical_failure" : "unmatched",
-        provisioningFailed
-          ? "The complete group could not enter the chat because room provisioning did not finish before the deadline."
-          : "The required live group did not form before the waiting deadline.",
-      );
-      this.log.log(
-        `aborted stale waiting session ${session.id} ` +
-          `(${session.participantCount} participant(s) after ${this.waitingTimeoutMinutes}min)`,
-      );
-    }
-  }
-
-  /** The non-aborted session already holding this tracking token, if any. */
-  private async findByTrackingToken(
-    token: string,
-  ): Promise<{ session: Session; participant: Participant } | undefined> {
-    return this.store.findByTrackingToken(token);
   }
 
   /** Find the exact Prolific submission even if the client token changes. */
@@ -313,28 +306,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     allowEnded = false,
   ): Promise<void> {
     if (!identity) return;
-    const apiToken = process.env.PROLIFIC_API_TOKEN?.trim();
-    // Prolific identifiers are 24 alphanumeric characters. They are not
-    // guaranteed to be hexadecimal, particularly in participant previews.
-    const idPattern = /^[a-z0-9]{24}$/i;
-    // Prolific's researcher preview uses shorter synthetic submission IDs whose
-    // length can vary. Accept those only while API-backed validation is off;
-    // secure validation still requires the real 24-character submission ID.
-    const previewSessionIdPattern = /^[a-z0-9]{12,23}$/i;
-    const validSessionId =
-      idPattern.test(identity.sessionId) ||
-      (!apiToken && previewSessionIdPattern.test(identity.sessionId));
-    if (
-      !idPattern.test(identity.participantId) ||
-      !idPattern.test(identity.studyId) ||
-      !validSessionId
-    ) {
-      throw new BadRequestException("Invalid Prolific identifiers");
-    }
-    const expectedStudyId = process.env.PROLIFIC_STUDY_ID?.trim();
-    if (expectedStudyId && identity.studyId !== expectedStudyId) {
-      throw new BadRequestException("Unexpected Prolific study");
-    }
+    const apiToken = prolificApiToken();
+    assertProlificIdentifiers(identity, apiToken);
 
     const recorded = await this.store.getProlificArrival(identity);
     if (recorded && recorded.participantId !== identity.participantId) {
@@ -344,95 +317,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (!apiToken) return;
-
-    const cacheKey = [
-      identity.studyId,
-      identity.sessionId,
-      identity.participantId,
-    ].join(":");
-    const cachedUntil = this.verifiedProlificSubmissions.get(cacheKey) ?? 0;
-    if (cachedUntil > Date.now()) return;
-    this.pruneProlificVerificationCache();
-
-    let response: Response;
-    try {
-      response = await fetch(
-        `https://api.prolific.com/api/v1/submissions/${identity.sessionId}/`,
-        {
-          headers: { Authorization: `Token ${apiToken}` },
-          signal: AbortSignal.timeout(5000),
-        },
-      );
-    } catch (error) {
-      this.log.error(`Prolific submission verification failed: ${String(error)}`);
-      throw new ServiceUnavailableException(
-        "Prolific submission verification is temporarily unavailable",
-      );
-    }
-
-    if (response.status === 404) {
-      throw new BadRequestException("Unknown Prolific submission");
-    }
-    if (!response.ok) {
-      this.log.error(
-        `Prolific submission verification returned ${response.status}`,
-      );
-      throw new ServiceUnavailableException(
-        "Prolific submission verification is temporarily unavailable",
-      );
-    }
-
-    const submission = (await response.json()) as {
-      id?: string;
-      study_id?: string;
-      participant?: string;
-      status?: string;
-    };
-    if (
-      submission.id !== identity.sessionId ||
-      submission.study_id !== identity.studyId ||
-      submission.participant !== identity.participantId
-    ) {
-      throw new BadRequestException("Prolific submission identity mismatch");
-    }
-    // Prolific's current API documents underscore-separated enum values, while
-    // older responses used display-style spaces. Normalize both forms so a
-    // legitimate participant can still resume after submitting their study.
-    const submissionStatus = submission.status
-      ?.trim()
-      .toUpperCase()
-      .replace(/[\s-]+/g, "_");
-    const allowedStatuses = [
-      "RESERVED",
-      "ACTIVE",
-      "AWAITING_REVIEW",
-      "APPROVED",
-      ...(allowEnded
-        ? ["RETURNED", "TIMED_OUT", "SCREENED_OUT", "REJECTED"]
-        : []),
-    ];
-    if (submissionStatus && !allowedStatuses.includes(submissionStatus)) {
-      throw new BadRequestException(
-        `Prolific submission is ${submissionStatus.toLowerCase()}`,
-      );
-    }
-
-    this.verifiedProlificSubmissions.set(cacheKey, Date.now() + 60_000);
-  }
-
-  /** Keep attacker-controlled identifiers from growing the verification cache forever. */
-  private pruneProlificVerificationCache(): void {
-    const now = Date.now();
-    for (const [key, expiresAt] of this.verifiedProlificSubmissions) {
-      if (expiresAt <= now) this.verifiedProlificSubmissions.delete(key);
-    }
-    while (this.verifiedProlificSubmissions.size >= 5_000) {
-      const oldest = this.verifiedProlificSubmissions.keys().next().value as
-        | string
-        | undefined;
-      if (!oldest) break;
-      this.verifiedProlificSubmissions.delete(oldest);
-    }
+    await this.prolificVerifier.verify(identity, apiToken, allowEnded);
   }
 
   async recordProlificArrival(
@@ -459,11 +344,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     return this.queueMatchmaking(async () => {
       const arrival = await this.store.recordProlificArrival(identity);
       const existing = await this.findByProlificSession(identity);
-      const kind =
-        outcome === "voluntary_withdrawal" &&
-        ["entry", "waiting", "chat", "exit"].includes(arrival.stage)
-          ? "manual_review"
-          : "none";
+      const kind = selfTerminationCompensationKind(outcome, arrival.stage);
       const record = await this.store.terminateProlificParticipation(
         identity,
         outcome,
@@ -471,21 +352,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         kind,
       );
 
-      if (existing?.session.status === "waiting") {
-        await this.store.removeParticipantFromWaitingSession(
-          existing.session.id,
-          existing.participant.id,
-        );
-      } else if (
-        existing &&
-        ["provisioning", "running"].includes(existing.session.status)
-      ) {
-        await this.store.updateSessionLifecycle(existing.session.id, {
-          status: "aborted",
-        });
-        await this.terminateSessionParticipants(
-          existing.session.id,
-          "participant_dropout",
+      if (existing) {
+        await this.leaveSession(
+          existing,
           "The live group could not continue after a participant left.",
         );
       }
@@ -539,18 +408,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     session: Session,
     participant: Participant,
   ): Promise<OpenSessionResponse> {
-    const creds = await this.ensureParticipantAccess(session, participant);
+    const creds = await this.provisioner.ensureParticipantAccess(session, participant);
     const current = await this.getSession(session.id);
-    if (
-      (current.status === "waiting" || current.status === "provisioning") &&
-      current.participants.length >= current.condition.groupSize
-    ) {
-      void this.ensureProvisioned(current.id).catch((error) =>
-        this.log.warn(
-          `background provisioning failed for ${current.id}: ${String(error)}`,
-        ),
-      );
-    }
+    this.provisioner.provisionInBackgroundIfFull(current, "background provisioning");
     this.log.log(
       `openSession: rejoin ${participant.id} -> session ${session.id} (${current.status})`,
     );
@@ -569,16 +429,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    */
   async getPublicSession(id: string): Promise<PublicSession> {
     const session = await this.getSession(id);
-    if (
-      (session.status === "waiting" || session.status === "provisioning") &&
-      session.participants.length >= session.condition.groupSize
-    ) {
-      // A prior provisioning attempt may have exhausted its retries. Waiting
-      // Room polling safely re-triggers it without delaying the GET response.
-      void this.ensureProvisioned(id).catch((error) =>
-        this.log.warn(`background provisioning retry failed for ${id}: ${String(error)}`),
-      );
-    }
+    // A prior provisioning attempt may have exhausted its retries. Waiting
+    // Room polling safely re-triggers it without delaying the GET response.
+    this.provisioner.provisionInBackgroundIfFull(session, "background provisioning retry");
     return toPublicSession(session);
   }
 
@@ -586,32 +439,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     return this.store.listSessionSummaries();
   }
 
-  async listInterventions(): Promise<InterventionSummary[]> {
-    return (await this.store
-      .allSessions())
-      .flatMap((session) =>
-        session.interventions.map((intervention) => ({
-          sessionId: session.id,
-          conditionId: session.condition.id,
-          timestamp: intervention.timestamp,
-          mode: intervention.mode,
-          audience: intervention.audience,
-          targets: intervention.targets,
-          quietMembers: intervention.quietMembers,
-          contributionSplit: intervention.contributionSplit,
-          message: intervention.message,
-        })),
-      )
-      .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-  }
-
   async exportBundle(filter: ResearchFilter = {}): Promise<ExportBundle> {
     const sessions = await this.filteredSessions(filter);
-    const ids = new Set(sessions.filter(s => s.condition.config.workspaceMode === "etherpad").map(s => s.id));
-    const pads = (await this.etherpad?.documents() ?? [])
-      .filter(d => d.sessionId ? ids.has(d.sessionId) : !filter.conditionIds?.length && !filter.roundIds?.length)
-      .map(d => ({ id: d.id, phase: d.phase, deadline: d.deadline, state: d.state, text: d.text, revision: d.revision,
-        capturedAt: d.capturedAt, sessionId: d.sessionId, participantId: d.participantId, conditionId: d.conditionId, roundId: d.roundId, error: d.error }));
+    const pads = filterResearchPads(await this.etherpad?.documents() ?? [], sessions, filter)
+      .map(bundlePad);
     return {
       generatedAt: new Date().toISOString(),
       sessions,
@@ -625,361 +456,64 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   async exportCsv(filter: ResearchFilter = {}): Promise<string> {
-    const sessions = (await this.exportBundle(filter)).sessions;
-    const rows = [
-      [
-        "session_id",
-        "condition_id",
-        "condition_name",
-        "round",
-        "status",
-        "participant_count",
-        "message_count",
-        "reaction_count",
-        "ranking_edit_count",
-        "intervention_count",
-        "created_at",
-        "started_at",
-        "completed_at",
-      ],
-      ...sessions.map((session) => [
-        session.id,
-        session.condition.id,
-        session.condition.name,
-        String(session.roundId),
-        session.status,
-        String(session.participants.length),
-        String(session.chat.messages.length),
-        String(
-          session.chat.messages.reduce(
-            (sum, message) => sum + message.reactions.length,
-            0,
-          ),
-        ),
-        String(session.rankingHistory?.length ?? 0),
-        String(session.interventions.length),
-        session.createdAt,
-        session.startedAt ?? "",
-        session.completedAt ?? "",
-      ]),
-    ];
-    return toCsv(rows);
+    return sessionsCsv(await this.filteredSessions(filter));
   }
 
-  /**
-   * Per-session settings snapshot for researcher analysis: one row per session
-   * carrying its condition and intervention configuration. Standard CSV format
-   * (dot decimals, comma-delimited), consistent with the other exports.
-   */
+  /** Per-session settings snapshot (condition + intervention configuration). */
   async exportDetailedCsv(filter: ResearchFilter = {}): Promise<string> {
-    const sessions = (await this.exportBundle(filter)).sessions;
-    const rows = [
-      [
-        "session_id",
-        "status",
-        "round_id",
-        "condition_id",
-        "condition_name",
-        "goal",
-        "group_size",
-        "duration_minutes",
-        "llm_mode",
-        "workspace_mode",
-        "intervention_mode",
-        "protected_start_minutes",
-        "protected_end_minutes",
-        "contribution_threshold",
-        "contribution_window_minutes",
-        "score_weight_words",
-        "score_weight_messages",
-        "dominance_weight_share",
-        "dominance_weight_meaningfulness",
-        "final_group_ranking",
-        "room_id",
-        "created_at",
-        "started_at",
-        "completed_at",
-      ],
-      ...sessions.map((session) => {
-        // Old sessions may predate some config keys; merge defaults so every
-        // column is populated.
-        const config = {
-          ...DEFAULT_INTERVENTION_CONFIG,
-          ...session.condition.config,
-        };
-        const scoreWeights = {
-          ...DEFAULT_INTERVENTION_CONFIG.scoreWeights,
-          ...config.scoreWeights,
-        };
-        const dominanceWeights = {
-          ...DEFAULT_INTERVENTION_CONFIG.dominanceWeights,
-          ...config.dominanceWeights,
-        };
-        return [
-          session.id,
-          session.status,
-          String(session.roundId),
-          session.condition.id,
-          session.condition.name,
-          String(session.condition.goal),
-          String(session.condition.groupSize),
-          String(session.durationMinutes),
-          config.llmMode ?? "off",
-          config.workspaceMode ?? "ranking",
-          // Fold retired tone suffixes (e.g. "public-neutral") onto the
-          // canonical baseline/public/private axis, matching the stored type.
-          normalizeInterventionMode(config.interventionMode),
-          String(config.protectedStartMinutes),
-          String(config.protectedEndMinutes),
-          String(config.contributionThreshold),
-          String(config.contributionWindowMinutes),
-          String(scoreWeights.words),
-          String(scoreWeights.messages),
-          String(dominanceWeights.share),
-          String(dominanceWeights.meaningfulness),
-          config.workspaceMode === "etherpad" ? "" : session.ranking.order.join("|"),
-          session.roomId ?? "",
-          session.createdAt,
-          session.startedAt ?? "",
-          session.completedAt ?? "",
-        ];
-      }),
-    ];
-    return toCsv(rows);
+    return sessionSettingsCsv(await this.filteredSessions(filter));
   }
 
   /** Chat logs across sessions, one row per message. */
   async exportMessages(filter: ResearchFilter = {}) {
     return {
       generatedAt: new Date().toISOString(),
-      messages: (await this.filteredSessions(filter)).flatMap((session) =>
-        session.chat.messages.map((message) => ({
-          sessionId: session.id,
-          conditionId: session.condition.id,
-          conditionName: session.condition.name,
-          roundId: session.roundId,
-          ...message,
-        })),
-      ),
+      messages: messageRows(await this.filteredSessions(filter)),
     };
   }
 
   async exportMessagesCsv(filter: ResearchFilter = {}): Promise<string> {
-    const rows = [
-      [
-        "session_id",
-        "condition_id",
-        "condition_name",
-        "round",
-        "message_id",
-        "timestamp",
-        "sender_id",
-        "recipient_id",
-        "text",
-        "reaction_count",
-        "reaction_keys",
-      ],
-      ...(await this.exportMessages(filter)).messages.map((m) => [
-        m.sessionId,
-        m.conditionId,
-        m.conditionName,
-        String(m.roundId),
-        m.id,
-        m.timestamp,
-        m.senderId,
-        m.recipientId ?? "",
-        m.text,
-        String(m.reactions.length),
-        m.reactions.map((reaction) => reaction.key).join("|"),
-      ]),
-    ];
-    return toCsv(rows);
+    return messagesCsv((await this.exportMessages(filter)).messages);
   }
 
   /** Bot nudge events across sessions, one row per intervention. */
   async exportInterventions(filter: ResearchFilter = {}) {
     return {
       generatedAt: new Date().toISOString(),
-      interventions: (await this.filteredSessions(filter)).flatMap(
-        (session) =>
-          session.interventions.map((intervention) => ({
-            conditionName: session.condition.name,
-            roundId: session.roundId,
-            ...intervention,
-          })),
-      ),
+      interventions: interventionRows(await this.filteredSessions(filter)),
     };
   }
 
   async exportInterventionsCsv(filter: ResearchFilter = {}): Promise<string> {
-    const rows = [
-      [
-        "session_id",
-        "condition_id",
-        "condition_name",
-        "round",
-        "timestamp",
-        "mode",
-        "audience",
-        "trigger",
-        "threshold",
-        "llm_mode",
-        "targets",
-        "quiet_members",
-        "message",
-      ],
-      ...(await this.exportInterventions(filter)).interventions.map((i) => [
-        i.sessionId,
-        i.conditionId,
-        i.conditionName,
-        String(i.roundId),
-        i.timestamp,
-        i.mode,
-        i.audience,
-        i.trigger,
-        String(i.threshold),
-        i.llmMode ?? "off",
-        i.targets.map((target) => target.identityName).join("|"),
-        i.quietMembers.map((member) => member.identityName).join("|"),
-        i.message,
-      ]),
-    ];
-    return toCsv(rows);
+    return interventionsCsv(
+      (await this.exportInterventions(filter)).interventions,
+    );
   }
 
   /** Survey responses across sessions, one row per participant and kind. */
   async exportSurveys(filter: ResearchFilter = {}) {
     return {
       generatedAt: new Date().toISOString(),
-      surveys: (await this.filteredSessions(filter)).flatMap((session) =>
-        session.participants.flatMap((participant) =>
-          (
-            [
-              ["entry", participant.entrySurvey],
-              ["exit", participant.exitSurvey],
-            ] as const
-          )
-            .filter(([, survey]) => survey !== undefined)
-            .map(([kind, survey]) => ({
-              sessionId: session.id,
-              conditionId: session.condition.id,
-              conditionName: session.condition.name,
-              roundId: session.roundId,
-              participantId: participant.id,
-              participantName: participant.name,
-              trackingToken: participant.trackingToken,
-              recruitmentSource: participant.recruitmentSource,
-              prolificPid: participant.prolific?.participantId ?? "",
-              prolificStudyId: participant.prolific?.studyId ?? "",
-              prolificSessionId: participant.prolific?.sessionId ?? "",
-              participantCompletedAt: participant.completedAt ?? "",
-              kind,
-              submittedAt: survey?.submittedAt ?? "",
-              answers: survey?.answers ?? {},
-            })),
-        ),
-      ),
+      surveys: surveyRows(await this.filteredSessions(filter)),
     };
   }
 
   async exportSurveysCsv(filter: ResearchFilter = {}): Promise<string> {
-    const rows = [
-      [
-        "session_id",
-        "condition_id",
-        "condition_name",
-        "round",
-        "participant_id",
-        "participant_name",
-        "tracking_token",
-        "recruitment_source",
-        "prolific_pid",
-        "prolific_study_id",
-        "prolific_session_id",
-        "participant_completed_at",
-        "kind",
-        "submitted_at",
-        "answers_json",
-      ],
-      ...(await this.exportSurveys(filter)).surveys.map((s) => [
-        s.sessionId,
-        s.conditionId,
-        s.conditionName,
-        String(s.roundId),
-        s.participantId,
-        s.participantName,
-        s.trackingToken,
-        s.recruitmentSource,
-        s.prolificPid,
-        s.prolificStudyId,
-        s.prolificSessionId,
-        s.participantCompletedAt,
-        s.kind,
-        s.submittedAt,
-        JSON.stringify(s.answers),
-      ]),
-    ];
-    return toCsv(rows);
+    return surveysCsv((await this.exportSurveys(filter)).surveys);
   }
 
   async exportContributions(filter: ResearchFilter = {}) {
     const sessions = await this.filteredSessions(filter);
     return {
       generatedAt: new Date().toISOString(),
-      contributions: sessions.flatMap(contributionAggregates),
-      behavioralEvents: sessions.flatMap((session) =>
-        session.behavioralEvents.map((event) => ({
-          sessionId: session.id,
-          conditionId: session.condition.id,
-          roundId: session.roundId,
-          ...event,
-        })),
-      ),
-      classifications: sessions.flatMap((session) =>
-        session.contributionClassifications.map((classification) => ({
-          sessionId: session.id,
-          conditionId: session.condition.id,
-          roundId: session.roundId,
-          ...classification,
-        })),
-      ),
+      ...contributionRecords(sessions),
     };
   }
 
   async exportContributionsCsv(filter: ResearchFilter = {}): Promise<string> {
-    const rows = [
-      [
-        "session_id",
-        "condition_id",
-        "round",
-        "participant_id",
-        "message_count",
-        "character_count",
-        "reaction_count",
-        "ranking_move_count",
-        "typing_duration_ms",
-        "relevance_mean",
-        "coherence_mean",
-        "invites_participation_count",
-        "meaningfulness_score_mean",
-      ],
-      ...(await this.exportContributions(filter)).contributions.map((c) => [
-        c.sessionId,
-        c.conditionId,
-        String(c.roundId),
-        c.participantId,
-        String(c.messageCount),
-        String(c.characterCount),
-        String(c.reactionCount),
-        String(c.rankingMoveCount),
-        String(c.typingDurationMs),
-        c.relevanceMean === null ? "" : String(c.relevanceMean),
-        c.coherenceMean === null ? "" : String(c.coherenceMean),
-        String(c.invitesParticipationCount),
-        String(c.meaningfulnessScoreMean),
-      ]),
-    ];
-    return toCsv(rows);
+    return contributionsCsv(
+      (await this.exportContributions(filter)).contributions,
+    );
   }
 
   /** Mark a session completed (idempotent) — drives progress & auto-off. */
@@ -1061,7 +595,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       );
       this.log.log(
         `terminated ${provisioningFailed ? "failed provisioning" : "unmatched"} lobby ` +
-          `${lobby.id} (${lobby.participantCount} participant(s))`,
+          `${lobby.id} (${lobby.participantCount} participant(s) after ` +
+          `${this.waitingTimeoutMinutes}min)`,
       );
     }
     return expired.length;
@@ -1077,16 +612,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const terminated = await this.queueMatchmaking(async () => {
       const claimed: ParticipationOutcomeRecord[] = [];
       for (const arrival of await this.store.listStaleProlificArrivals(cutoff)) {
-        const compensationKind = ["waiting", "chat", "exit"].includes(
-          arrival.stage,
-        )
-          ? "partial"
-          : arrival.stage === "entry"
-            ? "manual_review"
-            : "none";
+        const compensationKind = disconnectCompensationKind(arrival.stage);
         const amountPence =
           compensationKind === "partial"
-            ? this.partialPaymentPence(arrival.arrivedAt)
+            ? partialPaymentPence(arrival.arrivedAt)
             : undefined;
         const record = await this.store.terminateStaleProlificParticipation(
           arrival,
@@ -1099,37 +628,27 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         if (!record) continue;
 
         const existing = await this.findByProlificSession(arrival);
-        if (existing?.session.status === "waiting") {
-          await this.store.removeParticipantFromWaitingSession(
-            existing.session.id,
-            existing.participant.id,
-          );
-        } else if (
+        const abortedRoom =
           existing &&
-          ["provisioning", "running"].includes(existing.session.status)
-        ) {
-          await this.store.updateSessionLifecycle(existing.session.id, {
-            status: "aborted",
-          });
-          await this.terminateSessionParticipants(
-            existing.session.id,
-            "participant_dropout",
+          (await this.leaveSession(
+            existing,
             "The live group could not continue after a participant disconnected.",
-          );
-          if (existing.session.roomId) {
-            for (const participant of existing.session.participants) {
-              if (!participant.matrixUserId) continue;
-              try {
-                await this.matrix.kick(
-                  existing.session.roomId,
-                  participant.matrixUserId,
-                  "The study group ended after a participant disconnected.",
-                );
-              } catch (error) {
-                this.log.error(
-                  `could not remove ${participant.matrixUserId} from aborted room: ${String(error)}`,
-                );
-              }
+          ))
+            ? existing.session.roomId
+            : undefined;
+        if (existing && abortedRoom) {
+          for (const participant of existing.session.participants) {
+            if (!participant.matrixUserId) continue;
+            try {
+              await this.matrix.kick(
+                abortedRoom,
+                participant.matrixUserId,
+                "The study group ended after a participant disconnected.",
+              );
+            } catch (error) {
+              this.log.error(
+                `could not remove ${participant.matrixUserId} from aborted room: ${String(error)}`,
+              );
             }
           }
         }
@@ -1166,7 +685,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       if (!participant.prolific) continue;
       const arrival = await this.store.getProlificArrival(participant.prolific);
       if (arrival?.outcome) continue;
-      const amountPence = this.partialPaymentPence(
+      const amountPence = partialPaymentPence(
         arrival?.arrivedAt ?? session.createdAt,
       );
       await this.store.terminateProlificParticipation(
@@ -1179,38 +698,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private partialPaymentPence(startedAt: string): number {
-    const elapsedSeconds = Math.max(
-      1,
-      Math.floor((Date.now() - Date.parse(startedAt)) / 1_000),
-    );
-    const pencePerMinute = Math.max(
-      10,
-      Number(process.env.PARTIAL_PAYMENT_PENCE_PER_MINUTE ?? 10) || 10,
-    );
-    const maximumPence = Math.max(
-      10,
-      Number(process.env.PARTIAL_PAYMENT_MAX_PENCE ?? 508) || 508,
-    );
-    return Math.min(
-      maximumPence,
-      Math.max(10, Math.ceil(elapsedSeconds / 60) * pencePerMinute),
-    );
-  }
-
   private async outcomeResponse(
     record: ParticipationOutcomeRecord,
   ): Promise<ParticipationOutcomeResponse> {
-    const settings = await this.store.getStudySettings();
-    const outcome = record.outcome!;
-    const redirectUrl = outcomeUrl(settings, outcome);
-    return {
-      outcome,
-      compensationKind: record.compensationKind,
-      compensationAmountPence: record.compensationAmountPence,
-      redirectUrl,
-      message: outcomeMessage(record),
-    };
+    return toOutcomeResponse(record, await this.store.getStudySettings());
   }
 
   /** Persist live state without changing the session lifecycle. */
@@ -1251,15 +742,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   async recoverRunningSessions(
     botUserId: string,
   ): Promise<StartSessionNotification[]> {
-    if (!botUserId) throw new ConflictException("botUserId is required");
+    if (!botUserId) throw new BadRequestException("botUserId is required");
     const running = await this.store.runningSessions();
     const notes: StartSessionNotification[] = [];
     for (const session of running) {
       try {
-        await this.matrix.invite(session.roomId!, botUserId);
         // A freshly registered recovery bot must regain the redaction power
         // granted during initial room provisioning before moderation is used.
-        await this.matrix.setUserPowerLevel(session.roomId!, botUserId, 50);
+        await this.provisioner.grantBotAccess(session.roomId!, botUserId);
       } catch (error) {
         // The bot may already be invited/joined, or Synapse may be briefly
         // unavailable. Return this room regardless: the bot's authenticated
@@ -1275,21 +765,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         condition: session.condition,
         durationMinutes: session.durationMinutes,
         startedAt: session.startedAt,
-        checkpoint: {
-          revision: session.checkpointRevision,
-          messages: session.chat.messages,
-          rankingHistory: session.rankingHistory ?? [],
-          interventions: session.interventions,
-          behavioralEvents: session.behavioralEvents,
-          contributionClassifications: session.contributionClassifications,
-          windowEvaluations: session.windowEvaluations ?? [],
-          classificationFailures: session.classificationFailures ?? [],
-          processedEventIds: session.processedEventIds ?? [],
-          redactedReactionEventIds:
-            session.redactedReactionEventIds ?? [],
-          reactionEvents: session.reactionEvents ?? [],
-          ruleState: session.runtimeState ?? {},
-        },
+        checkpoint: checkpointFromSession(session),
       });
     }
     return notes;
@@ -1356,23 +832,52 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       return condition;
     }
 
-    const conditions = await this.store.listConditions();
-    const counts = new Map<string, number>();
-    for (const condition of conditions) {
-      counts.set(
-        condition.id,
-        await this.store.claimedCount(condition.id, round.id),
-      );
-    }
-    const candidate = conditions
-      .filter((c) => c.active && (counts.get(c.id) ?? 0) < c.goal)
-      .sort((a, b) => (counts.get(a.id) ?? 0) - (counts.get(b.id) ?? 0))[0];
+    const candidate = (await this.recruitingConditions(round.id)).sort(
+      (a, b) => a.claimed - b.claimed,
+    )[0]?.condition;
     if (!candidate) throw new ConflictException("Study is full — no active condition needs participants");
     return candidate;
   }
 
-  private async findForming(conditionId?: string): Promise<Session | undefined> {
-    return this.store.findForming(conditionId);
+  /** Active conditions still below their goal in the given round. */
+  private async recruitingConditions(
+    roundId: number,
+  ): Promise<Array<{ condition: Condition; claimed: number }>> {
+    const recruiting: Array<{ condition: Condition; claimed: number }> = [];
+    for (const condition of await this.store.listConditions()) {
+      const claimed = await this.store.claimedCount(condition.id, roundId);
+      if (condition.active && claimed < condition.goal) {
+        recruiting.push({ condition, claimed });
+      }
+    }
+    return recruiting;
+  }
+
+  /**
+   * Public study facts quoted before assignment: the given condition's, else
+   * the value every recruiting study arm shares (null where they differ or
+   * when no arm is recruiting).
+   */
+  async studyInfo(conditionId?: string): Promise<StudyInfoResponse> {
+    const condition = conditionId
+      ? await this.store.getCondition(conditionId)
+      : undefined;
+    if (condition) {
+      return {
+        groupSize: condition.groupSize,
+        durationMinutes: condition.durationMinutes,
+      };
+    }
+    const round = await this.store.currentRound();
+    const recruiting = (await this.recruitingConditions(round.id))
+      .map((item) => item.condition)
+      .filter((item) => !isTestCondition(item.id));
+    return {
+      groupSize: sharedValue(recruiting.map((item) => item.groupSize)),
+      durationMinutes: sharedValue(
+        recruiting.map((item) => item.durationMinutes),
+      ),
+    };
   }
 
   /** Serialize only the short database matchmaking critical section. */
@@ -1386,71 +891,32 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Ensure one durable Matrix identity per participant. A failed registration
-   * leaves the reserved seat intact; a retry resumes it instead of duplicating
-   * the participant or losing their survey linkage.
+   * A participant left for good: free their seat in a waiting lobby, or end
+   * their live group (the others receive a dropout outcome). Returns true
+   * when a provisioning/running group was aborted.
    */
-  private ensureParticipantAccess(
-    session: Session,
-    participant: Participant,
-  ): Promise<MatrixCreds> {
-    const existing = this.participantAccessChains.get(participant.id);
-    if (existing) return existing;
-
-    const run = (async () => {
-      let creds = await this.store.getParticipantCreds(participant.id);
-      if (creds) return creds;
-
-      creds = await this.matrix.registerUser("gdm");
-      await this.store.setParticipantCreds(participant.id, creds);
-      // Recovery edge case: a running room survived while this participant's
-      // credentials did not. Restore access once, inside the same single-flight.
-      if (session.roomId) {
-        await this.matrix.invite(session.roomId, creds.userId);
-        await this.matrix.joinRoom(creds.accessToken, session.roomId);
-      }
-      return creds;
-    })();
-    this.participantAccessChains.set(participant.id, run);
-    void run.finally(() => {
-      if (this.participantAccessChains.get(participant.id) === run) {
-        this.participantAccessChains.delete(participant.id);
-      }
-    }).catch(() => undefined);
-    return run;
-  }
-
-  /** Provision a full group once, independently from other arriving groups. */
-  private ensureProvisioned(id: string): Promise<Session> {
-    const existing = this.provisionChains.get(id);
-    if (existing) return existing;
-
-    const run = (async () => {
-      let session = await this.getSession(id);
-      if (
-        (session.status !== "waiting" && session.status !== "provisioning") ||
-        session.participants.length < session.condition.groupSize
-      ) {
-        return session;
-      }
-      for (const participant of session.participants) {
-        if (!(await this.store.getParticipantCreds(participant.id))) {
-          return session;
-        }
-      }
-      if (session.status === "waiting") {
-        const claimed = await this.store.claimSessionProvisioning(id);
-        if (!claimed) return this.getSession(id);
-        session = await this.getSession(id);
-      }
-      await this.provision(session);
-      return this.getSession(id);
-    })();
-    this.provisionChains.set(id, run);
-    void run.finally(() => {
-      if (this.provisionChains.get(id) === run) this.provisionChains.delete(id);
-    }).catch(() => undefined);
-    return run;
+  private async leaveSession(
+    existing: { session: Session; participant: Participant },
+    dropoutReason: string,
+  ): Promise<boolean> {
+    const { session, participant } = existing;
+    if (session.status === "waiting") {
+      await this.store.removeParticipantFromWaitingSession(
+        session.id,
+        participant.id,
+      );
+      return false;
+    }
+    if (session.status !== "provisioning" && session.status !== "running") {
+      return false;
+    }
+    await this.store.updateSessionLifecycle(session.id, { status: "aborted" });
+    await this.terminateSessionParticipants(
+      session.id,
+      "participant_dropout",
+      dropoutReason,
+    );
+    return true;
   }
 
   private openResponse(
@@ -1472,97 +938,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private async provision(session: Session): Promise<void> {
-    let roomId = session.roomId;
-    if (!roomId) {
-      roomId = await this.matrix.createRoom(
-        `GDM ${session.condition.name} · ${session.id.slice(0, 8)}`,
-      );
-      // Keep the private room as a recovery handle while it is still hidden
-      // from participants. A restart resumes this room instead of creating a
-      // second one and splitting the group.
-      await this.store.updateSessionLifecycle(session.id, { roomId });
-      session.roomId = roomId;
-    }
-    // Rooms are invite-only: with open registration on the homeserver, a
-    // public_chat preset would let anyone with the room id join a live study.
-    for (const p of session.participants) {
-      const creds = await this.store.getParticipantCreds(p.id);
-      if (!creds) {
-        throw new Error(`participant ${p.id} has no Matrix credentials`);
-      }
-      await this.ensureMatrixMember(roomId, creds);
-    }
-    // Invite the Chat Service bot so it can join when it takes the session
-    // over (best-effort — the chat still works client-side without the bot).
-    // Rooms are invite-only, so an uninvited bot's join is rejected with 403.
-    const bot = await this.fetchBotIdentity();
-    if (bot.userId) {
-      try {
-        await this.matrix.invite(roomId, bot.userId);
-        // Grant redaction rights so the bot can moderate abusive messages.
-        await this.matrix.setUserPowerLevel(roomId, bot.userId, 50);
-      } catch (error) {
-        // On a retry the primary bot may already be invited or joined. The
-        // idempotent Chat Service start below is the authoritative check.
-        this.log.warn(`primary bot invite retry failed: ${String(error)}`);
-      }
-    }
-
-    const startedAt = new Date().toISOString();
-    const readySession: Session = {
-      ...session,
-      roomId,
-      status: "running",
-      startedAt,
-    };
-    // Recording and the server-side timer must accept the session before its
-    // room becomes visible. POST /start is idempotent, so a lost response can
-    // safely be retried by the waiting-room poll.
-    await this.notifyChatService(readySession);
-    const published = await this.store.finishSessionProvisioning(
-      session.id,
-      roomId,
-      startedAt,
-    );
-    if (!published) {
-      throw new Error(
-        `session ${session.id} left provisioning before the room was ready`,
-      );
-    }
-    session.status = "running";
-    session.startedAt = startedAt;
-    this.log.log(`provisioned room ${roomId} for session ${session.id}`);
-  }
-
-  /**
-   * Invite then join one participant, tolerating a recovery after they already
-   * joined. An invite error is ignored only when the authenticated join proves
-   * that access already exists.
-   */
-  private async ensureMatrixMember(
-    roomId: string,
-    creds: MatrixCreds,
-  ): Promise<void> {
-    let inviteError: unknown;
-    try {
-      await this.matrix.invite(roomId, creds.userId);
-    } catch (error) {
-      inviteError = error;
-    }
-    try {
-      await this.matrix.joinRoom(creds.accessToken, roomId);
-    } catch (joinError) {
-      if (inviteError) {
-        throw new Error(
-          `could not restore ${creds.userId} room access: ` +
-            `${String(inviteError)}; ${String(joinError)}`,
-        );
-      }
-      throw joinError;
-    }
-  }
-
   /**
    * Preserve checkpoint/finalize order for one session while allowing all
    * other groups to persist independently. A rejected write is removed from
@@ -1582,201 +957,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     this.runtimeWriteChains.set(id, tracked);
     return run;
   }
-
-  /** Ask the Chat Service which Matrix user its bot runs as. */
-  private async fetchBotIdentity(): Promise<{ userId?: string }> {
-    try {
-      const res = await fetch(`${this.chatServiceUrl}/internal/bot`, {
-        headers: internalHeaders(),
-        signal: AbortSignal.timeout(5000),
-      });
-      if (!res.ok) throw new Error(`status ${res.status}`);
-      const data = (await res.json()) as { userId?: string };
-      return { userId: data.userId || undefined };
-    } catch (err) {
-      this.log.warn(`could not resolve bot user (chat service down?): ${String(err)}`);
-      return { userId: undefined };
-    }
-  }
-
-  private async notifyChatService(session: Session): Promise<void> {
-    const payload: StartSessionNotification = {
-      sessionId: session.id,
-      roomId: session.roomId ?? "",
-      condition: session.condition,
-      durationMinutes: session.durationMinutes,
-      startedAt: session.startedAt,
-    };
-    const res = await fetch(`${this.chatServiceUrl}/internal/sessions/start`, {
-      method: "POST",
-      headers: internalHeaders(),
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) throw new Error(`chat service start failed (${res.status})`);
-  }
 }
 
-function defaultOutcomeReason(outcome: ParticipationOutcome): string {
-  switch (outcome) {
-    case "declined_consent":
-      return "The participant did not consent to take part.";
-    case "ineligible":
-      return "The participant did not meet the study eligibility requirements.";
-    case "voluntary_withdrawal":
-      return "The participant chose to withdraw from the study.";
-    case "connection_timeout":
-      return "The participant did not reconnect within the allowed grace period.";
-    default:
-      return "The participation ended before full completion.";
-  }
-}
-
-function outcomeUrl(
-  settings: StudySettings,
-  outcome: ParticipationOutcome,
-): string {
-  switch (outcome) {
-    case "declined_consent":
-      return settings.noConsentUrl;
-    case "ineligible":
-      return settings.ineligibleUrl;
-    case "voluntary_withdrawal":
-      return settings.withdrawalUrl;
-    case "connection_timeout":
-      return settings.technicalFailureUrl || settings.withdrawalUrl;
-    case "unmatched":
-      return settings.unmatchedUrl;
-    case "technical_failure":
-    case "participant_dropout":
-    case "group_aborted":
-      return settings.technicalFailureUrl || settings.unmatchedUrl;
-    case "completed":
-      return settings.compensationUrl;
-  }
-}
-
-function outcomeMessage(record: ParticipationOutcomeRecord): string {
-  switch (record.outcome) {
-    case "declined_consent":
-      return "You have not entered the study. Please return your submission on Prolific.";
-    case "ineligible":
-      return "You cannot continue with this study. Please follow the return instructions.";
-    case "voluntary_withdrawal":
-      return record.compensationKind === "manual_review"
-        ? "Your withdrawal was recorded. The researcher will review the time you spent."
-        : "Your withdrawal was recorded. Please return your submission on Prolific.";
-    case "connection_timeout":
-      return record.compensationKind === "partial"
-        ? "Your connection was lost and the reconnect window expired. Your partial payment has been queued for review."
-        : "Your connection was lost and the reconnect window expired. Please follow the Prolific return instructions.";
-    case "unmatched":
-      return "A complete group could not be formed. Your partial payment has been queued for review.";
-    case "technical_failure":
-    case "group_aborted":
-      return "The study could not continue. Your partial payment has been queued for review.";
-    case "participant_dropout":
-      return "Your participation ended before the group task finished. The researcher will review compensation.";
-    case "completed":
-      return "Your participation is complete.";
-    default:
-      return "Your participation has ended.";
-  }
-}
-
-function contributionAggregates(session: Session): ContributionAggregate[] {
-  const ids = new Set<string>();
-  for (const message of session.chat.messages) {
-    ids.add(message.senderId);
-    for (const reaction of message.reactions) ids.add(reaction.senderId);
-  }
-  for (const event of session.behavioralEvents) ids.add(event.participantId);
-  for (const item of session.contributionClassifications) ids.add(item.senderId);
-  // Bot messages are part of the chat log but bots never get a contribution row.
-  for (const id of ids) if (isServiceUser(id)) ids.delete(id);
-
-  return [...ids].sort().map((participantId) => {
-    const messages = session.chat.messages.filter(
-      (message) => message.senderId === participantId,
-    );
-    const classifications = session.contributionClassifications.filter(
-      (item) => item.senderId === participantId,
-    );
-    return {
-      sessionId: session.id,
-      conditionId: session.condition.id,
-      roundId: session.roundId,
-      participantId,
-      messageCount: messages.length,
-      characterCount: messages.reduce((sum, message) => sum + message.text.length, 0),
-      reactionCount: session.chat.messages.reduce(
-        (sum, message) =>
-          sum + message.reactions.filter((reaction) => reaction.senderId === participantId).length,
-        0,
-      ),
-      rankingMoveCount: session.behavioralEvents.filter(
-        (event) => event.participantId === participantId && event.type === "ranking-move",
-      ).length,
-      typingDurationMs: session.behavioralEvents
-        .filter(
-          (event) => event.participantId === participantId && event.type === "typing-stop",
-        )
-        .reduce((sum, event) => sum + (event.durationMs ?? 0), 0),
-      relevanceMean: meanRating(classifications.map((item) => item.relevance)),
-      coherenceMean: meanRating(classifications.map((item) => item.coherence)),
-      invitesParticipationCount: classifications.filter(
-        (item) => item.invitesParticipation.value,
-      ).length,
-      meaningfulnessScoreMean:
-        classifications.length > 0
-          ? classifications.reduce((sum, item) => sum + item.meaningfulnessScore, 0) /
-            classifications.length
-          : 0,
-    };
-  });
-}
-
-/**
- * Mean of the 1..5 ratings that are actually present. Records written by the
- * pre-v2 boolean classifier (`meaningfulness-v1`) carry no rating and are
- * skipped; they still count toward `meaningfulnessScoreMean`.
- */
-function meanRating(ratings: Array<ClassifierRating | undefined>): number | null {
-  const values = ratings
-    .map((item) => item?.rating)
-    .filter((value): value is number => typeof value === "number");
-  if (values.length === 0) return null;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-/** Headers for service-to-service calls (shared INTERNAL_API_TOKEN, if set). */
-function internalHeaders(): Record<string, string> {
-  const token = process.env.INTERNAL_API_TOKEN;
-  return {
-    "Content-Type": "application/json",
-    ...(token ? { "x-internal-token": token } : {}),
-  };
-}
-
-/** Strip per-participant secrets before a session leaves the participant API. */
-function toPublicSession(session: Session): PublicSession {
-  const {
-    behavioralEvents: _behavioralEvents,
-    contributionClassifications: _contributionClassifications,
-    windowEvaluations: _windowEvaluations,
-    classificationFailures: _classificationFailures,
-    processedEventIds: _processedEventIds,
-    redactedReactionEventIds: _redactedReactionEventIds,
-    reactionEvents: _reactionEvents,
-    runtimeState: _runtimeState,
-    checkpointRevision: _checkpointRevision,
-    ...publicFields
-  } = session;
-  return {
-    ...publicFields,
-    // A room persisted mid-provisioning is recovery metadata, not an
-    // invitation to enter a half-configured room.
-    roomId: session.status === "provisioning" ? undefined : session.roomId,
-    participants: session.participants.map((p) => ({ id: p.id, name: p.name })),
-  };
+/** The value every entry shares, or null when they differ (or none exist). */
+function sharedValue(values: number[]): number | null {
+  return values.length > 0 && values.every((value) => value === values[0])
+    ? values[0]
+    : null;
 }

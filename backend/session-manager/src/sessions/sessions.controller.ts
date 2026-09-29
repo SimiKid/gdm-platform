@@ -18,11 +18,13 @@ import type {
   RecoverSessionsRequest,
   OpenSessionRequest,
   OpenSessionResponse,
+  ParticipationOutcomesResponse,
   RecordParticipationProgressRequest,
   PublicSession,
   RecordProlificArrivalRequest,
   Session,
   SessionSummary,
+  StudyInfoResponse,
   StudySettings,
   SubmitSurveyRequest,
   TerminateParticipationRequest,
@@ -35,10 +37,12 @@ import { AdminGuard } from "../auth/admin.guard";
 import { InternalGuard } from "../auth/internal.guard";
 import { ParticipantGuard } from "../auth/participant.guard";
 import { ProlificActionsService } from "../prolific/prolific-actions.service";
-import { parseConditionIds, parseRoundIds } from "../reports/filter";
+import { researchFilter } from "../reports/filter";
 import {
+  validateCheckpointRequest,
   validateCompensationUrl,
   validateCondition,
+  validateDebriefFeedbackRequest,
   validateOpenSessionRequest,
   validateParticipationProgressRequest,
   validateProlificArrivalRequest,
@@ -59,6 +63,21 @@ export class SessionsController {
   openSession(@Body() body: OpenSessionRequest): Promise<OpenSessionResponse> {
     validateOpenSessionRequest(body);
     return this.sessions.openSession(body);
+  }
+
+  /**
+   * Public: group size and discussion length the participant pages quote
+   * before assignment (for `conditionId`, else the recruiting arms' shared
+   * value; null where they differ).
+   */
+  @Get("study/info")
+  @Throttle({ default: { limit: 300, ttl: 60_000 } })
+  studyInfo(@Query("conditionId") conditionId?: string): Promise<StudyInfoResponse> {
+    return this.sessions.studyInfo(
+      typeof conditionId === "string" && conditionId.length <= 128
+        ? conditionId
+        : undefined,
+    );
   }
 
   /** Capture Prolific identity immediately when the external study opens. */
@@ -139,12 +158,11 @@ export class SessionsController {
   async submitDebriefFeedback(
     @Body() body: { sessionId: string; participantId: string; feedback: string },
   ): Promise<{ ok: true }> {
-    const feedback =
-      typeof body.feedback === "string" ? body.feedback.slice(0, 4_000) : "";
+    validateDebriefFeedbackRequest(body);
     await this.sessions.submitDebriefFeedback(
       body.sessionId,
       body.participantId,
-      feedback,
+      body.feedback.slice(0, 4_000),
     );
     return { ok: true };
   }
@@ -176,6 +194,7 @@ export class SessionsController {
     @Param("id") id: string,
     @Body() body: FinalizeSessionRequest,
   ): Promise<Session> {
+    validateCheckpointRequest(body);
     return this.sessions.finalizeSession(id, body);
   }
 
@@ -186,6 +205,7 @@ export class SessionsController {
     @Param("id") id: string,
     @Body() body: CheckpointSessionRequest,
   ): Promise<{ ok: true }> {
+    validateCheckpointRequest(body);
     return this.sessions.checkpointSession(id, body).then(() => ({ ok: true }));
   }
 
@@ -193,7 +213,7 @@ export class SessionsController {
   @Post("sessions/recover")
   @UseGuards(InternalGuard)
   recover(@Body() body: RecoverSessionsRequest) {
-    return this.sessions.recoverRunningSessions(body.botUserId);
+    return this.sessions.recoverRunningSessions(body?.botUserId);
   }
 
   /** Admin: list editable study conditions. */
@@ -272,7 +292,7 @@ export class SessionsController {
 
   @Get("admin/prolific/outcomes")
   @UseGuards(AdminGuard)
-  async participationOutcomes() {
+  async participationOutcomes(): Promise<ParticipationOutcomesResponse> {
     return { outcomes: await this.store.listParticipationOutcomes() };
   }
 
@@ -294,13 +314,6 @@ export class SessionsController {
       default:
         throw new BadRequestException("Unknown Prolific action");
     }
-  }
-
-  /** Admin/debug: newest interventions across all sessions. */
-  @Get("interventions")
-  @UseGuards(AdminGuard)
-  interventions() {
-    return this.sessions.listInterventions();
   }
 
   /** JSON export for currently persisted research sessions. */
@@ -438,11 +451,4 @@ export class SessionsController {
   ): Promise<string> {
     return this.sessions.exportContributionsCsv(researchFilter(conditionIds, roundIds));
   }
-}
-
-function researchFilter(conditionIds?: string, roundIds?: string) {
-  return {
-    conditionIds: parseConditionIds(conditionIds),
-    roundIds: parseRoundIds(roundIds),
-  };
 }

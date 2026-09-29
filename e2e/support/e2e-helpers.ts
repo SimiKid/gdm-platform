@@ -6,6 +6,11 @@ import {
   type BrowserContext,
   type Page,
 } from "@playwright/test";
+import type {
+  OpenSessionResponse,
+  PublicSession,
+  WindowEvaluation,
+} from "@gdm/shared";
 
 export const API =
   process.env.E2E_SESSION_MANAGER_URL ?? "http://localhost:3001/api";
@@ -43,27 +48,7 @@ export type TestConditionOverrides = Omit<
   config?: Partial<TestCondition["config"]>;
 };
 
-export interface MatrixCredentials {
-  homeserverUrl: string;
-  userId: string;
-  accessToken: string;
-  roomId: string;
-}
-
-interface PublicSession {
-  id: string;
-  status: string;
-  roomId?: string;
-  condition: TestCondition;
-  participants: { id: string; name: string }[];
-  [key: string]: unknown;
-}
-
-interface OpenSessionResponse {
-  session: PublicSession;
-  participantId: string;
-  matrix: MatrixCredentials;
-}
+export type MatrixCredentials = OpenSessionResponse["matrix"];
 
 export interface AdminSession {
   id: string;
@@ -144,6 +129,7 @@ export interface AdminSession {
     prompt: string;
     rawOutput: string;
   }>;
+  windowEvaluations?: WindowEvaluation[];
   processedEventIds?: string[];
   runtimeState?: Record<string, unknown>;
   [key: string]: unknown;
@@ -399,6 +385,125 @@ export async function pollAdminSession(
     )
     .toBe(true);
   return latest!;
+}
+
+/** Intro acknowledgement, every consent declaration, then "Begin study". */
+export async function acceptIntroAndConsent(page: Page): Promise<void> {
+  await expect(
+    page.getByRole("heading", { name: "Welcome to the Study" }),
+  ).toBeVisible();
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: /continue to the consent form/i }).click();
+  await expect(page.getByRole("heading", { name: "Consent Form" })).toBeVisible();
+  for (const box of await page.getByRole("checkbox").all()) await box.check();
+  await page.getByRole("button", { name: "Begin study" }).click();
+}
+
+export interface EntryAnswers {
+  age: number;
+  gender?: "Man" | "Woman";
+  degree?: "Bachelor's degree" | "Master's degree";
+  /** Answer picked for every matrix row on both Attitudes & Traits screens. */
+  scale?: RegExp;
+}
+
+/** About you → Attitudes & Traits (1/2, 2/2) → Skills & Experience. */
+export async function completeEntrySurvey(
+  page: Page,
+  {
+    age,
+    gender = "Man",
+    degree = "Bachelor's degree",
+    scale = /: Disagree strongly$/i,
+  }: EntryAnswers,
+): Promise<void> {
+  const continueButton = page.getByRole("button", { name: "Continue", exact: true });
+  await page.locator("#about-age").fill(String(age));
+  await page.getByRole("radio", { name: gender, exact: true }).check();
+  await page.getByRole("radio", { name: degree }).check();
+  await page.getByRole("radio", { name: "Fluent (advanced)" }).check();
+  await continueButton.click();
+
+  for (const heading of ["Attitudes & Traits (1/2)", "Attitudes & Traits (2/2)"]) {
+    await expect(page.getByRole("heading", { name: heading })).toBeVisible();
+    for (const radio of await page.getByRole("radio", { name: scale }).all()) {
+      await radio.check();
+    }
+    await continueButton.click();
+  }
+
+  await expect(
+    page.getByRole("heading", { name: "Skills & Experience" }),
+  ).toBeVisible();
+  await page
+    .getByRole("group", { name: /work in teams/ })
+    .getByRole("radio", { name: "Sometimes" })
+    .check();
+  await page
+    .getByRole("group", { name: /communicating via text chat/ })
+    .getByRole("radio", { name: "Rather comfortable" })
+    .check();
+  await page
+    .getByRole("group", { name: /spaceflight-related/ })
+    .getByRole("radio", { name: "Rather unfamiliar" })
+    .check();
+  await page
+    .getByRole("group", { name: /wilderness.*survival/i })
+    .getByRole("radio", { name: "Rather unfamiliar" })
+    .check();
+  await continueButton.click();
+}
+
+/**
+ * Click "Add … to the ranking" until the pool is empty. `seat` 0 adds items in
+ * list order; other seats pick from different positions so rankings differ.
+ */
+export async function rankAllItems(page: Page, seat = 0): Promise<void> {
+  const addButtons = page.getByRole("button", { name: /^Add .* to the ranking$/ });
+  while ((await addButtons.count()) > 0) {
+    const count = await addButtons.count();
+    await addButtons.nth(seat % Math.min(3, count)).click();
+  }
+}
+
+/** Group-task briefing: confirm the acknowledgement and join the chat. */
+export async function joinChatFromGroupIntro(page: Page): Promise<void> {
+  await expect(
+    page.getByRole("heading", { name: "Briefing Group Task" }),
+  ).toBeVisible();
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Join chat" }).click();
+}
+
+export interface WalkToWaitingRoomOptions {
+  /** Study-link query parameters (conditionId, Prolific ids). */
+  query?: Record<string, string>;
+  /** Prolific links skip the recruiting page's Start button. */
+  prolific?: boolean;
+  entry: EntryAnswers;
+  /** Passed to rankAllItems for the individual ranking. */
+  rankingSeat?: number;
+}
+
+/** Recruiting → intro → consent → entry survey → individual ranking → group intro → waiting room. */
+export async function walkToWaitingRoom(
+  page: Page,
+  { query = {}, prolific = false, entry, rankingSeat = 0 }: WalkToWaitingRoomOptions,
+): Promise<void> {
+  const search = new URLSearchParams(query).toString();
+  await page.goto(search ? `/?${search}` : "/");
+  if (!prolific) {
+    await page.getByRole("button", { name: "Start", exact: true }).click();
+  }
+  await acceptIntroAndConsent(page);
+  await completeEntrySurvey(page, entry);
+  await expect(
+    page.getByRole("heading", { name: "Study Task Description" }),
+  ).toBeVisible();
+  await rankAllItems(page, rankingSeat);
+  await page.getByRole("button", { name: "Submit my ranking" }).click();
+  await joinChatFromGroupIntro(page);
+  await expect(page.getByRole("heading", { name: "Waiting room" })).toBeVisible();
 }
 
 export async function sendChat(page: Page, text: string): Promise<void> {

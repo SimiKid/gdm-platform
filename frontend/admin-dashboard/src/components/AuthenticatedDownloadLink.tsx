@@ -4,7 +4,7 @@ import {
   type AnchorHTMLAttributes,
   type MouseEvent,
 } from "react";
-import { apiFetch, exportPath, exportUrl } from "../api";
+import { apiFetch, apiUrl } from "../api";
 
 interface Props
   extends Omit<
@@ -12,14 +12,12 @@ interface Props
     "href" | "download" | "onClick"
   > {
   path: string;
-  query?: string;
   filename: string;
 }
 
 /** Download a protected export without placing its bearer token in the URL. */
 export default function AuthenticatedDownloadLink({
   path,
-  query = "",
   filename,
   children,
   ...anchorProps
@@ -35,7 +33,7 @@ export default function AuthenticatedDownloadLink({
     setDownloading(true);
     setError(false);
     try {
-      const response = await apiFetch(exportPath(path, query));
+      const response = await apiFetch(path);
       if (!response.ok) throw new Error(`Download failed (${response.status})`);
       const blobUrl = URL.createObjectURL(await response.blob());
       const anchor = document.createElement("a");
@@ -57,7 +55,7 @@ export default function AuthenticatedDownloadLink({
     <>
       <a
         {...anchorProps}
-        href={exportUrl(path, query)}
+        href={apiUrl(path)}
         download={filename}
         aria-disabled={downloading}
         aria-busy={downloading}

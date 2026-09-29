@@ -13,7 +13,6 @@
 
 import type {
   InterventionLog,
-  InterventionMode,
   WindowEvaluation,
 } from "./interventions.js";
 import type { StudyPadSnapshot } from "./etherpad.js";
@@ -113,6 +112,16 @@ export interface OpenSessionResponse {
     accessToken: string;
     roomId: string;
   };
+}
+
+/**
+ * Public study facts the participant pages quote before a condition is
+ * assigned (`GET /api/study/info`). `null` fields mean the recruiting arms
+ * disagree (or none is recruiting), so the pages fall back to neutral wording.
+ */
+export interface StudyInfoResponse {
+  groupSize: number | null;
+  durationMinutes: number | null;
 }
 
 export interface ProlificResumeResponse {
@@ -221,61 +230,12 @@ export interface SessionSummary {
   waitingDeadlineAt?: string;
 }
 
-export interface InterventionSummary {
-  sessionId: string;
-  conditionId: string;
-  timestamp: string;
-  mode: InterventionLog["mode"];
-  audience: InterventionLog["audience"];
-  targets: InterventionLog["targets"];
-  quietMembers: InterventionLog["quietMembers"];
-  contributionSplit: InterventionLog["contributionSplit"];
-  message: string;
-}
-
 // ── Admin Dashboard -> Export Service ────────────────────────────
 
 export interface ExportBundle {
   generatedAt: string;
   sessions: Session[];
   etherpads?: StudyPadSnapshot[];
-}
-
-/**
- * Per-condition descriptives for the dashboard Results tab. Means are
- * computed over completed sessions only; session counts are broken out by
- * status. `null` means "no data yet", never zero.
- */
-export interface ConditionReportSummary {
-  conditionId: string;
-  conditionName: string;
-  interventionMode: InterventionMode;
-  llmMode: "off" | "active";
-  sessionsCompleted: number;
-  sessionsAborted: number;
-  sessionsRunning: number;
-  participants: number;
-  entrySurveys: number;
-  exitSurveys: number;
-  meanGroupRankingError: number | null;
-  meanIndividualRankingError: number | null;
-  meanExitRankingError: number | null;
-  meanSatisfaction: number | null;
-  meanFairness: number | null;
-  meanFeltHeard: number | null;
-  /** Mean over sessions of the SD of contribution shares (0 = equal). */
-  meanShareStdDev: number | null;
-  /** Mean over sessions of the Gini coefficient of contribution scores. */
-  meanShareGini: number | null;
-  nudgesTotal: number;
-  nudgesPerSessionMean: number | null;
-  windowsEvaluated: number;
-  windowsNudged: number;
-}
-
-export interface ReportsSummaryResponse {
-  generatedAt: string;
-  conditions: ConditionReportSummary[];
 }
 
 // ── Real-time (Matrix custom events) ─────────────────────────────

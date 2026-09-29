@@ -1,11 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 const client = vi.hoisted(() => ({
   resumeProlific: vi.fn(),
   recordProlificArrival: vi.fn(),
   recordParticipationProgress: vi.fn(async () => undefined),
   getParticipationOutcome: vi.fn(async () => null),
+  completeParticipant: vi.fn(async () => ({
+    completedAt: "2026-09-29T10:00:00.000Z",
+    compensationUrl: "",
+  })),
+  submitDebriefFeedback: vi.fn(async () => undefined),
 }));
 
 vi.mock("./study/sessionClient", () => ({
@@ -45,5 +51,46 @@ describe("App Prolific resume", () => {
     await waitFor(() => expect(client.resumeProlific).toHaveBeenCalledOnce());
     expect(client.recordProlificArrival).not.toHaveBeenCalled();
     expect(screen.getByText(/What this study was investigating/)).toBeInTheDocument();
+  });
+});
+
+describe("App refresh on the debrief page", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sessionStorage.clear();
+    window.history.replaceState({}, "", "/");
+  });
+
+  it("keeps the saved session id so the debrief feedback is attributed", async () => {
+    sessionStorage.setItem(
+      "gdm-study-progress",
+      JSON.stringify({
+        stage: "done",
+        sessionId: "session-1",
+        participantId: "participant-1",
+        matrix: {
+          homeserverUrl: "http://matrix.test",
+          userId: "@p:test",
+          accessToken: "token",
+          roomId: "!room:test",
+        },
+      }),
+    );
+
+    render(<App />);
+
+    const feedback = await screen.findByPlaceholderText("Optional feedback…");
+    expect(client.completeParticipant).toHaveBeenCalledWith(
+      "session-1",
+      "participant-1",
+    );
+    await userEvent.type(feedback, "Interesting study");
+    await userEvent.click(screen.getByRole("button", { name: "Finish study" }));
+
+    expect(client.submitDebriefFeedback).toHaveBeenCalledWith(
+      "session-1",
+      "participant-1",
+      "Interesting study",
+    );
   });
 });

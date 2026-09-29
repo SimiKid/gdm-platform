@@ -4,3 +4,4 @@ export * from "./tasks.js";
 export * from "./interventions.js";
 export * from "./identity.js";
 export * from "./etherpad.js";
+export * from "./text.js";

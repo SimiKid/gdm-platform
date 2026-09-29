@@ -26,7 +26,8 @@ Fast, no network, no containers. They own the pure logic:
   the `llmMode: "active"` composite dominance score, and the `LLM_MODE` env
   override). This is the scientific core; keep its coverage rich.
 - **`session-runtime.spec.ts`** — the per-room state machine (messages,
-  reactions, redactions, ranking history); plus classifier, nudge-generator,
+  ranking history, window-boundary claims across a restart, legacy reaction
+  data passed through a checkpoint unchanged); plus classifier, nudge-generator,
   Matrix-bot and internal-guard specs
   (`anthropic-contribution-classifier.spec.ts`,
   `anthropic-nudge-message-generator.spec.ts`, `matrix-bot.service.spec.ts`,
@@ -37,19 +38,24 @@ Fast, no network, no containers. They own the pure logic:
   Matrix client (`matrix/matrix.service.spec.ts`), Prolific actions
   (`prolific/prolific-actions.service.spec.ts`), request validation and body
   limits (`validation/request-validation.spec.ts`, `request-body.spec.ts`),
-  and a small store spec (`store/store.service.spec.ts`) for the pure
-  normalization helpers.
+  the development CORS allowlist, and store specs for the pure helpers
+  (`store/store.service.spec.ts`, `conditions.spec.ts`,
+  `forming-session.spec.ts`, `checkpoint-merge.spec.ts`,
+  `row-mappers.spec.ts`, `participation.spec.ts`).
 - **Reports/analysis specs** (`backend/session-manager/src/reports/`) —
-  pseudonymization, NASA scoring, equality metrics, and the report service.
+  pseudonymization, NASA scoring, equality metrics, the export filters, and
+  the report service.
 - **Frontend component specs** — Testing Library flows for the participant
   pages (`Survey.spec.tsx` walks consent → about you → attitudes → task →
-  group phase; `App`, `AboutYouPage`, `Chat`, `SharedRanking`,
+  group phase; `App`, `ConsentPage`, `AboutYouPage`, `RankingTaskPage`,
+  `GroupIntroPage`, `Chat`, `SharedRanking`,
   `ExternalWorkspace`, `Recruiting`, `ExitSurvey`, `DebriefingPage`,
   `StudyExitPage`, `RankingBoard`, and the `src/study/` helpers have their
   own specs) and for the admin dashboard (`App` with its token gate,
   `Overview`, `SessionDetail` (plus the pure `session-detail.ts` model),
   `Settings`, `Testing`,
-  `AuthenticatedDownloadLink`, and `api.ts`). Dashboard specs stub `fetch`
+  `AuthenticatedDownloadLink`, `api.ts`, and the `format.ts` /
+  `use-timeout.ts` helpers). Dashboard specs stub `fetch`
   with a path → response table (`src/test-utils.ts`) so each assertion reads
   as "this click sends this request".
 
@@ -63,9 +69,11 @@ Conventions:
   on every pull request to `main` and every push to `main`, so a drop below a
   threshold fails the `verify` job. In the session manager, files whose main
   body is only exercised by another layer are excluded from the unit metrics
-  with a comment saying which layer owns them (`store.service.ts` and
-  `prisma.service.ts` → integration suite); the chat service only excludes
-  `main.ts`, the Nest modules and the spec files themselves. The participant
+  with a comment saying which layer owns them (`store.service.ts`,
+  `store/participation.store.ts`, `store/runtime-checkpoint.ts`,
+  `store/session-snapshot.ts` and `prisma.service.ts` → integration suite); the chat service only excludes
+  `main.ts`, the Nest modules, the spec files themselves and the shared test
+  helper `src/test-utils.ts`. The participant
   frontend measures all of `src/` except three files owned by the e2e suite,
   each named in the config with the reason: `App.tsx` (wires the whole flow
   together), `WaitingRoom.tsx` (boots a real Matrix client against Synapse)
@@ -92,7 +100,9 @@ each run starts throwaway containers and removes them afterwards.
   required on participant endpoints, aborted Prolific submissions staying
   terminal, the finalize → Postgres → read-back round-trip **across app
   restarts** (a fresh app instance can only answer from the database),
-  partial/retried checkpoint merges, monotonic reaction redactions, survey
+  partial/retried checkpoint merges, monotonic reaction redactions (for
+  reaction data from older checkpoints — the Chat Service no longer records
+  reactions), survey
   upserts and token/survey leak protection, token rejoin on refresh, Prolific
   arrival/identity/completion persistence, stale-heartbeat timeouts releasing
   a seat, condition edits surviving restarts, oversized (>100 KB)
@@ -113,7 +123,8 @@ each run starts throwaway containers and removes them afterwards.
 - **Faked:** the Session Manager — a local `node:http` recorder that captures
   the finalize callback.
 - **Covers:** room takeover on `POST /internal/sessions/start`, event
-  collection through real sync (messages, reactions, redactions, `de.gdm.ranking`),
+  collection through real sync (messages and `de.gdm.ranking`; emoji
+  reactions sent to the room must stay out of the record),
   backfill of messages sent while the recorder was down, the server-side
   discussion timer, the nudge behavior per condition (baseline stays silent,
   public nudges fire exactly once per intervention window, private nudges
@@ -157,8 +168,8 @@ pnpm test:e2e
 Four disruptive, billed or long-running specs are opt-in. They are collected
 by the default run too but **self-skip** unless their env gate is set
 (`E2E_LIVE_ANTHROPIC`, `E2E_ALLOW_SERVICE_RESTART`, `E2E_ETHERPAD`,
-`E2E_REAL_STUDY`); the first two have dedicated scripts that just set the
-gate and narrow the file list:
+`E2E_REAL_STUDY`, each set to `1`); the first two have dedicated scripts that
+just set the gate and narrow the file list:
 
 ```bash
 # Three real classifications through the deployed Anthropic integration
@@ -179,10 +190,18 @@ E2E_REAL_STUDY=1 E2E_REAL_USERS=9 E2E_REAL_MINUTES=5 \
 ```
 
 The restart profile refuses non-local API URLs and refuses to run while a
-non-E2E session is waiting or running. The live profile is intentionally one
+non-E2E session is waiting or running. It drives `docker compose` from the
+repo's `infra/` directory with `--env-file .env`; override with
+`E2E_COMPOSE_DIR`, `E2E_COMPOSE_ENV_FILE` (relative to that directory),
+`E2E_COMPOSE_PROJECT` (`-p`) and `E2E_COMPOSE_FILES` (comma-separated `-f`
+list, e.g. for the `gdm-local` mock stack), and point `E2E_CHAT_SERVICE_URL`
+at the Chat Service readiness URL it polls after the restart (default
+`http://localhost:3002/health/ready`). The live profile is intentionally one
 test; it verifies the two graded meaningfulness ratings (relevance and
 coherence, 1–5), the separate invitation flag and pseudonymized prompts on a
-baseline condition, where no nudge may ever render. The Etherpad spec only
+baseline condition, where no nudge may ever render, and that every recorded
+classification used the expected model (`E2E_EXPECTED_ANTHROPIC_MODEL`,
+default `claude-haiku-4-5-20251001` — set it when `ANTHROPIC_MODEL` differs). The Etherpad spec only
 accepts a local API target and switches Etherpad off again when it finishes.
 The real-study spec uses no admin API: matchmaking assigns the active arms
 exactly as for recruited participants, so its sessions appear in Overview and
@@ -220,6 +239,12 @@ Notes:
   `pnpm --filter @gdm/e2e exec playwright show-trace test-results/<run>/trace.zip`.
 - The e2e tests the images the stack is running — rebuild after backend
   changes (`docker compose up -d --build session-manager chat-service`).
+- `E2E_FAKE_PROLIFIC=1` makes the golden path's first participant enter
+  with a synthetic Prolific identity (study id `aaaaaaaaaaaaaaaaaaaaaaaa`,
+  matching the fake Prolific API of the [mock stack](local-mocks.md)) and
+  asserts that the identity is stored. It is meant for that mock stack; a
+  stack validating against the real Prolific API, or with a different
+  `PROLIFIC_STUDY_ID`, rejects the identity.
 - The suite can target any deployed stack: `E2E_PARTICIPANT_URL`,
   `E2E_SESSION_MANAGER_URL` and `E2E_ADMIN_URL` override the localhost
   defaults, and `E2E_ADMIN_TOKEN` authenticates against a stack whose

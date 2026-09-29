@@ -54,15 +54,19 @@ export interface ProlificArrival extends ProlificIdentity {
   prolificActionStatus?: ProlificActionStatus;
 }
 
-export type ParticipationStage =
-  | "arrived"
-  | "consent"
-  | "entry"
-  | "waiting"
-  | "chat"
-  | "exit"
-  | "done"
-  | "terminated";
+/** Participant-journey milestones, in the order a participant reaches them. */
+export const PARTICIPATION_STAGES = [
+  "arrived",
+  "consent",
+  "entry",
+  "waiting",
+  "chat",
+  "exit",
+  "done",
+  "terminated",
+] as const;
+
+export type ParticipationStage = (typeof PARTICIPATION_STAGES)[number];
 
 export type ParticipationOutcome =
   | "completed"
@@ -316,9 +320,9 @@ export interface Condition {
  */
 export interface StudySettings {
   /**
-   * Where the debriefing page's "Claim compensation" button sends
-   * participants (payment / Prolific completion link). Empty = the
-   * participant app falls back to its build-time default.
+   * Where the debriefing page's "Return to Prolific" button sends Prolific
+   * participants (the Prolific completion link). Empty = the participant
+   * app falls back to its build-time default.
    */
   compensationUrl: string;
   /** Prolific paths used for non-happy terminal outcomes. */

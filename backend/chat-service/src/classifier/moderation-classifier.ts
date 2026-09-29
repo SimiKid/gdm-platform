@@ -1,9 +1,9 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { anthropicModel, requestAnthropicText } from "../anthropic/anthropic-client";
 
-const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 const REQUEST_TIMEOUT_MS = 5_000;
 
-export interface ModerationResult {
+interface ModerationResult {
   flagged: boolean;
   reason: string;
 }
@@ -29,7 +29,7 @@ export class ModerationClassifier {
     }
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
-    const model = process.env.ANTHROPIC_MODEL ?? DEFAULT_MODEL;
+    const model = anthropicModel();
 
     if (!apiKey) {
       if (!this.warnedMissingKey) {
@@ -40,15 +40,9 @@ export class ModerationClassifier {
     }
 
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-        },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        body: JSON.stringify({
+      const raw = await requestAnthropicText(
+        apiKey,
+        {
           model,
           max_tokens: 100,
           temperature: 0,
@@ -79,15 +73,9 @@ export class ModerationClassifier {
               },
             },
           },
-        }),
-      });
-
-      if (!res.ok) throw new Error(`Anthropic status ${res.status}`);
-      const response = (await res.json()) as {
-        content?: Array<{ type?: string; text?: string }>;
-      };
-      const raw = response.content?.find((b) => b.type === "text")?.text;
-      if (!raw) throw new Error("no text block in response");
+        },
+        REQUEST_TIMEOUT_MS,
+      );
       const result = JSON.parse(raw) as ModerationResult;
       return {
         flagged: result.flagged === true,

@@ -284,7 +284,8 @@ can split participants across old and new processing rules.
 3. Save the full URL in the app's **Full completion** field.
 
 After the app has saved the exit survey and individual completion, the
-participant acknowledges the debrief and follows this path. With manual review,
+participant reads the debrief and follows this path via the **Return to
+Prolific** button on the debriefing page. With manual review,
 the Prolific submission becomes `AWAITING_REVIEW`; it is not paid merely because
 the redirect was opened.
 
@@ -346,9 +347,9 @@ withdrawal** URL.
 The app records the terminal outcome before displaying a redirect. Empty
 early-exit URLs fail safely: the participant is told to keep the page open and
 contact the researcher instead of receiving an incorrect code. The full
-completion page differs: with an empty **Full completion** field it falls
-back to the build-time `VITE_PAYMENT_URL` before showing the not-configured
-message.
+completion page behaves the same way: with an empty **Full completion** field
+its **Return to Prolific** button stays disabled and a not-configured message
+is shown (there is no build-time fallback).
 
 The application cannot observe whether a participant actually clicked a
 Prolific redirect or whether Prolific already processed that completion path.
@@ -374,8 +375,8 @@ app outcome with the submission's current state in Prolific.
 Each URL must parse and use `https:` (plain `http:` is accepted only for
 localhost); otherwise `PUT /api/settings` answers 400 and nothing is saved.
 These settings are persisted in the research database. There is no environment
-fallback for early-exit paths. The build-time `VITE_PAYMENT_URL` fallback is
-not a substitute for configuring the production Prolific paths.
+or build-time fallback for any path, including Full completion: the
+participant app takes every completion/exit link from these settings only.
 
 ## 6. Configure the server lifecycle and payments
 
@@ -495,6 +496,17 @@ Direct participants use the normal lobby and study flow but do not create a
 Prolific arrival/outcome, do not receive Prolific return links, and are clearly
 marked `direct` in exports.
 
+Every participant, Prolific or direct, can withdraw from About You through
+the exit survey (waiting room and chat included). A Prolific withdrawal is
+recorded as `voluntary_withdrawal` with the consequences described above. A
+direct participant's withdrawal (like a direct consent decline or
+screen-out) is handled in the browser: no outcome is sent to the server
+(in Etherpad mode only the participant's writing admission is released), so a
+seat held in a waiting lobby or running group stays taken, as if the tab had
+been closed. Their exit page shows the message (after consent
+also the debriefing disclosure) but no return button, and on the final
+debriefing page they get **Finish study** instead of a Prolific link.
+
 ## 9. Outcomes and compensation rules
 
 | App outcome | Typical cause | Compensation recorded by app | Redirect field |
@@ -521,9 +533,9 @@ At the current 10p/minute rate and 508p cap, 1–60 seconds records £0.10,
 61–120 seconds records £0.20, and no partial outcome exceeds £5.08. The amount
 is a queued bonus, not an automatic approval or immediate payment.
 
-Post-consent early exits show the withheld-purpose debrief and require
-acknowledgement before the return link becomes active. Consent declines and
-eligibility screen-outs do not show that debrief.
+Post-consent early exits show the withheld-purpose debrief above the return
+link; there is no acknowledgement step. Consent declines and eligibility
+screen-outs do not show that debrief.
 
 ## 10. Admin compensation workflow
 
@@ -555,6 +567,14 @@ same token header, empty body):
   while the record is in state `bonus_prepared`.
 - **Resolve manually** (`resolve-manually`) records that the researcher
   reconciled the case outside the automated workflow.
+
+Error responses: an unknown outcome id answers **404**; an outcome that is not
+actionable (no terminal outcome, or `completed`) or not in the state the action
+needs (`prepare-bonus` on a non-`partial` outcome or with an empty amount,
+`pay-bonus` before a batch was prepared or outside `bonus_prepared`) answers
+**409**; an unknown action name answers 400; a missing `PROLIFIC_API_TOKEN`
+answers 503. A failed call to Prolific's API itself still surfaces as a server
+error (500).
 
 Prolific action states: `not_required` (full completion), `pending`,
 `return_requested`, `bonus_prepared`, `payment_in_progress`,
@@ -591,7 +611,7 @@ Admin/API sources:
 
 | Source | Purpose |
 | --- | --- |
-| Admin **Prolific** tab | Live outcome and compensation queue |
+| `GET /api/admin/prolific/outcomes` | Live outcome and compensation queue (API-only, see section 10) |
 | `GET /api/export/prolific-arrivals` | JSON array of every validated arrival (raw PID, study and submission ids, stage, outcome, compensation), including pre-seat exits; no filters |
 | `GET /api/export/prolific-outcomes` | JSON `{ outcomes }` with the same data plus return/bonus/payment fields; no filters |
 | `GET /api/export/linkage.csv` | Pseudonym → internal UUIDs, `tracking_token` (`prolific:<STUDY_ID>:<SESSION_ID>`), `recruitment_source`, Matrix id. It does **not** contain the PID |
@@ -632,7 +652,8 @@ is open.
 2. Fund enough places and screen-out budget.
 3. Confirm the app's active condition and group size in Admin → Settings.
 4. Release exactly one group (currently three participants).
-5. Watch Admin → Prolific and Overview without changing settings mid-session.
+5. Watch the Overview (and the outcome queue via
+   `GET /api/admin/prolific/outcomes`) without changing settings mid-session.
 6. Verify all three arrivals pass through waiting, chat, exit, and `completed`.
 7. Confirm each browser reaches the default completion URL and each Prolific
    submission shows `AWAITING_REVIEW` under the current manual-review setting.
@@ -709,7 +730,7 @@ access tokens, or raw linkage data into a shared terminal transcript.
 | Direct visitors cannot enter | No-parameter links should work. Check active conditions/goals and general service health rather than Prolific settings. |
 | Participant gets a second lobby/seat | The same Prolific submission should be idempotent. Check whether a different `SESSION_ID` or a direct link was used. |
 | Participant cannot rejoin after 30 seconds | The outcome is intentionally terminal after reconnect grace. Reopening shows the recorded exit path, not a new group. |
-| Return button disabled | The participant must acknowledge the debrief, except for no-consent/screen-out paths on the exit page. On the full-completion page acknowledgement is always required (direct participants too). |
+| Return button disabled | There is no debrief-acknowledgement step, so a disabled button always means the matching URL is empty (next row). Direct participants never see a return button. |
 | "The return link is not configured. Please keep this page open and contact the researcher through Prolific." (exit page) / "The Prolific completion link has not been configured yet…" (completion page) | The matching URL is empty in Admin → Settings. Record is safe; add the correct path and reconcile manually. |
 | Submission returned in Prolific but the outcome record has no `returnRequestedAt` | The participant probably followed the Prolific completion path; the app cannot observe that click. Verify in Prolific, then call `resolve-manually`. |
 | Bonus is `payment_uncertain` | Check the exact batch/payment in Prolific. Do not click/pay again until reconciled. |

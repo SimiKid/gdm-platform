@@ -1,36 +1,25 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type {
-  KeyboardEvent as ReactKeyboardEvent,
-  PointerEvent as ReactPointerEvent,
-} from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { MatrixClient } from "matrix-js-sdk";
-import { ClientEvent, RoomEvent, RoomMemberEvent } from "matrix-js-sdk";
-import { GDM_RECIPIENT_KEY, MATRIX_EVENT_TYPES, protectedEndMs } from "@gdm/shared";
+import {
+  buildIdentities,
+  formatMmSs,
+  identityFor,
+  isServiceUser,
+  protectedEndMs,
+} from "@gdm/shared";
 import type { PublicSession } from "@gdm/shared";
 import SharedRanking from "./SharedRanking";
 import ExternalWorkspace from "./ExternalWorkspace";
 import EtherpadTask from "./EtherpadTask";
-import {
-  buildIdentities,
-  identityFor,
-  isBot,
-  isServiceUser,
-} from "../study/identity";
-import { detectMention, splitMentions } from "../study/mentions";
-
-interface Message {
-  id: string;
-  sender: string;
-  body: string;
-  isOwn: boolean;
-  ts: number;
-  /** True when the message is from the study bot (rendered as a nudge). */
-  fromBot: boolean;
-  /** Set when this is a private nudge for a single participant. */
-  recipient: string | null;
-  /** Local echo not yet confirmed by the server (its id is temporary). */
-  pending: boolean;
-}
+import MessageItem from "./chat/MessageItem";
+import { useActiveRoom } from "../hooks/useActiveRoom";
+import { useBehaviorTelemetry } from "../hooks/useBehaviorTelemetry";
+import { useComposer } from "../hooks/useComposer";
+import { useDiscussionCountdown } from "../hooks/useDiscussionCountdown";
+import { useFollowLatest } from "../hooks/useFollowLatest";
+import { usePanelWidth } from "../hooks/usePanelWidth";
+import { useRoomMessages } from "../hooks/useRoomMessages";
+import { useTypingMembers } from "../hooks/useTypingMembers";
 
 interface Props {
   client: MatrixClient;
@@ -41,345 +30,26 @@ interface Props {
   onWithdraw?: () => void;
 }
 
-const PANEL_WIDTH_KEY = "gdm-panel-width";
-const PANEL_MIN = 280;
-const PANEL_MAX = 640;
-const TYPING_SERVER_TIMEOUT_MS = 4000;
-const TYPING_RENEW_INTERVAL_MS = 3000;
-const TYPING_IDLE_TIMEOUT_MS = 1800;
-
-/** Keep the panel usable and leave the chat column at least ~360px. */
-function clampPanelWidth(w: number): number {
-  const max = Math.min(PANEL_MAX, window.innerWidth - 360);
-  return Math.max(PANEL_MIN, Math.min(w, Math.max(PANEL_MIN, max)));
-}
-
-/** Countdown to the end of the discussion, in ms (null if no timer). */
-function useCountdown(startedAt?: string, durationMinutes?: number) {
-  const [remaining, setRemaining] = useState<number | null>(null);
-  useEffect(() => {
-    if (!startedAt || !durationMinutes) return;
-    const end = new Date(startedAt).getTime() + durationMinutes * 60_000;
-    const tick = () => setRemaining(Math.max(0, end - Date.now()));
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, [startedAt, durationMinutes]);
-  return remaining;
-}
-
-function formatMs(ms: number): string {
-  const total = Math.floor(ms / 1000);
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-function formatClock(ts: number): string {
-  const d = new Date(ts);
-  return `${d.getHours()}:${d.getMinutes().toString().padStart(2, "0")}`;
-}
-
 export default function Chat({ client, session, onTimeUp, onWithdraw }: Props) {
-  const [activeRoomId, setActiveRoomId] = useState<string | null>(
-    session?.roomId ?? null,
-  );
+  const activeRoomId = useActiveRoom(client, session?.roomId);
   const [groupOrder, setGroupOrder] = useState<string[]>(session?.ranking.order ?? []);
   const workspaceMode =
-    session?.condition.config.workspaceMode === "etherpad" ? "etherpad" : session?.condition.config.workspaceMode === "external"
-      ? "external"
-      : "ranking";
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
-  // In-progress "@" mention: { start, query } while the picker is open, else null.
-  const [mention, setMention] = useState<{ start: number; query: string } | null>(
-    null,
-  );
-  const [mentionIndex, setMentionIndex] = useState(0);
-  const [typingMembers, setTypingMembers] = useState<string[]>([]);
-  const [newMessageCount, setNewMessageCount] = useState(0);
-  const [, refreshRoomMembership] = useState(0);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  // Caret position to restore after we programmatically rewrite the input value.
-  const desiredCaret = useRef<number | null>(null);
-  const messagesViewportRef = useRef<HTMLDivElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const previousMessageCount = useRef(0);
-  const isNearMessageEnd = useRef(true);
-  const typingStartedAt = useRef<number | null>(null);
-  const typingStopTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const typingRenewInterval = useRef<ReturnType<typeof setInterval> | null>(null);
-  const cursorActivity = useRef({
-    sampleCount: 0,
-    distancePx: 0,
-    lastX: 0,
-    lastY: 0,
-    hasPoint: false,
-  });
-
-  useEffect(
-    () => () => {
-      if (typingStopTimer.current) clearTimeout(typingStopTimer.current);
-      if (typingRenewInterval.current) clearInterval(typingRenewInterval.current);
-    },
-    [],
-  );
-
-  const sendBehavior = useCallback(
-    async (
-      type:
-        | "typing-start"
-        | "typing-stop"
-        | "tab-hidden"
-        | "tab-visible"
-        | "cursor-activity",
-      durationMs?: number,
-      payload: Record<string, number> = {},
-    ) => {
-      if (!activeRoomId) return;
-      try {
-        await client.sendEvent(activeRoomId, MATRIX_EVENT_TYPES.behavior as never, {
-          type,
-          ...(durationMs === undefined ? {} : { durationMs }),
-          ...payload,
-        } as never);
-      } catch {
-        // Telemetry must never block the participant's chat interaction.
-      }
-    },
-    [activeRoomId, client],
-  );
-
-  // Width of the resizable study side panel (persisted across reloads).
-  const [panelWidth, setPanelWidth] = useState<number>(() => {
-    const saved = Number(localStorage.getItem(PANEL_WIDTH_KEY));
-    return saved ? clampPanelWidth(saved) : 340;
-  });
-
-  useEffect(() => {
-    localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidth));
-  }, [panelWidth]);
-
-  function startPanelResize(e: ReactPointerEvent) {
-    e.preventDefault();
-    document.body.style.userSelect = "none";
-    document.body.style.cursor = "col-resize";
-    const onMove = (ev: PointerEvent) =>
-      setPanelWidth(clampPanelWidth(window.innerWidth - ev.clientX));
-    const onUp = () => {
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  }
-
+    session?.condition.config.workspaceMode === "etherpad"
+      ? "etherpad"
+      : session?.condition.config.workspaceMode === "external"
+        ? "external"
+        : "ranking";
   const userId = client.getUserId() ?? "";
-  const remaining = useCountdown(session?.startedAt, session?.durationMinutes);
-
-  // Resolve the active room: session.roomId in study mode, else first joined.
-  useEffect(() => {
-    if (session?.roomId) {
-      setActiveRoomId(session.roomId);
-      return;
-    }
-    function pickFirst() {
-      const joined = client.getRooms();
-      if (joined.length > 0) setActiveRoomId((cur) => cur ?? joined[0].roomId);
-    }
-    pickFirst();
-    client.on(ClientEvent.Room, pickFirst);
-    return () => {
-      client.off(ClientEvent.Room, pickFirst);
-    };
-  }, [client, session]);
-
-  // The Session Manager joins every participant before publishing the room id,
-  // but each browser still learns that room state asynchronously through
-  // Matrix sync. Re-render when the room or a membership arrives so the study
-  // never remains on the neutral loading state until an unrelated message.
-  useEffect(() => {
-    const refresh = () => refreshRoomMembership((revision) => revision + 1);
-    client.on(ClientEvent.Room, refresh);
-    client.on(RoomMemberEvent.Membership, refresh);
-    return () => {
-      client.off(ClientEvent.Room, refresh);
-      client.off(RoomMemberEvent.Membership, refresh);
-    };
-  }, [client]);
-
-  // Rebuild messages from the live timeline on any change. Study rooms are
-  // tiny, so a full rebuild is simplest and always consistent. Emoji
-  // reactions are intentionally unsupported: the study is about turn-taking
-  // in talking/typing, so participants must engage by writing.
-  useEffect(() => {
-    if (!activeRoomId) {
-      setMessages([]);
-      return;
-    }
-
-    function refresh() {
-      const room = client.getRoom(activeRoomId!);
-      if (!room) return;
-      const events = room.getLiveTimeline().getEvents();
-      const msgs: Message[] = [];
-      for (const e of events) {
-        if (e.isRedacted()) continue;
-        const type = e.getType();
-        if (type === "m.room.message") {
-          const content = e.getContent();
-          const sender = e.getSender() ?? "unknown";
-          const recipientRaw = content[GDM_RECIPIENT_KEY];
-          const recipient =
-            typeof recipientRaw === "string" ? recipientRaw : null;
-          // A private nudge is only shown to its recipient.
-          if (recipient && recipient !== userId) continue;
-          msgs.push({
-            id: e.getId() ?? crypto.randomUUID(),
-            sender,
-            body: typeof content.body === "string" ? content.body : "",
-            isOwn: sender === userId,
-            ts: e.getTs(),
-            fromBot: isBot(sender),
-            recipient,
-            pending: e.status !== null,
-          });
-        }
-      }
-      setMessages(msgs);
-    }
-
-    refresh();
-    client.on(RoomEvent.Timeline, refresh);
-    client.on(RoomEvent.Redaction, refresh);
-    // Fired when a local echo is confirmed and swaps to its real event id.
-    client.on(RoomEvent.LocalEchoUpdated, refresh);
-    return () => {
-      client.off(RoomEvent.Timeline, refresh);
-      client.off(RoomEvent.Redaction, refresh);
-      client.off(RoomEvent.LocalEchoUpdated, refresh);
-    };
-  }, [client, activeRoomId, userId]);
-
-  // Matrix typing is ephemeral and drives the live indicator. Matching custom
-  // behavior events make the start/stop intervals available in research data.
-  useEffect(() => {
-    if (!activeRoomId) return;
-    function refreshTyping() {
-      const members = client
-        .getRoom(activeRoomId!)
-        ?.getJoinedMembers()
-        .filter((member) => member.userId !== userId && member.typing && !isBot(member.userId))
-        .map((member) => identityFor(buildIdentities(
-          client.getRoom(activeRoomId!)?.getJoinedMembers().map((item) => item.userId) ?? [],
-        ), member.userId).name) ?? [];
-      setTypingMembers(members);
-    }
-    client.on(RoomMemberEvent.Typing, refreshTyping);
-    refreshTyping();
-    return () => {
-      client.off(RoomMemberEvent.Typing, refreshTyping);
-    };
-  }, [client, activeRoomId, userId]);
-
-  useEffect(() => {
-    if (!activeRoomId) return;
-    function onVisibilityChange() {
-      void sendBehavior(document.hidden ? "tab-hidden" : "tab-visible");
-    }
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, [activeRoomId, sendBehavior]);
-
-  // Batch pointer activity so research gets cursor engagement measures without
-  // flooding Matrix with a raw event for every mouse movement.
-  useEffect(() => {
-    if (!activeRoomId) return;
-    function onPointerMove(event: PointerEvent) {
-      const activity = cursorActivity.current;
-      if (activity.hasPoint) {
-        activity.distancePx += Math.hypot(
-          event.clientX - activity.lastX,
-          event.clientY - activity.lastY,
-        );
-      }
-      activity.sampleCount += 1;
-      activity.lastX = event.clientX;
-      activity.lastY = event.clientY;
-      activity.hasPoint = true;
-    }
-    const interval = setInterval(() => {
-      const activity = cursorActivity.current;
-      if (activity.sampleCount > 0) {
-        void sendBehavior("cursor-activity", undefined, {
-          sampleCount: activity.sampleCount,
-          distancePx: Math.round(activity.distancePx),
-          lastX: Math.round(activity.lastX),
-          lastY: Math.round(activity.lastY),
-        });
-      }
-      cursorActivity.current = {
-        sampleCount: 0,
-        distancePx: 0,
-        lastX: activity.lastX,
-        lastY: activity.lastY,
-        hasPoint: activity.hasPoint,
-      };
-    }, 10_000);
-    window.addEventListener("pointermove", onPointerMove, { passive: true });
-    return () => {
-      window.removeEventListener("pointermove", onPointerMove);
-      clearInterval(interval);
-    };
-  }, [activeRoomId, sendBehavior]);
-
-  const scrollToLatest = useCallback((behavior: ScrollBehavior = "smooth") => {
-    isNearMessageEnd.current = true;
-    setNewMessageCount(0);
-    messagesEndRef.current?.scrollIntoView({ behavior });
-  }, []);
-
-  useEffect(() => {
-    previousMessageCount.current = 0;
-    isNearMessageEnd.current = true;
-    setNewMessageCount(0);
-  }, [activeRoomId]);
-
-  // Keep following the conversation only while the participant is already at
-  // the bottom. If they scroll up to read, preserve that position and surface
-  // a WhatsApp-style count instead of pulling the viewport away.
-  useEffect(() => {
-    const previousCount = previousMessageCount.current;
-    const addedCount = Math.max(0, messages.length - previousCount);
-    const addedMessages =
-      addedCount > 0 ? messages.slice(messages.length - addedCount) : [];
-    previousMessageCount.current = messages.length;
-
-    if (messages.length === 0) {
-      setNewMessageCount(0);
-      return;
-    }
-    if (
-      previousCount === 0 ||
-      isNearMessageEnd.current ||
-      addedMessages.some((message) => message.isOwn)
-    ) {
-      scrollToLatest(previousCount === 0 ? "auto" : "smooth");
-    } else if (addedCount > 0) {
-      setNewMessageCount((count) => count + addedCount);
-    }
-  }, [messages, scrollToLatest]);
-
-  function trackMessageScroll() {
-    const viewport = messagesViewportRef.current;
-    if (!viewport) return;
-    const nearEnd =
-      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 48;
-    isNearMessageEnd.current = nearEnd;
-    if (nearEnd) setNewMessageCount(0);
-  }
+  const messages = useRoomMessages(client, activeRoomId, userId);
+  const typingMembers = useTypingMembers(client, activeRoomId, userId);
+  const sendBehavior = useBehaviorTelemetry(client, activeRoomId);
+  const { viewportRef, endRef, newMessageCount, scrollToLatest, trackScroll } =
+    useFollowLatest(messages, activeRoomId);
+  const { panelWidth, startPanelResize, resizeBy } = usePanelWidth();
+  const remaining = useDiscussionCountdown(
+    session?.startedAt,
+    session?.durationMinutes,
+  );
 
   // Fire onTimeUp exactly once when the discussion timer hits zero.
   const endedRef = useRef(false);
@@ -391,70 +61,6 @@ export default function Chat({ client, session, onTimeUp, onWithdraw }: Props) {
       onTimeUp?.(groupOrderRef.current);
     }
   }, [remaining, onTimeUp]);
-
-  const [sendError, setSendError] = useState(false);
-
-  function stopTyping() {
-    if (!activeRoomId || typingStartedAt.current === null) return;
-    const durationMs = Date.now() - typingStartedAt.current;
-    typingStartedAt.current = null;
-    if (typingStopTimer.current) clearTimeout(typingStopTimer.current);
-    typingStopTimer.current = null;
-    if (typingRenewInterval.current) clearInterval(typingRenewInterval.current);
-    typingRenewInterval.current = null;
-    void client.sendTyping(activeRoomId, false, 0).catch(() => undefined);
-    void sendBehavior("typing-stop", durationMs);
-  }
-
-  // After we rewrite the input value ourselves (mention insertion), put the
-  // caret back where the participant expects it rather than at the end.
-  useEffect(() => {
-    if (desiredCaret.current === null || !inputRef.current) return;
-    inputRef.current.setSelectionRange(desiredCaret.current, desiredCaret.current);
-    inputRef.current.focus();
-    desiredCaret.current = null;
-  }, [input]);
-
-  function updateInput(value: string, caret?: number) {
-    setInput(value);
-    const pos = caret ?? value.length;
-    const next = detectMention(value, pos);
-    setMention(next);
-    setMentionIndex(0);
-    if (!activeRoomId) return;
-    if (value.trim() && typingStartedAt.current === null) {
-      typingStartedAt.current = Date.now();
-      void client
-        .sendTyping(activeRoomId, true, TYPING_SERVER_TIMEOUT_MS)
-        .catch(() => undefined);
-      typingRenewInterval.current = setInterval(() => {
-        if (typingStartedAt.current === null) return;
-        void client
-          .sendTyping(activeRoomId, true, TYPING_SERVER_TIMEOUT_MS)
-          .catch(() => undefined);
-      }, TYPING_RENEW_INTERVAL_MS);
-      void sendBehavior("typing-start");
-    }
-    if (typingStopTimer.current) clearTimeout(typingStopTimer.current);
-    if (!value.trim()) stopTyping();
-    else typingStopTimer.current = setTimeout(stopTyping, TYPING_IDLE_TIMEOUT_MS);
-  }
-
-  async function sendMessage() {
-    if (!input.trim() || !activeRoomId) return;
-    const body = input.trim();
-    stopTyping();
-    setInput("");
-    setMention(null);
-    setSendError(false);
-    try {
-      await client.sendTextMessage(activeRoomId, body);
-    } catch {
-      // Don't lose the participant's words: restore them and say so.
-      setInput((current) => current || body);
-      setSendError(true);
-    }
-  }
 
   const room = activeRoomId ? client.getRoom(activeRoomId) : null;
   // Keep the study condition blinded during the discussion.
@@ -480,64 +86,15 @@ export default function Chat({ client, session, onTimeUp, onWithdraw }: Props) {
   // Every participant name in this room, used to highlight mentions on render.
   const mentionNames = [...identities.values()].map((id) => id.name);
 
-  // Other participants offered in the "@" picker, filtered by what's typed.
-  const mentionCandidates =
-    mention === null
-      ? []
-      : [...identities.entries()]
-          .filter(([id]) => id !== userId)
-          .map(([, ident]) => ident)
-          .filter((ident) =>
-            ident.name.toLowerCase().startsWith(mention.query.toLowerCase()),
-          )
-          .sort((a, b) => a.name.localeCompare(b.name));
-  const mentionOpen = mentionCandidates.length > 0;
-
-  // Replace the half-typed "@query" with "@Name " and drop the picker.
-  function selectMention(name: string) {
-    if (mention === null) return;
-    const caret = inputRef.current?.selectionStart ?? input.length;
-    const before = input.slice(0, mention.start);
-    const after = input.slice(caret);
-    const insert = `@${name} `;
-    const next = before + insert + after;
-    desiredCaret.current = before.length + insert.length;
-    setMention(null);
-    setMentionIndex(0);
-    updateInput(next, desiredCaret.current);
-  }
-
-  function onInputKeyDown(e: ReactKeyboardEvent<HTMLTextAreaElement>) {
-    if (mentionOpen) {
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setMentionIndex((i) => (i + 1) % mentionCandidates.length);
-        return;
-      }
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setMentionIndex(
-          (i) => (i - 1 + mentionCandidates.length) % mentionCandidates.length,
-        );
-        return;
-      }
-      if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
-        e.preventDefault();
-        const chosen = mentionCandidates[mentionIndex] ?? mentionCandidates[0];
-        selectMention(chosen.name);
-        return;
-      }
-      if (e.key === "Escape") {
-        e.preventDefault();
-        setMention(null);
-        return;
-      }
-    }
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void sendMessage();
-    }
-  }
+  const composer = useComposer({
+    client,
+    roomId: activeRoomId,
+    userId,
+    identities,
+    sendBehavior,
+  });
+  const mentionListId = useId();
+  const mentionOptionId = (index: number) => `${mentionListId}-option-${index}`;
 
   return (
     <div className="study-layout">
@@ -562,76 +119,32 @@ export default function Chat({ client, session, onTimeUp, onWithdraw }: Props) {
             <div className="messages-shell">
               <div
                 className="messages"
-                ref={messagesViewportRef}
-                onScroll={trackMessageScroll}
+                ref={viewportRef}
+                onScroll={trackScroll}
               >
                 {session && (
                   <div className="entry-message">
                     Welcome to the group discussion! You are in a session with{" "}
                     {session.participants.length - 1} other{" "}
                     {session.participants.length - 1 === 1 ? "person" : "people"}.
-                    {workspaceMode === "etherpad" ? "Discuss the task and write your group's response in the shared workspace on the right." : "Discuss the task and adjust the shared ranking on the right."}
+                    {workspaceMode === "etherpad"
+                      ? "Discuss the task and write your group's response in the shared workspace on the right."
+                      : "Discuss the task and adjust the shared ranking on the right."}
                     <br />
                     <span className="entry-hint">
                       Tip: Use <strong>@</strong> to address people directly.
                     </span>
                   </div>
                 )}
-                {messages.map((msg) => {
-                  if (msg.fromBot) {
-                    return (
-                      <div
-                        key={msg.id}
-                        className={`bot-message ${msg.recipient ? "private" : ""}`}
-                      >
-                        <div className="bot-label">
-                          <span>🤖 Assistant</span>
-                          {/* Zoom-style delivery badge: participants must
-                              never be unsure who can see a nudge. */}
-                          <span
-                            className={`audience-badge ${
-                              msg.recipient ? "badge-private" : "badge-public"
-                            }`}
-                          >
-                            {msg.recipient
-                              ? "🔒 Private message to you (only you can see this)"
-                              : "📢 Message to ALL in the group"}
-                          </span>
-                          <span className="bot-meta">{formatClock(msg.ts)}</span>
-                        </div>
-                        <div className="bot-body">{msg.body}</div>
-                      </div>
-                    );
-                  }
-                  return (
-                    <div
-                      key={msg.id}
-                      className={`message ${msg.isOwn ? "own" : "other"}`}
-                    >
-                      {!msg.isOwn && (
-                        <div
-                          className="sender"
-                          style={{ color: identityFor(identities, msg.sender).color }}
-                        >
-                          {identityFor(identities, msg.sender).name}
-                        </div>
-                      )}
-                      <div className="body">
-                        {splitMentions(msg.body, mentionNames).map((seg, i) =>
-                          seg.type === "mention" ? (
-                            <span key={i} className="mention">
-                              {seg.value}
-                            </span>
-                          ) : (
-                            seg.value
-                          ),
-                        )}
-                      </div>
-                      <span className="meta">{formatClock(msg.ts)}</span>
-                    </div>
-                  );
-                })}
-                <div ref={messagesEndRef} />
+                {messages.map((msg) => (
+                  <MessageItem
+                    key={msg.id}
+                    message={msg}
+                    identities={identities}
+                    mentionNames={mentionNames}
+                  />
+                ))}
+                <div ref={endRef} />
               </div>
               {newMessageCount > 0 && (
                 <button
@@ -644,7 +157,7 @@ export default function Chat({ client, session, onTimeUp, onWithdraw }: Props) {
                 </button>
               )}
             </div>
-            {sendError && (
+            {composer.sendError && (
               <p className="error" role="alert">
                 Message not sent. Please try again.
               </p>
@@ -652,24 +165,30 @@ export default function Chat({ client, session, onTimeUp, onWithdraw }: Props) {
             <div className="typing-indicator" aria-live="polite">
               {typingMembers.length > 0
                 ? `${typingMembers.join(", ")} ${typingMembers.length === 1 ? "is" : "are"} typing...`
-                : "\u00a0"}
+                : " "}
             </div>
             <div className="message-input">
-              {mentionOpen && (
-                <ul className="mention-menu" role="listbox">
-                  {mentionCandidates.map((ident, i) => (
+              {composer.mentionOpen && (
+                <ul
+                  id={mentionListId}
+                  className="mention-menu"
+                  role="listbox"
+                  aria-label="Mention a participant"
+                >
+                  {composer.mentionCandidates.map((ident, i) => (
                     <li
                       key={ident.name}
+                      id={mentionOptionId(i)}
                       role="option"
-                      aria-selected={i === mentionIndex}
-                      className={`mention-item ${i === mentionIndex ? "active" : ""}`}
+                      aria-selected={i === composer.mentionIndex}
+                      className={`mention-item ${i === composer.mentionIndex ? "active" : ""}`}
                       // mousedown, not click: keep focus on the input so the
                       // caret restore works and the field never blurs.
                       onMouseDown={(e) => {
                         e.preventDefault();
-                        selectMention(ident.name);
+                        composer.selectMention(ident.name);
                       }}
-                      onMouseEnter={() => setMentionIndex(i)}
+                      onMouseEnter={() => composer.setMentionIndex(i)}
                     >
                       <span
                         className="mention-dot"
@@ -681,18 +200,29 @@ export default function Chat({ client, session, onTimeUp, onWithdraw }: Props) {
                 </ul>
               )}
               <textarea
-                ref={inputRef}
-                placeholder="Type a message"
-                value={input}
-                onChange={(e) =>
-                  updateInput(e.target.value, e.target.selectionStart ?? undefined)
+                ref={composer.inputRef}
+                aria-label="Message"
+                aria-autocomplete="list"
+                aria-controls={composer.mentionOpen ? mentionListId : undefined}
+                aria-activedescendant={
+                  composer.mentionOpen
+                    ? mentionOptionId(composer.mentionIndex)
+                    : undefined
                 }
-                onKeyDown={onInputKeyDown}
+                placeholder="Type a message"
+                value={composer.input}
+                onChange={(e) =>
+                  composer.updateInput(
+                    e.target.value,
+                    e.target.selectionStart ?? undefined,
+                  )
+                }
+                onKeyDown={composer.onInputKeyDown}
                 onPaste={(e) => e.preventDefault()}
                 rows={2}
                 autoFocus
               />
-              <button onClick={() => void sendMessage()} aria-label="Send">
+              <button onClick={() => void composer.sendMessage()} aria-label="Send">
                 ➤
               </button>
             </div>
@@ -716,11 +246,11 @@ export default function Chat({ client, session, onTimeUp, onWithdraw }: Props) {
           onKeyDown={(e) => {
             if (e.key === "ArrowLeft") {
               e.preventDefault();
-              setPanelWidth((w) => clampPanelWidth(w + 24));
+              resizeBy(24);
             }
             if (e.key === "ArrowRight") {
               e.preventDefault();
-              setPanelWidth((w) => clampPanelWidth(w - 24));
+              resizeBy(-24);
             }
           }}
         />
@@ -734,7 +264,7 @@ export default function Chat({ client, session, onTimeUp, onWithdraw }: Props) {
             <div className={`timer ${timerLow ? "low" : ""}`}>
               {remaining === 0
                 ? "Time is up"
-                : `${formatMs(remaining)} left${timerLow ? ", wrap up!" : ""}`}
+                : `${formatMmSs(Math.floor(remaining / 1000))} left${timerLow ? ", wrap up!" : ""}`}
             </div>
           )}
           <section className="briefing">
@@ -759,7 +289,9 @@ export default function Chat({ client, session, onTimeUp, onWithdraw }: Props) {
               config={session.condition.config.externalWorkspace}
             />
           )}
-          {workspaceMode === "etherpad" && session && <EtherpadTask phase="group" sessionId={session.id} />}
+          {workspaceMode === "etherpad" && (
+            <EtherpadTask phase="group" sessionId={session.id} />
+          )}
         </aside>
       )}
     </div>

@@ -15,9 +15,10 @@ The harness exercises:
 - chat messages with send-ack and peer-delivery measurements;
 - cursor telemetry every ten seconds;
 - reactions and shared-ranking edits (note: real participants can no longer
-  send reactions — the UI removed them per study protocol — so the reaction
-  traffic here is extra server-side load, not a model of production traffic;
-  tune with `LOADTEST_REACTION_MIN/MAX_SECONDS`);
+  send reactions — the UI removed them per study protocol and the Chat
+  Service ignores `m.reaction` events — so the reaction traffic here is extra
+  Synapse/sync load, not a model of production traffic; tune with
+  `LOADTEST_REACTION_MIN/MAX_SECONDS`);
 - Chat Service checkpoints and both PostgreSQL databases.
 
 It does not need the application's npm dependencies installed. The runner
@@ -260,7 +261,8 @@ Stop it with `Ctrl-C`.
   rounds' session counts exclude `e2e-` conditions too; they are only visible
   in the dashboard's E2E test-residue section and the raw session list.
 - Further tunables (all `LOADTEST_*`, see the comments in `loadtest/.env.example`
-  and `loadtest/run.sh`): `LOADTEST_MONITOR`, `LOADTEST_OPEN_DASHBOARD`,
+  and `loadtest/run.sh`): `LOADTEST_PROFILE` (used when `run.sh` gets no
+  profile argument; default `smoke`), `LOADTEST_MONITOR`, `LOADTEST_OPEN_DASHBOARD`,
   `LOADTEST_SYSTEM_DASHBOARD_PORT`, `LOADTEST_ENV_FILE`, `LOADTEST_RUN_ID`,
   `LOADTEST_CONDITION_ID`, `LOADTEST_RESULT_DIR`, `LOADTEST_BASE_URL`,
   `LOADTEST_K6_IMAGE`, `LOADTEST_GROUP_SIZE`, `LOADTEST_SYNC_TIMEOUT_MS`,

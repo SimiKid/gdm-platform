@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { Session } from "@gdm/shared";
 import {
   contributionScores,
-  countWords,
   gini,
+  meanMeaningfulnessScore,
   meanOf,
   shareStdDev,
 } from "./equality";
@@ -47,10 +47,15 @@ describe("meanOf", () => {
   });
 });
 
-describe("countWords", () => {
-  it("counts whitespace-separated words", () => {
-    expect(countWords("  hello   there world ")).toBe(3);
-    expect(countWords("")).toBe(0);
+describe("meanMeaningfulnessScore", () => {
+  it("averages the classified messages, null when none were classified", () => {
+    expect(
+      meanMeaningfulnessScore([
+        { meaningfulnessScore: 0.25 },
+        { meaningfulnessScore: 0.75 },
+      ]),
+    ).toBe(0.5);
+    expect(meanMeaningfulnessScore([])).toBeNull();
   });
 });
 

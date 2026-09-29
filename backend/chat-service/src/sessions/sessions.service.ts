@@ -14,9 +14,9 @@ import {
 import type {
   Message,
   Ranking,
-  Reaction,
   StartSessionNotification,
 } from "@gdm/shared";
+import { internalHeaders, positiveInt } from "@gdm/shared/server";
 import {
   MatrixBotService,
   type TimelineEvent,
@@ -25,6 +25,24 @@ import { SessionRuntime } from "./session-runtime";
 import { BOT_RULES } from "../rules/bot-rules.token";
 import type { BotRules } from "../rules/bot-rules";
 import { ModerationClassifier } from "../classifier/moderation-classifier";
+
+const DEFAULT_CHECKPOINT_TIMEOUT_MS = 30_000;
+/** Debounce between a runtime change and the checkpoint write it triggers. */
+const CHECKPOINT_DEBOUNCE_MS = 1000;
+/** Retry delay after a failed finalize callback to the Session Manager. */
+const FINALIZE_RETRY_MS = 5000;
+/**
+ * Minimum time before a restored session is finalised, even when its timer
+ * already ran out while the Chat Service was down: history replay first.
+ */
+const RESTORED_SESSION_MIN_REMAINING_MS = 5000;
+const RECOVERY_TIMEOUT_MS = 15_000;
+/** Retry delay when session recovery failed or left sessions unrecovered. */
+const RECOVERY_RETRY_MS = 5000;
+/** Live sessions restarted in parallel during recovery. */
+const RECOVERY_CONCURRENCY = 8;
+const MODERATION_WARNING =
+  "Your message was removed because it violates the study's conduct policy. Please keep the discussion respectful.";
 
 /**
  * Owns the live sessions the Chat Service is running. Started by the Session
@@ -78,7 +96,7 @@ export class SessionsService
   private shuttingDown = false;
   private readonly checkpointTimeoutMs = positiveInt(
     process.env.CHECKPOINT_TIMEOUT_MS,
-    30_000,
+    DEFAULT_CHECKPOINT_TIMEOUT_MS,
   );
 
   constructor(
@@ -181,7 +199,7 @@ export class SessionsService
       ? Math.max(0, Date.now() - new Date(note.startedAt).getTime())
       : 0;
     const remaining = Math.max(
-      note.checkpoint ? 5000 : 0,
+      note.checkpoint ? RESTORED_SESSION_MIN_REMAINING_MS : 0,
       note.durationMinutes * 60_000 - elapsed,
     );
     this.sessionEndTimers.set(
@@ -266,11 +284,7 @@ export class SessionsService
   private handleEvent(event: TimelineEvent): void {
     const runtime = this.runtimes.get(event.roomId);
     if (!runtime) {
-      if (!this.shuttingDown && !this.retiredRooms.has(event.roomId)) {
-        const pending = this.pendingEvents.get(event.roomId) ?? new Map();
-        pending.set(event.eventId, event);
-        this.pendingEvents.set(event.roomId, pending);
-      }
+      this.bufferPendingEvent(event);
       return;
     }
     if (
@@ -281,163 +295,166 @@ export class SessionsService
       return;
     }
     if (event.sender === this.bot.botUserId || isServiceUser(event.sender)) {
-      // Bot messages belong in the research record (docs/data-export.md
-      // promises recipientId for private nudges), but rules and the
-      // classifier must never run on them, and they never count toward
-      // contribution scores. Recording off the bot's own sync echo keeps the
-      // real Matrix event id/timestamp.
-      if (
-        event.type === "m.room.message" &&
-        !runtime.hasProcessed(event.eventId)
-      ) {
-        runtime.markProcessed(event.eventId);
-        const recipient = event.content[GDM_RECIPIENT_KEY];
-        runtime.recordMessage({
-          id: event.eventId,
-          timestamp: new Date(event.ts).toISOString(),
-          senderId: event.sender,
-          recipientId: typeof recipient === "string" ? recipient : null,
-          text: typeof event.content.body === "string" ? event.content.body : "",
-          reactions: [],
-        });
-        this.scheduleCheckpoint(runtime);
-      }
+      this.recordServiceMessage(runtime, event);
       return;
     }
-    if (runtime.hasProcessed(event.eventId)) {
-      // History replay is also how checkpoints created before reactions had
-      // stable event ids rebuild their redaction index. Do not rerun rules or
-      // duplicate data; only restore reaction/tombstone metadata.
-      if (event.type === "m.reaction") {
-        this.applyReaction(runtime, event);
-      } else if (event.type === "m.room.redaction" && event.redacts) {
-        runtime.removeRedacted(
-          event.redacts,
-          event.eventId,
-          new Date(event.ts).toISOString(),
-        );
-      }
-      return;
-    }
+    // History replay and sync overlap deliver events twice: never rerun rules
+    // or duplicate data.
+    if (runtime.hasProcessed(event.eventId)) return;
     runtime.markProcessed(event.eventId);
 
     switch (event.type) {
-      case "m.room.message": {
-        const body =
-          typeof event.content.body === "string" ? event.content.body : "";
-        const message: Message = {
-          id: event.eventId,
-          timestamp: new Date(event.ts).toISOString(),
-          senderId: event.sender,
-          recipientId: null,
-          text: body,
-          reactions: [],
-        };
-        runtime.recordMessage(message);
+      case "m.room.message":
+        this.recordParticipantMessage(runtime, event);
+        this.moderate(event);
         break;
-      }
-      case "m.reaction": {
-        this.applyReaction(runtime, event);
+      case MATRIX_EVENT_TYPES.ranking:
+        this.recordRanking(runtime, event);
         break;
-      }
-      case "m.room.redaction": {
-        if (event.redacts) {
-          runtime.removeRedacted(
-            event.redacts,
-            event.eventId,
-            new Date(event.ts).toISOString(),
-          );
-        }
+      case MATRIX_EVENT_TYPES.behavior:
+        this.recordBehavior(runtime, event);
         break;
-      }
-      case MATRIX_EVENT_TYPES.ranking: {
-        if (runtime.condition.config.workspaceMode === "etherpad") break;
-        const order = event.content.order;
-        if (Array.isArray(order)) {
-          const ranking = {
-            ...(event.content as unknown as Ranking),
-            eventId: event.eventId,
-          };
-          runtime.recordRanking(ranking);
-          if (ranking.movement) {
-            runtime.recordBehavior({
-              id: `ranking-move:${event.eventId}`,
-              type: "ranking-move",
-              participantId: event.sender,
-              timestamp: new Date(event.ts).toISOString(),
-              payload: {
-                itemId: ranking.movement.itemId,
-                from: ranking.movement.from,
-                to: ranking.movement.to,
-              },
-            });
-          }
-        }
-        break;
-      }
-      case MATRIX_EVENT_TYPES.behavior: {
-        const type = event.content.type;
-        if (
-          type === "typing-start" ||
-          type === "typing-stop" ||
-          type === "tab-hidden" ||
-          type === "tab-visible" ||
-          type === "cursor-activity"
-        ) {
-          runtime.recordBehavior({
-            id: event.eventId,
-            type,
-            participantId: event.sender,
-            timestamp: new Date(event.ts).toISOString(),
-            durationMs:
-              typeof event.content.durationMs === "number"
-                ? event.content.durationMs
-                : undefined,
-            payload:
-              type === "cursor-activity"
-                ? {
-                    sampleCount: Number(event.content.sampleCount ?? 0),
-                    distancePx: Number(event.content.distancePx ?? 0),
-                    lastX: Number(event.content.lastX ?? 0),
-                    lastY: Number(event.content.lastY ?? 0),
-                  }
-                : undefined,
-          });
-        }
-        break;
-      }
     }
+    this.runRules(runtime, event);
+  }
 
-    // Moderation: check participant messages for abusive content. Runs
-    // concurrently — if flagged the message is redacted and a private
-    // warning is sent. Fail-open: API errors never block messages.
-    if (event.type === "m.room.message") {
-      const body =
-        typeof event.content.body === "string" ? event.content.body : "";
-      if (body) {
-        this.moderation
-          .check(body)
-          .then(async (result) => {
-            if (!result.flagged) return;
-            this.log.warn(
-              `moderation flagged message ${event.eventId} from ${event.sender}: ${result.reason}`,
-            );
-            try {
-              await this.bot.redact(event.roomId, event.eventId, "moderation");
-              await this.bot.sendText(event.roomId, "Your message was removed because it violates the study's conduct policy. Please keep the discussion respectful.", {
-                [GDM_RECIPIENT_KEY]: event.sender,
-              });
-            } catch (err) {
-              this.log.error(`moderation redact/warn failed: ${String(err)}`);
+  /** Hold events that arrive before the room's runtime is installed. */
+  private bufferPendingEvent(event: TimelineEvent): void {
+    if (this.shuttingDown || this.retiredRooms.has(event.roomId)) return;
+    const pending = this.pendingEvents.get(event.roomId) ?? new Map();
+    pending.set(event.eventId, event);
+    this.pendingEvents.set(event.roomId, pending);
+  }
+
+  /**
+   * Bot messages belong in the research record (docs/data-export.md promises
+   * recipientId for private nudges), but rules and the classifier must never
+   * run on them, and they never count toward contribution scores. Recording
+   * off the bot's own sync echo keeps the real Matrix event id/timestamp.
+   */
+  private recordServiceMessage(
+    runtime: SessionRuntime,
+    event: TimelineEvent,
+  ): void {
+    if (event.type !== "m.room.message" || runtime.hasProcessed(event.eventId)) {
+      return;
+    }
+    runtime.markProcessed(event.eventId);
+    const recipient = event.content[GDM_RECIPIENT_KEY];
+    runtime.recordMessage({
+      id: event.eventId,
+      timestamp: new Date(event.ts).toISOString(),
+      senderId: event.sender,
+      recipientId: typeof recipient === "string" ? recipient : null,
+      text: messageBody(event),
+      reactions: [],
+    });
+    this.scheduleCheckpoint(runtime);
+  }
+
+  private recordParticipantMessage(
+    runtime: SessionRuntime,
+    event: TimelineEvent,
+  ): void {
+    const message: Message = {
+      id: event.eventId,
+      timestamp: new Date(event.ts).toISOString(),
+      senderId: event.sender,
+      recipientId: null,
+      text: messageBody(event),
+      reactions: [],
+    };
+    runtime.recordMessage(message);
+  }
+
+  private recordRanking(runtime: SessionRuntime, event: TimelineEvent): void {
+    if (runtime.condition.config.workspaceMode === "etherpad") return;
+    if (!Array.isArray(event.content.order)) return;
+    const ranking = {
+      ...(event.content as unknown as Ranking),
+      eventId: event.eventId,
+    };
+    runtime.recordRanking(ranking);
+    if (ranking.movement) {
+      runtime.recordBehavior({
+        id: `ranking-move:${event.eventId}`,
+        type: "ranking-move",
+        participantId: event.sender,
+        timestamp: new Date(event.ts).toISOString(),
+        payload: {
+          itemId: ranking.movement.itemId,
+          from: ranking.movement.from,
+          to: ranking.movement.to,
+        },
+      });
+    }
+  }
+
+  private recordBehavior(runtime: SessionRuntime, event: TimelineEvent): void {
+    const type = event.content.type;
+    if (
+      type !== "typing-start" &&
+      type !== "typing-stop" &&
+      type !== "tab-hidden" &&
+      type !== "tab-visible" &&
+      type !== "cursor-activity"
+    ) {
+      return;
+    }
+    runtime.recordBehavior({
+      id: event.eventId,
+      type,
+      participantId: event.sender,
+      timestamp: new Date(event.ts).toISOString(),
+      durationMs:
+        typeof event.content.durationMs === "number"
+          ? event.content.durationMs
+          : undefined,
+      payload:
+        type === "cursor-activity"
+          ? {
+              sampleCount: Number(event.content.sampleCount ?? 0),
+              distancePx: Number(event.content.distancePx ?? 0),
+              lastX: Number(event.content.lastX ?? 0),
+              lastY: Number(event.content.lastY ?? 0),
             }
-          })
-          .catch((err) => this.log.error(`moderation failed: ${String(err)}`));
-      }
-    }
+          : undefined,
+    });
+  }
 
-    // Start rule work immediately. In particular, independent Anthropic
-    // classifications run concurrently instead of blocking later events or
-    // the fixed window boundary.
+  /**
+   * Moderation: check a participant message for abusive content. Runs
+   * concurrently — if flagged the message is redacted and a private warning
+   * is sent. Fail-open: API errors never block messages.
+   */
+  private moderate(event: TimelineEvent): void {
+    const body = messageBody(event);
+    if (!body) return;
+    this.moderation
+      .check(body)
+      .then(async (result) => {
+        if (!result.flagged) return;
+        this.log.warn(
+          `moderation flagged message ${event.eventId} from ${event.sender}: ${result.reason}`,
+        );
+        try {
+          await this.bot.redact(event.roomId, event.eventId, "moderation");
+          await this.bot.sendText(event.roomId, MODERATION_WARNING, {
+            [GDM_RECIPIENT_KEY]: event.sender,
+          });
+        } catch (err) {
+          this.log.error(`moderation redact/warn failed: ${String(err)}`);
+        }
+      })
+      .catch((err) => this.log.error(`moderation failed: ${String(err)}`));
+  }
+
+  /**
+   * Start rule work immediately. In particular, independent Anthropic
+   * classifications run concurrently instead of blocking later events or the
+   * fixed window boundary.
+   */
+  private runRules(runtime: SessionRuntime, event: TimelineEvent): void {
     const requests = this.ruleRequests.get(event.roomId) ?? new Set<Promise<void>>();
     this.ruleRequests.set(event.roomId, requests);
     const request = Promise.resolve()
@@ -449,20 +466,6 @@ export class SessionsService
         this.scheduleCheckpoint(runtime);
       });
     requests.add(request);
-  }
-
-  private applyReaction(runtime: SessionRuntime, event: TimelineEvent): void {
-    const rel = event.content["m.relates_to"] as
-      | { rel_type?: string; event_id?: string; key?: string }
-      | undefined;
-    if (rel?.rel_type !== "m.annotation" || !rel.event_id || !rel.key) return;
-    const reaction: Reaction = {
-      eventId: event.eventId,
-      key: rel.key,
-      senderId: event.sender,
-      timestamp: new Date(event.ts).toISOString(),
-    };
-    runtime.addReaction(event.eventId, rel.event_id, reaction);
   }
 
   /** Finalise: send the collected discussion back to the Session Manager. */
@@ -503,7 +506,7 @@ export class SessionsService
       this.finalizingRooms.delete(roomId);
       this.sessionEndTimers.set(
         roomId,
-        setTimeout(() => void this.endSession(roomId), 5000),
+        setTimeout(() => void this.endSession(roomId), FINALIZE_RETRY_MS),
       );
       return;
     }
@@ -532,7 +535,7 @@ export class SessionsService
     }
     this.checkpointTimers.set(
       runtime.roomId,
-      setTimeout(() => this.flushCheckpoint(runtime), 1000),
+      setTimeout(() => this.flushCheckpoint(runtime), CHECKPOINT_DEBOUNCE_MS),
     );
   }
 
@@ -599,11 +602,11 @@ export class SessionsService
         method: "POST",
         headers: internalHeaders(),
         body: JSON.stringify({ botUserId: this.bot.botUserId }),
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.timeout(RECOVERY_TIMEOUT_MS),
       });
       if (!res.ok) throw new Error(`status ${res.status}`);
       const notes = (await res.json()) as StartSessionNotification[];
-      await forEachConcurrent(notes, 8, async (note) => {
+      await forEachConcurrent(notes, RECOVERY_CONCURRENCY, async (note) => {
         if (this.shuttingDown || this.runtimes.has(note.roomId)) return;
         try {
           await this.startSession(note);
@@ -632,14 +635,8 @@ export class SessionsService
     this.recoveryTimer = setTimeout(() => {
       this.recoveryTimer = undefined;
       void this.recoverSessions();
-    }, 5000);
+    }, RECOVERY_RETRY_MS);
   }
-
-}
-
-function positiveInt(value: string | undefined, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
 async function forEachConcurrent<T>(
@@ -662,11 +659,6 @@ async function forEachConcurrent<T>(
   await Promise.all(workers);
 }
 
-/** Headers for service-to-service calls (shared INTERNAL_API_TOKEN, if set). */
-function internalHeaders(): Record<string, string> {
-  const token = process.env.INTERNAL_API_TOKEN;
-  return {
-    "Content-Type": "application/json",
-    ...(token ? { "x-internal-token": token } : {}),
-  };
+function messageBody(event: TimelineEvent): string {
+  return typeof event.content.body === "string" ? event.content.body : "";
 }

@@ -159,7 +159,6 @@ export default function AboutYouPage({ onContinue, onIneligible }: Props) {
 
       <Likert
         name="gender"
-        layout="list"
         legend="What is your gender?"
         options={GENDER_OPTIONS}
         value={gender}
@@ -182,7 +181,6 @@ export default function AboutYouPage({ onContinue, onIneligible }: Props) {
 
       <Likert
         name="education"
-        layout="list"
         legend="What is the highest level of education you have completed?"
         options={EDUCATION_OPTIONS}
         value={education}
@@ -205,7 +203,6 @@ export default function AboutYouPage({ onContinue, onIneligible }: Props) {
 
       <Likert
         name="english"
-        layout="list"
         legend="What is your level of English proficiency?"
         options={ENGLISH_OPTIONS}
         value={english}

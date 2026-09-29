@@ -17,9 +17,10 @@ export default defineConfig({
       include: ["src/**/*.{ts,tsx}"],
       exclude: [
         "src/**/*.spec.{ts,tsx}",
+        "src/**/*.d.ts",
         "src/main.tsx",
         "src/test-setup.ts",
-        "src/vite-env.d.ts",
+        "src/test-utils.ts",
         // Owned by the Playwright e2e suite: App wires the whole study flow
         // together and WaitingRoom boots a real Matrix client against
         // Synapse; DinoGame is a canvas/requestAnimationFrame loop with no

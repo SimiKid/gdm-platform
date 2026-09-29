@@ -5,6 +5,7 @@ import {
 } from "@gdm/shared";
 import type { Condition, Session, Survey } from "@gdm/shared";
 import { StoreService } from "../store/store.service";
+import type { EtherpadService } from "../etherpad/etherpad.service";
 import { ReportsService } from "./reports.service";
 import { pseudonymize } from "./pseudonym";
 
@@ -397,44 +398,10 @@ describe("ReportsService (in-memory store)", () => {
     expect(csv).toContain(session.id);
   });
 
-  it("summarizes per condition over completed sessions", async () => {
-    const summary = await reports.summary();
-    const row = summary.conditions.find(
-      (item) => item.conditionId === "private-llm-test",
-    );
-    expect(row).toMatchObject({
-      interventionMode: "private",
-      llmMode: "active",
-      sessionsCompleted: 1,
-      participants: 2,
-      entrySurveys: 2,
-      exitSurveys: 1,
-      meanGroupRankingError: 0,
-      meanIndividualRankingError: 0,
-      meanExitRankingError: 50,
-      meanSatisfaction: 6,
-      nudgesTotal: 1,
-      nudgesPerSessionMean: 1,
-      windowsEvaluated: 2,
-      windowsNudged: 1,
-    });
-    // Seeded default conditions appear with zero data rather than vanishing.
-    expect(
-      summary.conditions.some((item) => item.conditionId === "baseline"),
-    ).toBe(true);
-  });
-
-  it("excludes aborted sessions from summary means but keeps them in exports", async () => {
+  it("keeps aborted sessions in exports", async () => {
     const aborted = await seedSession(store, condition("private-llm-test"));
     aborted.status = "aborted";
     await store.saveSession(aborted);
-
-    const summary = await reports.summary();
-    const row = summary.conditions.find(
-      (item) => item.conditionId === "private-llm-test",
-    )!;
-    expect(row.sessionsCompleted).toBe(1);
-    expect(row.sessionsAborted).toBe(1);
 
     const { sessions } = await reports.exportSessionsAnalysis();
     expect(sessions.map((item) => item.status).sort()).toEqual([
@@ -478,15 +445,6 @@ describe("ReportsService (in-memory store)", () => {
     expect(windowsCsv.split("\n")[0]).toContain(",round,");
     expect(windowsCsv).not.toContain(pseudonymize("S", session.id));
 
-    // A rounds-only filter still lists every condition in the summary.
-    const summary = await reports.summary({ roundIds: [2] });
-    const row = summary.conditions.find(
-      (item) => item.conditionId === "private-llm-test",
-    );
-    expect(row?.sessionsCompleted).toBe(1);
-    expect(
-      summary.conditions.some((item) => item.conditionId === "baseline"),
-    ).toBe(true);
   });
 
   it("exports raw ranking orders with editors, edit history, and item ranks", async () => {
@@ -550,5 +508,94 @@ describe("ReportsService (in-memory store)", () => {
       expect(listing).toContain(name);
     }
     expect(listing).not.toContain("linkage");
+  });
+
+  it("labels legacy tone-suffixed modes with their canonical arm", async () => {
+    session.condition.config.interventionMode =
+      "public-engaging" as Condition["config"]["interventionMode"];
+    const { participants } = await reports.exportParticipants();
+    expect(participants[0].interventionMode).toBe("public");
+    const { sessions } = await reports.exportSessionsAnalysis();
+    expect(sessions[0].interventionMode).toBe("public");
+    const { windows } = await reports.exportWindows();
+    expect(windows[0].interventionMode).toBe("public");
+  });
+
+  it("maps every exit item in results.csv by name", async () => {
+    const keys = [
+      "groupConsidered", "groupBalanced", "attentionCheck1", "groupDominated",
+      "feltTeam", "comfortableAgain", "safeSpeakUp", "raiseConcerns",
+      "contradicted", "attentionCheck2", "contributionSerious",
+      "contributionInfluenced", "heldBack",
+    ];
+    session.participants[0].exitSurvey = exitSurvey(
+      Object.fromEntries(keys.map((key) => [key, `v-${key}`])),
+    );
+    const [header, p1] = (await reports.exportResultsCsv())
+      .split("\n")
+      .map((line) => line.split(","));
+    const value = (column: string) => p1[header.indexOf(column)];
+    expect(
+      [
+        "groupcoh1", "groupcoh2", "groupcoh3", "groupcoh4", "groupcoh5",
+        "psysafe1", "psysafe2", "psysafe3", "psysafe4", "psysafe5", "psysafe6",
+        "attention1", "attention2",
+      ].map(value),
+    ).toEqual(
+      [
+        "groupConsidered", "groupBalanced", "groupDominated", "feltTeam",
+        "comfortableAgain", "safeSpeakUp", "raiseConcerns", "contradicted",
+        "contributionSerious", "contributionInfluenced", "heldBack",
+        "attentionCheck1", "attentionCheck2",
+      ].map((key) => `v-${key}`),
+    );
+    expect(value("group_id")).toBe(session.id);
+    expect(value("intervention_id")).toBe("i1");
+  });
+
+  it("links each repeated nudge text to its own intervention", async () => {
+    const nudge = session.interventions[0];
+    const template = "Let's hear from everyone.";
+    session.interventions.push(
+      { ...nudge, id: "i2", audience: "public", timestamp: "2026-07-30T10:20:00.000Z", message: template },
+      { ...nudge, id: "i3", audience: "public", timestamp: "2026-07-30T10:24:00.000Z", message: template },
+    );
+    session.chat.messages.push(
+      { id: "m4", timestamp: "2026-07-30T10:20:00.000Z", senderId: BOT, recipientId: null, text: template, reactions: [] },
+      { id: "m5", timestamp: "2026-07-30T10:24:00.000Z", senderId: BOT, recipientId: null, text: template, reactions: [] },
+      { id: "m6", timestamp: "2026-07-30T10:25:00.000Z", senderId: BOT, recipientId: null, text: "unrelated", reactions: [] },
+    );
+    const [header, ...rows] = (await reports.exportMessagesFlatCsv())
+      .split("\n")
+      .map((line) => line.split(","));
+    const column = (name: string) => header.indexOf(name);
+    const interventionOf = Object.fromEntries(
+      rows.map((row) => [row[column("message_id")], row[column("intervention_id")]]),
+    );
+    expect(interventionOf).toEqual({ m1: "", m2: "", m3: "i1", m4: "i2", m5: "i3", m6: "" });
+    for (const row of rows) {
+      expect(row[column("group_id")]).toBe(row[column("session_id")]);
+    }
+  });
+
+  it("zips results, messages and Etherpad texts for the Overview download", async () => {
+    session.condition.config.workspaceMode = "etherpad";
+    const documents = vi.fn(async () => [
+      { id: "gdm-pad", phase: "group", deadline: "2026-07-30T10:35:00.000Z", state: "captured", text: "group text", revision: 3, sessionId: session.id },
+      { id: "gdm-other", phase: "group", deadline: "2026-07-30T10:35:00.000Z", state: "captured", text: "other", revision: 1, sessionId: "elsewhere" },
+    ]);
+    const withPads = new ReportsService(store, { documents } as unknown as EtherpadService);
+    const zip = await withPads.bundleResearchDataZip();
+    expect(zip.subarray(0, 2).toString()).toBe("PK");
+    const listing = zip.toString("latin1");
+    for (const name of ["results.csv", "messages.csv", "etherpad.csv"]) {
+      expect(listing).toContain(name);
+    }
+    expect(documents).toHaveBeenCalledTimes(1);
+    const { pads } = await withPads.exportEtherpad();
+    expect(pads.map((pad) => pad.padPseudonym)).toEqual([pseudonymize("D", "gdm-pad")]);
+
+    const withoutPads = await reports.bundleResearchDataZip();
+    expect(withoutPads.toString("latin1")).not.toContain("etherpad.csv");
   });
 });

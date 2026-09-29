@@ -5,7 +5,7 @@ import {
   Logger,
   UnauthorizedException,
 } from "@nestjs/common";
-import { timingSafeEqual } from "node:crypto";
+import { INTERNAL_TOKEN_HEADER, checkInternalToken } from "@gdm/shared/server";
 
 interface IncomingRequest {
   headers: Record<string, string | string[] | undefined>;
@@ -22,8 +22,9 @@ export class InternalGuard implements CanActivate {
   private readonly log = new Logger(InternalGuard.name);
 
   canActivate(context: ExecutionContext): boolean {
-    const expected = process.env.INTERNAL_API_TOKEN;
-    if (!expected) {
+    const req = context.switchToHttp().getRequest<IncomingRequest>();
+    const result = checkInternalToken(req.headers[INTERNAL_TOKEN_HEADER]);
+    if (result === "open") {
       if (!InternalGuard.warned) {
         InternalGuard.warned = true;
         this.log.warn(
@@ -32,17 +33,7 @@ export class InternalGuard implements CanActivate {
       }
       return true;
     }
-    const req = context.switchToHttp().getRequest<IncomingRequest>();
-    const provided = req.headers["x-internal-token"];
-    if (typeof provided === "string" && safeEqual(provided, expected)) {
-      return true;
-    }
+    if (result === "allowed") return true;
     throw new UnauthorizedException("Internal token required");
   }
-}
-
-function safeEqual(provided: string, expected: string): boolean {
-  const left = Buffer.from(provided);
-  const right = Buffer.from(expected);
-  return left.length === right.length && timingSafeEqual(left, right);
 }
