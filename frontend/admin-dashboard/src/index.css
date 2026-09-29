@@ -384,6 +384,21 @@ tbody tr:last-child td {
   background: #eef4fc;
 }
 
+.clickable.selected > td {
+  border-bottom-color: #d9e0ea;
+}
+
+.detail-row > td {
+  background: #fbfcfe;
+  border-bottom: 2px solid #d9e0ea;
+  border-left: 3px solid #1c7ed6;
+  padding: 16px 18px 20px;
+}
+
+.detail-row .session-detail {
+  margin-top: 0;
+}
+
 .bar {
   width: 100%;
   max-width: 420px;
@@ -484,6 +499,8 @@ tbody tr:last-child td {
   border-radius: 999px;
   background: #c9d2df;
   transition: background 0.15s ease;
+  /* Decorative: clicks go straight to the (transparent) checkbox beneath. */
+  pointer-events: none;
 }
 
 .switch .knob::after {
@@ -579,6 +596,75 @@ tbody tr:last-child td {
 .pill.done {
   background: #e3effb;
   color: #1c7ed6;
+}
+
+/* ── Testing tab ─────────────────────────────────── */
+
+.active-tests {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.active-tests li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 6px 0;
+  border-top: 1px solid #f3d6d6;
+}
+
+.active-tests .muted {
+  display: inline;
+}
+
+.test-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.show-all {
+  margin-top: 10px;
+}
+
+.test-warning {
+  border-color: #ffc9c9;
+  background: #fff5f5;
+}
+
+.test-warning > .bad {
+  margin-top: 0;
+  font-size: 0.88rem;
+}
+
+.test-warning > button {
+  margin-top: 10px;
+}
+
+.test-summary {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  font-size: 0.88rem;
+}
+
+.test-summary li {
+  padding: 3px 0;
+}
+
+.test-summary li.ok,
+.test-summary li.bad {
+  margin-top: 0;
+  font-size: inherit;
+}
+
+.section code {
+  border-radius: 4px;
+  background: #eef2f7;
+  font-size: 0.82em;
+  padding: 1px 5px;
 }
 
 /* ── Shared session & bot parameters ───────────────── */
@@ -780,24 +866,81 @@ tbody tr:last-child td {
   font-size: 0.88rem;
 }
 
-.session-head strong {
-  font-size: 1rem;
+/* Participant table beside a single column of fact tiles; wraps when narrow. */
+.session-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
 }
 
-.legend {
+.table-wrap.fit {
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+
+.table-wrap.fit table {
+  width: auto;
+}
+
+.participants th,
+.participants td {
+  padding: 8px 14px;
+  white-space: nowrap;
+}
+
+.participants th:not(:first-child),
+.participants td:not(:first-child) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.participants .swatch {
+  margin-right: 8px;
+  vertical-align: -1px;
+}
+
+.participants tfoot td {
+  border-top: 1px solid #d9e0ea;
+  border-bottom: 0;
+  background: #f8fafc;
+  font-weight: 650;
+}
+
+.participants tfoot .muted {
+  font-weight: 400;
+}
+
+.detail.facts {
+  flex: 1 1 240px;
+  grid-template-columns: 1fr;
+}
+
+.chart-key {
   list-style: none;
-  margin: 0 0 12px;
+  margin: 6px 0 0;
   padding: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 20px;
-  font-size: 0.85rem;
+  gap: 4px 18px;
+  color: #45566e;
+  font-size: 0.78rem;
 }
 
-.legend li {
+.chart-key li {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+}
+
+.basis-note {
+  margin: 0 0 8px;
+  border-left: 3px solid #f1d28a;
+  background: #fffaeb;
+  color: #5c4a14;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  padding: 6px 10px;
 }
 
 .swatch {
@@ -824,7 +967,7 @@ tbody tr:last-child td {
   overflow-x: auto;
 }
 
-.timeline svg {
+.timeline > svg {
   display: block;
   width: 100%;
   min-width: 640px;
@@ -832,7 +975,7 @@ tbody tr:last-child td {
   font-family: inherit;
 }
 
-.timeline svg:focus-visible {
+.timeline > svg:focus-visible {
   outline: 2px solid #1c7ed6;
   outline-offset: 2px;
   border-radius: 4px;

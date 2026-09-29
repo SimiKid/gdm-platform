@@ -86,6 +86,8 @@ describe("nudgeComparisons", () => {
   it("compares the triggering window with the next evaluated window", () => {
     const [c] = nudgeComparisons(session());
     expect(c.windowIndex).toBe(0);
+    expect(c.basis).toBe("window");
+    expect(c.afterUntil).toBeNull();
     expect(c.activeBefore).toBe(2);
     expect(c.activeAfter).toBe(3);
     expect(c.rows).toHaveLength(2);
@@ -111,24 +113,45 @@ describe("nudgeComparisons", () => {
     s.windowEvaluations![0].interventionId = null;
     const [c] = nudgeComparisons(s);
     expect(c.windowIndex).toBe(0);
-    expect(c.rows[0].after).not.toBeNull();
+    expect(c.basis).toBe("window");
   });
 
-  it("reports no later window when the nudge fell in the last evaluated window", () => {
+  it("falls back to message shares over the rest of the chat when no later window exists", () => {
+    // The default timing (3 min warm-up, 4 min windows, 10 min chat) only
+    // ever evaluates one window, so this is the common case in the study.
     const s = session();
     s.windowEvaluations = s.windowEvaluations!.filter((w) => w.windowIndex === 0);
     const [c] = nudgeComparisons(s);
     expect(c.windowIndex).toBe(0);
-    expect(c.activeAfter).toBeNull();
-    expect(c.rows[0]).toMatchObject({ after: null, deltaShare: null, deltaMessages: null });
+    expect(c.basis).toBe("messages");
+    expect(c.live).toBe(false);
+    expect(c.afterUntil).toBe(Date.parse("2026-09-01T10:10:00.000Z"));
+    // Before: the window's message counts (Red 2, Blue 1, Green 0). After:
+    // m4 (Red), m5 (Green), m6 (Blue) — the bot's own message is not counted.
+    expect(c.rows[0]).toMatchObject({ name: "Red", before: { messageCount: 2 }, after: { messageCount: 1 }, deltaMessages: -1 });
+    expect(c.rows[0].before.share).toBeCloseTo(2 / 3);
+    expect(c.rows[0].after.share).toBeCloseTo(1 / 3);
+    expect(c.rows[1]).toMatchObject({ name: "Green", before: { share: 0, messageCount: 0 }, after: { messageCount: 1 } });
+    expect(c.activeBefore).toBe(2);
+    expect(c.activeAfter).toBe(3);
+  });
+
+  it("counts a live session's fallback only up to now", () => {
+    const s = session({ status: "running", completedAt: undefined, windowEvaluations: [] });
+    const [c] = nudgeComparisons(s, Date.parse("2026-09-01T10:04:30.000Z"));
+    expect(c.live).toBe(true);
+    expect(c.afterUntil).toBe(Date.parse("2026-09-01T10:04:30.000Z"));
+    expect(c.rows[0].after).toEqual({ share: 1, messageCount: 1, dominanceScore: 0 });
+    expect(c.activeAfter).toBe(1);
   });
 
   it("still shows the before split when no window records exist at all", () => {
     const s = session({ windowEvaluations: [] });
     const [c] = nudgeComparisons(s);
     expect(c.windowIndex).toBeNull();
-    expect(c.rows[0].before).toEqual({ share: 0.67, messageCount: 2, dominanceScore: 0.67 });
-    expect(c.rows[0].after).toBeNull();
+    expect(c.basis).toBe("messages");
+    expect(c.rows[0].before.messageCount).toBe(2);
+    expect(c.rows[0].before.share).toBeCloseTo(2 / 3);
   });
 });
 

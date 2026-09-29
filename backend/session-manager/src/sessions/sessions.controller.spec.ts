@@ -44,6 +44,8 @@ describe("SessionsController", () => {
     listConditions: async () => [{ id: "c1", name: "C1", goal: 5 }],
     upsertCondition: vi.fn(async (condition) => condition),
     completedCount: async () => 2,
+    conditionCreatedAt: async () =>
+      new Map([["c1", "2026-09-01T10:00:00.000Z"]]),
     listProlificArrivals: vi.fn(async () => []),
     currentRound: async () => ({ id: 1, label: "", startedAt: "now" }),
     listParticipationOutcomes: vi.fn(async () => []),
@@ -142,7 +144,11 @@ describe("SessionsController", () => {
 
   it("progress maps completed count and goal per condition", async () => {
     const progress = await ctrl.progress();
-    expect(progress[0]).toMatchObject({ completed: 2, goal: 5 });
+    expect(progress[0]).toMatchObject({
+      completed: 2,
+      goal: 5,
+      createdAt: "2026-09-01T10:00:00.000Z",
+    });
   });
 
   it("upsertCondition updates through the store", async () => {
@@ -158,7 +164,6 @@ describe("SessionsController", () => {
         contributionThreshold: 0.4,
         protectedStartMinutes: 3,
         protectedEndMinutes: 2,
-        inviteGraceSeconds: 60,
         contributionWindowMinutes: 4,
         scoreWeights: { messages: 1, words: 0.05 },
         dominanceWeights: { share: 0.9, meaningfulness: 0.1 },

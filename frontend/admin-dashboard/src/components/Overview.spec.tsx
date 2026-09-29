@@ -72,22 +72,34 @@ describe("Overview", () => {
 describe("SessionsTable", () => {
   const detail: Session = session();
 
-  it("opens a session inspector on click, refreshes it with the poll, and closes on a second click", async () => {
+  it("expands a session inline on click, refreshes it with the poll, and collapses on a second click", async () => {
     const user = userEvent.setup();
     const fetchMock = mockApi({ [`/admin/sessions/${detail.id}`]: detail });
-    const sessions = [sessionSummary({ status: "waiting", startedAt: undefined, completedAt: undefined })];
+    const sessions = [
+      sessionSummary({ status: "waiting", startedAt: undefined, completedAt: undefined }),
+      sessionSummary({ id: "other-session" }),
+    ];
     const { rerender } = render(<SessionsTable sessions={sessions} title="E2E Test Sessions" label="E2E" />);
 
     expect(screen.getByRole("heading", { name: "E2E Test Sessions" })).toBeInTheDocument();
-    const row = within(screen.getByLabelText("E2E")).getAllByRole("row")[1];
+    const list = screen.getByLabelText("E2E");
+    expect(list).toHaveClass("compact");
+    const row = within(list).getAllByRole("row")[1];
     expect(within(row).getByText("lobby")).toHaveClass("status", "waiting");
     expect(within(row).getAllByText("not yet")).toHaveLength(2);
 
     await user.click(row);
-    const messages = await screen.findByText("Messages");
-    expect(messages.nextElementSibling).toHaveTextContent("6");
+    const participants = await screen.findByLabelText("Participants");
+    // The inspector unfolds directly under the clicked row, above the next
+    // session, and the list drops its height cap while it is open.
+    const expanded = row.nextElementSibling as HTMLElement;
+    expect(expanded).toHaveClass("detail-row");
+    expect(expanded).toContainElement(participants);
+    expect(expanded.nextElementSibling).toHaveTextContent("other-se");
+    expect(list).not.toHaveClass("compact");
+    expect(within(participants).getByText("All").nextElementSibling).toHaveTextContent("6 + 1 bot");
     expect(screen.getByText("bot public")).toBeInTheDocument();
-    expect(within(screen.getByLabelText("Participants")).getByText("Red")).toBeInTheDocument();
+    expect(within(participants).getByText("Red")).toBeInTheDocument();
     expect(screen.getByText("Nudges").nextElementSibling).toHaveTextContent("1");
     expect(screen.getByText("Ranking edits").nextElementSibling).toHaveTextContent("2");
     expect(screen.getByText("!room:localhost")).toBeInTheDocument();
@@ -100,8 +112,10 @@ describe("SessionsTable", () => {
       expect(calledPaths(fetchMock).filter((p) => p.startsWith("/admin/sessions/")).length).toBeGreaterThanOrEqual(2),
     );
 
-    await user.click(within(screen.getByLabelText("E2E")).getAllByRole("row")[1]);
-    await waitFor(() => expect(screen.queryByText("Bot mode")).toBeNull());
+    await user.click(row);
+    await waitFor(() => expect(screen.queryByLabelText("Participants")).toBeNull());
+    expect(row.nextElementSibling).not.toHaveClass("detail-row");
+    expect(list).toHaveClass("compact");
   });
 
   it("ignores a failed detail fetch", async () => {
@@ -110,6 +124,6 @@ describe("SessionsTable", () => {
     render(<SessionsTable sessions={[sessionSummary({ id: "x" })]} />);
     await user.click(screen.getAllByRole("row")[1]);
     await waitFor(() => expect(fetch).toHaveBeenCalled());
-    expect(screen.queryByText("Bot mode")).toBeNull();
+    expect(screen.queryByLabelText("Participants")).toBeNull();
   });
 });

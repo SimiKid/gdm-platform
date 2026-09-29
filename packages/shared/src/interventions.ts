@@ -87,12 +87,6 @@ export interface InterventionConfig {
    */
   protectedEndMinutes: number;
   /**
-   * Self-correction grace period: once a participant's classified message
-   * invites others to participate, they cannot be flagged for this many
-   * seconds. Only effective while the classifier is active.
-   */
-  inviteGraceSeconds: number;
-  /**
    * Length of the contribution window. At the end of every window the bot
    * evaluates the split over that window and nudges at most once.
    */
@@ -101,8 +95,9 @@ export interface InterventionConfig {
   dominanceWeights: DominanceWeights;
   /**
    * Semantic classifier mode. `active` folds the meaningfulness score into
-   * the dominance score (rule + LLM detection) and is what both nudging arms
-   * use. `off` (raw contribution share, no classifier calls) is reserved for
+   * the dominance score (rule + LLM detection) and excludes messages
+   * classified as invitations from the contribution split; it is what both
+   * nudging arms use. `off` (raw contribution share, no classifier calls) is reserved for
    * the silent baseline, where nothing is delivered anyway. Not a study axis.
    */
   llmMode?: "off" | "active";
@@ -111,8 +106,16 @@ export interface InterventionConfig {
 export interface ContributionShare {
   userId: string;
   identityName: string;
+  /** Counted messages: classified invitations are excluded (LLM active). */
   messageCount: number;
+  /** Words of the counted messages. */
   wordCount: number;
+  /**
+   * Messages left out of the split because the classifier marked them as
+   * invitations (always 0 when the LLM is off). Absent on records made
+   * before invitations were excluded.
+   */
+  invitationCount?: number;
   score: number;
   /** Raw contribution share (0..1 across the group). Shown in nudges. */
   share: number;
@@ -151,8 +154,6 @@ export interface InterventionLog {
  *
  * - `nudged` — a nudge fired; `interventionId` links the InterventionLog.
  * - `no-target` — split computed, nobody over the threshold.
- * - `grace-suppressed` — someone was over the threshold but every candidate
- *   was inside the invite grace period.
  * - `baseline-suppressed` — baseline arm: a candidate existed but the
  *   audience is "none", so nothing was delivered (counterfactual record).
  * - `warm-up` / `wrap-up` — boundary inside a protected phase; no split.
@@ -161,7 +162,6 @@ export interface InterventionLog {
 export type WindowOutcome =
   | "nudged"
   | "no-target"
-  | "grace-suppressed"
   | "baseline-suppressed"
   | "warm-up"
   | "wrap-up"
@@ -187,7 +187,7 @@ export interface WindowEvaluation {
   outcome: WindowOutcome;
   /** Per-participant split over this window; [] when no split was computed. */
   contributionSplit: ContributionShare[];
-  /** Members over the threshold BEFORE grace filtering (would-have-fired). */
+  /** Members over the threshold, highest dominance first (would-have-fired). */
   candidateTargets: InterventionTarget[];
   /** Highest dominance score in the split; null when no split was computed. */
   maxDominanceScore: number | null;
@@ -201,7 +201,6 @@ export const DEFAULT_INTERVENTION_CONFIG: InterventionConfig = {
   contributionThreshold: 0.4,
   protectedStartMinutes: 3,
   protectedEndMinutes: 2,
-  inviteGraceSeconds: 60,
   contributionWindowMinutes: 4,
   scoreWeights: {
     messages: 1,

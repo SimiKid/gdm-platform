@@ -65,13 +65,20 @@ test("@validation participant forms explain and block incomplete answers", async
     await continueButton.click();
   });
 
-  await test.step("attitudes page requires all items", async () => {
+  await test.step("attitudes pages require all items", async () => {
     const continueButton = page.getByRole("button", { name: "Continue" });
-    await expect(continueButton).toBeDisabled();
-    // Fill all matrix radios (AI + personality)
-    for (const radio of await page.getByRole("radio", { name: /: Disagree strongly$/i }).all()) {
-      await radio.check();
+    // Attitudes & Traits 1/2 (AI) then 2/2 (personality), one matrix each.
+    for (let screenIndex = 0; screenIndex < 2; screenIndex++) {
+      await expect(continueButton).toBeDisabled();
+      const radios = await page.getByRole("radio", { name: /: Disagree strongly$/i }).all();
+      for (const radio of radios.slice(0, -1)) await radio.check();
+      await expect(continueButton).toBeDisabled();
+      await radios[radios.length - 1].check();
+      await expect(continueButton).toBeEnabled();
+      await continueButton.click();
     }
+    // Skills & Experience single items.
+    await expect(continueButton).toBeDisabled();
     await page
       .getByRole("group", { name: /work in teams/ })
       .getByRole("radio", { name: "Sometimes" })

@@ -19,7 +19,11 @@ async function questionnaires(page: Page, conditionId: string) {
   await page.getByRole("radio", { name: "Bachelor's degree" }).check();
   await page.getByRole("radio", { name: "Fluent (advanced)" }).check();
   await page.getByRole("button", { name: "Continue", exact: true }).click();
-  for (const radio of await page.getByRole("radio", { name: /: Disagree strongly$/i }).all()) await radio.check();
+  // Attitudes & Traits 1/2 (AI) and 2/2 (personality), then Skills & Experience.
+  for (let screen = 0; screen < 2; screen++) {
+    for (const radio of await page.getByRole("radio", { name: /: Disagree strongly$/i }).all()) await radio.check();
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+  }
   await page.getByRole("group", { name: /work in teams/ }).getByRole("radio", { name: "Sometimes" }).check();
   await page.getByRole("group", { name: /communicating via text chat/ }).getByRole("radio", { name: "Rather comfortable" }).check();
   await page.getByRole("group", { name: /spaceflight-related/ }).getByRole("radio", { name: "Rather unfamiliar" }).check();

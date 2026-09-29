@@ -46,5 +46,5 @@ See [docs/getting-started.md](docs/getting-started.md) for prerequisites, ports,
 
 ## Current Deferrals
 
-- Purely LLM-triggered interventions — nudges stay window-triggered in all arms; in the nudging arms the live classifier feeds the dominance score and invite grace, but never fires a nudge on its own
+- Purely LLM-triggered interventions — nudges stay window-triggered in all arms; in the nudging arms the live classifier feeds the dominance score and excludes invitation messages from the contribution split, but never fires a nudge on its own
 - Matrix appservice registration for the bot

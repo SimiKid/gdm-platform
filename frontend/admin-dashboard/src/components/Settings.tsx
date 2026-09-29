@@ -252,7 +252,7 @@ function RoundRow({
   );
 }
 
-async function putCondition(condition: Condition): Promise<Condition> {
+export async function putCondition(condition: Condition): Promise<Condition> {
   const res = await apiFetch(`/conditions/${condition.id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -270,7 +270,7 @@ const DELIVERY_LABELS: Record<string, string> = {
   private: "🔒 Private",
 };
 
-function ArmBadges({ condition }: { condition: Condition }) {
+export function ArmBadges({ condition }: { condition: Condition }) {
   const mode = condition.config.interventionMode;
   return (
     <span className="arm-badges">
@@ -279,17 +279,7 @@ function ArmBadges({ condition }: { condition: Condition }) {
   );
 }
 
-/** Also used by the Testing view to switch off E2E residue conditions. */
-/**
- * `offOnly` is the Testing tab's mode for e2e residue: an active test
- * condition can be switched off, but nothing can be switched on or edited,
- * because an active `e2e-` arm would recruit real participants.
- */
-export function RecruitingTable({
-  rows,
-  onSaved,
-  offOnly = false,
-}: Props & { offOnly?: boolean }) {
+export function RecruitingTable({ rows, onSaved }: Props) {
   if (rows.length === 0) return null;
   return (
     <div className="table-wrap" aria-label="Recruiting">
@@ -309,7 +299,6 @@ export function RecruitingTable({
               key={row.condition.id}
               row={row}
               onSaved={onSaved}
-              offOnly={offOnly}
             />
           ))}
         </tbody>
@@ -321,11 +310,9 @@ export function RecruitingTable({
 function RecruitingRow({
   row,
   onSaved,
-  offOnly,
 }: {
   row: ConditionProgress;
   onSaved: () => void;
-  offOnly: boolean;
 }) {
   const [goal, setGoal] = useState(row.condition.goal);
   const [state, setState] = useState<SaveState>("idle");
@@ -365,18 +352,10 @@ function RecruitingRow({
         <ArmBadges condition={condition} />
       </td>
       <td>
-        <label
-          className="switch"
-          title={
-            offOnly && !condition.active
-              ? "Test conditions cannot be switched on from the dashboard"
-              : "Toggle recruiting"
-          }
-        >
+        <label className="switch" title="Toggle recruiting">
           <input
             type="checkbox"
             checked={condition.active}
-            disabled={offOnly && !condition.active}
             onChange={(e) =>
               void save({ ...condition, active: e.target.checked })
             }
@@ -400,7 +379,6 @@ function RecruitingRow({
           type="number"
           min={0}
           value={Number.isFinite(goal) ? goal : 0}
-          disabled={offOnly}
           onChange={(e) => {
             setGoal(Number(e.target.value));
             setState("idle");
@@ -418,15 +396,13 @@ function RecruitingRow({
         </div>
       </td>
       <td>
-        {!offOnly && (
-          <button
-            type="button"
-            onClick={() => void save({ ...condition, goal })}
-            disabled={state === "saving" || !dirty}
-          >
-            {state === "saving" ? "Saving" : "Save"}
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => void save({ ...condition, goal })}
+          disabled={state === "saving" || !dirty}
+        >
+          {state === "saving" ? "Saving" : "Save"}
+        </button>
         {state === "saved" && <span className="ok">Saved</span>}
         {state === "error" && <span className="bad">Error</span>}
       </td>

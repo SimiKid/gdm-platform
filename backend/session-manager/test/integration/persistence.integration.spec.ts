@@ -213,6 +213,7 @@ describe("persistence & exports (integration)", () => {
       (p: { condition: { id: string } }) => p.condition.id === "baseline",
     );
     expect(baseline).toMatchObject({ completed: 1, goal: 5 });
+    expect(Date.parse(baseline.createdAt)).not.toBeNaN();
   });
 
   it("accepts live checkpoints larger than Express's 100 KB default", async () => {

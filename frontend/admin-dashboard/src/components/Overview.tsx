@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ConditionProgress,
   RoundsResponse,
@@ -260,29 +260,41 @@ export function SessionsTable({
       {sessions.length > 0 && (
         <SessionRows
           sessions={sessions}
-          selectedId={detail?.id}
+          detail={detail}
           onOpen={open}
           label={label}
         />
       )}
-      {detail && <SessionDetail session={detail} />}
     </section>
   );
 }
 
+const COLUMNS = 7;
+
 function SessionRows({
   sessions,
-  selectedId,
+  detail,
   onOpen,
   label,
 }: {
   sessions: SessionSummary[];
-  selectedId?: string;
+  detail: Session | null;
   onOpen: (id: string) => Promise<void>;
   label: string;
 }) {
+  const selectedId = detail?.id;
+  const selectedRow = useRef<HTMLTableRowElement>(null);
+
+  // The height cap is lifted while a session is expanded, which resets the
+  // list's own scroll position — bring the opened row back into view.
+  useEffect(() => {
+    if (selectedId) selectedRow.current?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+  }, [selectedId]);
+
   return (
-    <div className="table-wrap compact" aria-label={label}>
+    // Uncapped while a session is expanded so the inspector grows with the
+    // page instead of scrolling inside the 420px list box.
+    <div className={detail ? "table-wrap" : "table-wrap compact"} aria-label={label}>
       <table>
         <thead>
           <tr>
@@ -297,29 +309,38 @@ function SessionRows({
         </thead>
         <tbody>
           {sessions.map((session) => (
-            <tr
-              key={session.id}
-              className={
-                selectedId === session.id ? "clickable selected" : "clickable"
-              }
-              onClick={() => void onOpen(session.id)}
-            >
-              <td>
-                <strong>{session.id.slice(0, 8)}</strong>
-              </td>
-              <td>{session.roundId}</td>
-              <td>{session.conditionName}</td>
-              <td>
-                <span className={`status ${session.status}`}>
-                  {STATUS_LABEL[session.status]}
-                </span>
-              </td>
-              <td>
-                {session.participantCount} / {session.groupSize}
-              </td>
-              <td>{formatTime(session.startedAt)}</td>
-              <td>{formatTime(session.completedAt)}</td>
-            </tr>
+            <Fragment key={session.id}>
+              <tr
+                ref={selectedId === session.id ? selectedRow : undefined}
+                className={
+                  selectedId === session.id ? "clickable selected" : "clickable"
+                }
+                onClick={() => void onOpen(session.id)}
+              >
+                <td>
+                  <strong>{session.id.slice(0, 8)}</strong>
+                </td>
+                <td>{session.roundId}</td>
+                <td>{session.conditionName}</td>
+                <td>
+                  <span className={`status ${session.status}`}>
+                    {STATUS_LABEL[session.status]}
+                  </span>
+                </td>
+                <td>
+                  {session.participantCount} / {session.groupSize}
+                </td>
+                <td>{formatTime(session.startedAt)}</td>
+                <td>{formatTime(session.completedAt)}</td>
+              </tr>
+              {detail?.id === session.id && (
+                <tr className="detail-row">
+                  <td colSpan={COLUMNS}>
+                    <SessionDetail session={detail} />
+                  </td>
+                </tr>
+              )}
+            </Fragment>
           ))}
         </tbody>
       </table>

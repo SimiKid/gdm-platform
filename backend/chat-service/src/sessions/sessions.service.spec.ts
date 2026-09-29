@@ -312,6 +312,43 @@ describe("SessionsService (chat-service)", () => {
     await svc.endSession("!r");
   });
 
+  it("does not re-evaluate a boundary a restored checkpoint already covers", async () => {
+    // Restored 6.5 minutes in: default grid closes windows at 7 and 11 minutes.
+    const startedAt = Date.now() - 6.5 * 60_000;
+    const boundary = (minutes: number) => startedAt + minutes * 60_000;
+    await svc.startSession({
+      ...note,
+      durationMinutes: 20,
+      startedAt: new Date(startedAt).toISOString(),
+      checkpoint: {
+        ...emptyCheckpoint(),
+        windowEvaluations: [
+          {
+            id: "w-7",
+            sessionId: "s",
+            conditionId: "c",
+            windowIndex: 0,
+            windowStart: new Date(boundary(3)).toISOString(),
+            windowEnd: new Date(boundary(7)).toISOString(),
+            contributionWindowMinutes: 4,
+            llmMode: "off",
+            threshold: 0.4,
+            outcome: "no-target",
+            contributionSplit: [],
+            candidateTargets: [],
+            maxDominanceScore: null,
+            interventionId: null,
+          },
+        ],
+      },
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(rules.onWindowElapsed).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(4 * 60_000);
+    expect(rules.onWindowElapsed.mock.calls.map((call) => call[1])).toEqual([boundary(11)]);
+    await svc.endSession("!r");
+  });
+
   it("does not delay a window boundary behind slow per-message rule work", async () => {
     let finishClassification!: () => void;
     rules.onEvent.mockImplementation(

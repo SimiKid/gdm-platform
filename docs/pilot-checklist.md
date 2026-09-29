@@ -103,15 +103,18 @@ nudging arms — only delivery differs):
 In the admin dashboard:
 
 - [ ] Sessions list updates after refresh
-- [ ] Session detail (Overview → expand a session) shows status, round,
-      condition, bot mode, start time and duration, room id, participants by
+- [ ] Session detail (Overview → click a session row; it unfolds under the
+      row, click again to collapse) shows bot mode, duration and room id (status,
+      round, condition and start time stay in the row), a participant table by
       chat colour (Red, Blue, …; token prefix until provisioned — no names are
-      collected) with messages, typing time, tab switches and ranking moves,
-      the tiles (messages, nudges, classifier coverage or "not used", ranking
-      edits, behaviour), the nudge response timeline (one line per participant,
-      a marker per nudge, message ticks; hover or arrow keys read a window),
-      and a before/after table per nudge (share and messages in the triggering
-      window vs. the next window)
+      collected) with messages, typing time, tab switches and ranking moves
+      plus a totals row, the tiles (nudges, classifier coverage or "not used",
+      ranking edits), the nudge response timeline (one step line per
+      participant, a marker per nudge with a dot on the targeted person,
+      message ticks, a key under the chart; hover or arrow keys read a
+      window), and a before/after table per nudge (share and messages in the
+      triggering window vs. the next window — or, when no later window was
+      evaluated, message shares up to the end of the chat, marked by a note)
 - [ ] The intervention audit (mode, targets, quiet members, contribution
       split, message text) is present in the nudge-events export
       (`/api/export/interventions`) or the full JSON dump — the dashboard

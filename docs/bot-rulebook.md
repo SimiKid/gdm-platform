@@ -53,14 +53,12 @@ Window boundary reached (every contributionWindowMinutes)
         |  no -> stop (logged too-few-participants)
         v
   Compute contribution split over the closed window
-  (messages after the last tracker reset only)
+  (messages after the last tracker reset only;
+   nudging arms: messages classified as invitations left out)
         |
         v
   Any participant's dominance score >= threshold?
         |  no -> stop (logged no-target)
-        v
-  Drop candidates in an invite grace period
-        |  none left -> stop (logged grace-suppressed)
         v
   Is mode "baseline"? ── yes ──> stop (logged baseline-suppressed)
         |  no
@@ -111,6 +109,16 @@ reactions never count — the intervention is about turn-taking in
 talking/typing, and the chat UI no longer offers reactions at all (removed
 per study protocol for a cleaner design).
 
+In the nudging arms (`llmMode: "active"`), a message the classifier marks
+`invitesParticipation == true` does **not count** toward the split: it is
+left out of the sender's message count, word count and meaningfulness mean
+(and therefore out of the group total). The whole message is excluded, even
+if it also contains task content — the classifier judges the message as a
+whole. A message counts normally when its classification failed or had not
+returned by the end of the 2-second wait at the window boundary. The baseline
+has no classifier, so every message counts there. Inviting others does
+**not** protect the sender from being nudged: there is no grace period.
+
 The trigger metric is the **dominance score**:
 
 - Baseline (`llmMode: "off"`): `dominance = share`.
@@ -120,27 +128,16 @@ The trigger metric is the **dominance score**:
   window (0 when none are classified, e.g. on API failure). Weights are
   configurable via `dominanceWeights`.
 
-### Gate 3: Threshold and Grace Period
+### Gate 3: Threshold
 
 If any participant's `dominance score >= contributionThreshold` (default
 0.40), they become a candidate target. Candidates are sorted by dominance
 score descending (ties broken by raw score descending) and **only the top
 one** is nudged per trigger.
 
-A candidate is skipped while their **invite grace period** runs: when their
-classified message shows `invitesParticipation == true` (nudging arms
-only), they cannot be flagged for `inviteGraceSeconds` (default 60) — a
-reward for self-correction. The grace window starts at the Matrix timestamp
-of the inviting message (not at the moment the classification returns);
-when classifications resolve out of order, only the newest invitation is
-kept; and a grace period that starts after a window's boundary does not
-protect that already-closed window.
-
-If nobody crosses the threshold, no intervention fires. Gate order matters
-for the audit log: over-threshold candidates are computed first, then grace
-filtering, then the baseline check — so a baseline window whose only
-candidates are all in grace is logged `grace-suppressed`, not
-`baseline-suppressed`.
+If nobody crosses the threshold, no intervention fires (logged
+`no-target`). In the baseline, a window with a candidate is logged
+`baseline-suppressed` and nothing is delivered.
 
 ### Gate 4: Tracker Reset
 
@@ -236,8 +233,8 @@ in seconds), window length (entered in seconds), and threshold (entered in %) �
 a drift warning when an arm deviates from the shared values. A separate
 Settings → Shared Workspace card applies `workspaceMode` to all arms in the
 same way. The delivery mode (`interventionMode`) is displayed as a read-only
-badge per arm. The remaining fields (`llmMode`, score/dominance weights,
-invite grace) are fixed study design: they are not shown in the dashboard at
+badge per arm. The remaining fields (`llmMode`, score/dominance weights)
+are fixed study design: they are not shown in the dashboard at
 all and can only be changed via `PUT /api/conditions/:id`. Warm-up, protected
 end and window length are stored as minutes and may be fractional (e.g. `1.5`
 = 90 seconds); the protected end also drives the participant timer's red
@@ -246,8 +243,7 @@ end and window length are stored as minutes and may be fractional (e.g. `1.5`
 The session manager clamps admin input on save: `contributionThreshold` to
 0.01–1, `contributionWindowMinutes` to 0.1–240, `protectedStartMinutes` to
 0–240, `durationMinutes` to 1–240, `groupSize` to 2–50 and `goal` to
-0–100000. `protectedEndMinutes`, `inviteGraceSeconds` and `llmMode` are not
-validated beyond being well-formed JSON. An unrecognized `llmMode` value is
+0–100000. `protectedEndMinutes` and `llmMode` are not validated beyond being well-formed JSON. An unrecognized `llmMode` value is
 inconsistent: the classifier still runs (the gate only checks for `off`),
 but the dominance formula falls back to the raw share (it only checks for
 `active`) — so keep it to exactly `off` or `active`.
@@ -259,13 +255,12 @@ but the dominance formula falls back to the raw share (it only checks for
 | Threshold | `contributionThreshold` | `0.40` | Dominance score at which a participant triggers an intervention |
 | Warm-up | `protectedStartMinutes` | `3` | Arrival phase: nobody is counted or nudged; the first window starts when it ends |
 | Protected end | `protectedEndMinutes` | `2` | Minutes of no-intervention cool-down |
-| Invite grace | `inviteGraceSeconds` | `60` | Flag suppression after a member invites others (nudging arms) |
 | Score window | `contributionWindowMinutes` | `4` | Window length; the bot evaluates (and can nudge once) at the end of every window |
 | Message weight | `scoreWeights.messages` | `1` | Points per message |
 | Word weight | `scoreWeights.words` | `0.05` | Points per word |
 | Share weight | `dominanceWeights.share` | `0.90` | Composite weight of the raw contribution share |
 | Meaningfulness weight | `dominanceWeights.meaningfulness` | `0.10` | Composite weight of the LLM meaningfulness score |
-| Classifier mode | `llmMode` | `off` | `active` in both nudging arms (composite score + grace period); `off` (raw share, no classifier) in the baseline. Not a study axis |
+| Classifier mode | `llmMode` | `off` | `active` in both nudging arms (composite score; invitations excluded from the split); `off` (raw share, no classifier) in the baseline. Not a study axis |
 
 Defaults are defined in `packages/shared/src/interventions.ts` (`DEFAULT_INTERVENTION_CONFIG`). Conditions are seeded with these defaults by the session manager on first startup (see `seedConditions()` in `backend/session-manager/src/store/store.service.ts`), along with session-level defaults `goal: 5`, `durationMinutes: 10`, `groupSize: 3`.
 
@@ -285,7 +280,7 @@ Every intervention is recorded as an `InterventionLog` (type in
 - Target(s) and quiet member(s) identified
 - The exact message text sent
 
-In addition, the bot records a **`WindowEvaluation` for every window boundary it reaches** — fired or not. Each carries the window's grid index (0-based, computed from the distance to the warm-up end) and time span, the window length and threshold in effect, the detection mode (`llmMode`), the outcome (`nudged`, `no-target`, `grace-suppressed`, `baseline-suppressed`, `warm-up`, `wrap-up`, `too-few-participants`), the full contribution split, the over-threshold candidates *before* grace filtering and the highest dominance score where a split was computed, and a link to the `InterventionLog` when a nudge fired. Baseline sessions therefore carry per-window dominance data comparable to the delivery arms (`baseline-suppressed` marks windows where a nudge *would* have fired) — with the caveat that in the baseline `dominanceScore` equals the raw share and `meaningfulnessScore` is always 0, because the classifier is not called. Failed LLM classification requests are recorded as `ClassificationFailure` entries, so classifier coverage is auditable. Both records are persisted in the research database with their full JSON payload. The bot's own nudge messages are stored in the chat log (with `recipientId` set on private nudges) but never count toward contribution scores.
+In addition, the bot records a **`WindowEvaluation` for every window boundary it reaches** — fired or not. Each carries the window's grid index (0-based, computed from the distance to the warm-up end) and time span, the window length and threshold in effect, the detection mode (`llmMode`), the outcome (`nudged`, `no-target`, `baseline-suppressed`, `warm-up`, `wrap-up`, `too-few-participants`), the full contribution split (in the nudging arms without the messages classified as invitations; each entry's `invitationCount` records how many were left out), the over-threshold candidates and the highest dominance score where a split was computed, and a link to the `InterventionLog` when a nudge fired. Baseline sessions therefore carry per-window dominance data comparable to the delivery arms (`baseline-suppressed` marks windows where a nudge *would* have fired) — with the caveat that in the baseline `dominanceScore` equals the raw share and `meaningfulnessScore` is always 0, because the classifier is not called. Failed LLM classification requests are recorded as `ClassificationFailure` entries, so classifier coverage is auditable. Both records are persisted in the research database with their full JSON payload. The bot's own nudge messages are stored in the chat log (with `recipientId` set on private nudges) but never count toward contribution scores.
 
 These records are included in the raw exports (`/api/export/sessions`, `/api/export/interventions`), power the per-session nudge response timeline in the dashboard's Overview tab and the monitoring summary (`/api/reports/summary`), and feed the analysis-ready research exports (`/api/export/windows`, `/api/export/research.zip`) — see `docs/data-export.md`.
 
@@ -305,7 +300,7 @@ message is classified at most once; a failed call is stored as a
 `ClassificationFailure` with the error text (truncated to 500 characters).
 Without an API key in a nudging arm, every message is recorded as a
 `missing-api-key` failure, meaningfulness is 0 for everyone (so `dominance =
-0.9 × share`), the invite grace period can never activate, and nudges use
+0.9 × share`), no message is ever excluded as an invitation, and nudges use
 the fixed fallback wording; in production the chat service refuses to start
 without the key. Per message, the classifier rates two graded dimensions
 (each an integer `1`–`5` plus a one-sentence justification), asked in this
@@ -322,15 +317,15 @@ A third, binary indicator is judged in the same call but kept outside the
 score:
 
 - `invitesParticipation` (`true`/`false` plus a reason) — explicitly invites
-  another (named or unnamed) member to contribute. **Tracked separately** — it
-  feeds the dominant contributor's self-correction grace period, never the
-  score.
+  another (named or unnamed) member to contribute (a direct question to them,
+  or an open prompt like "anyone else?"). **Tracked separately** — never part
+  of the score; a message marked `true` is excluded from the contribution
+  split (see Gate 2).
 
 The score is `meaningfulnessScore = (mean(relevance, coherence) − 1) / 4`,
 continuous in 0..1 (`1/1` → 0, `3/3` → 0.5, `5/5` → 1). It feeds the
 composite dominance score (`0.90 × contribution share + 0.10 ×
-meaningfulness`, see Gate 3) and `invitesParticipation` drives the invite
-grace period. A rating that is missing, not an integer, or outside `1`–`5`
+meaningfulness`, see Gate 2). A rating that is missing, not an integer, or outside `1`–`5`
 is treated like malformed JSON: the message is stored as a
 `ClassificationFailure` (error text `invalid rating for <dimension>: …`) and
 never receives a score. Each classification also records the model ID, prompt

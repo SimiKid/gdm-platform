@@ -194,7 +194,6 @@ export function session(overrides: Partial<Session> = {}): Session {
       contributionThreshold: 0.4,
       protectedStartMinutes: 1,
       protectedEndMinutes: 1,
-      inviteGraceSeconds: 60,
       contributionWindowMinutes: 2,
       scoreWeights: { messages: 1, words: 0.05 },
       dominanceWeights: { share: 0.9, meaningfulness: 0.1 },

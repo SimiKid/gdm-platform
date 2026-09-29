@@ -56,6 +56,35 @@ describe("SessionRuntime", () => {
     expect(rt.messages[0].reactions).toHaveLength(0);
   });
 
+  it("claims each window boundary once, including across a restart", () => {
+    const rt = new SessionRuntime("s", "!r", condition, 10, fakeBot());
+    const end = Date.parse("2026-08-05T10:07:00.000Z");
+    expect(rt.claimWindowBoundary(end)).toBe(true);
+    expect(rt.claimWindowBoundary(end)).toBe(false);
+    expect(rt.claimWindowBoundary(end - 60_000)).toBe(false);
+    rt.recordWindowEvaluation({
+      id: "w1",
+      sessionId: "s",
+      conditionId: "c",
+      windowIndex: 0,
+      windowStart: "2026-08-05T10:03:00.000Z",
+      windowEnd: "2026-08-05T10:07:00.000Z",
+      contributionWindowMinutes: 4,
+      llmMode: "off",
+      threshold: 0.4,
+      outcome: "no-target",
+      contributionSplit: [],
+      candidateTargets: [],
+      maxDominanceScore: null,
+      interventionId: null,
+    });
+
+    // A restored runtime knows the boundaries its checkpoint already covers.
+    const restored = new SessionRuntime("s", "!r", condition, 10, fakeBot(), undefined, rt.checkpoint());
+    expect(restored.claimWindowBoundary(end)).toBe(false);
+    expect(restored.claimWindowBoundary(end + 4 * 60_000)).toBe(true);
+  });
+
   it("keeps a redacted reaction as an audit tombstone across restart", () => {
     const first = new SessionRuntime("s", "!r", condition, 10, fakeBot());
     first.recordMessage(message("m1"));

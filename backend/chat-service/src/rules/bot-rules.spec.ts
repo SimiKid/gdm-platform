@@ -335,7 +335,58 @@ describe("ContributionBotRules", () => {
     expect(red?.dominanceScore).toBeCloseTo(0.55);
   });
 
-  it("grants a grace period to a dominant member whose message invites others", async () => {
+  it("leaves messages classified as invitations out of the split, without sparing the sender", async () => {
+    const classify = vi.fn(
+      async (message: Message, context: ClassifierContext) =>
+        message.id === "m-red-invite"
+          ? fakeClassification(message, context, {
+              invitesParticipation: true,
+              meaningfulnessScore: 0,
+            })
+          : fakeClassification(message, context),
+    );
+    const { rt, bot } = runtime("public", { llmMode: "active" });
+    const rules = new ContributionBotRules({ classify });
+    const ts = Date.now() + 60_000;
+    const events = [
+      record(rt, MEMBERS[1], "ok", "m-blue", ts),
+      record(
+        rt,
+        MEMBERS[0],
+        "I think oxygen matters most because without oxygen we cannot move or breathe at all on the lunar surface today.",
+        "m-red",
+        ts + 1_000,
+      ),
+      record(
+        rt,
+        MEMBERS[0],
+        "But I have been talking a lot - Blue and Green, what do the two of you think we should rank second?",
+        "m-red-invite",
+        ts + 2_000,
+      ),
+    ];
+    for (const event of events) await rules.onEvent(rt, event);
+    await rules.onWindowElapsed(rt, ts + 3_000);
+
+    // No grace: the invitation does not protect Red from the nudge.
+    expect(bot.sendText).toHaveBeenCalledTimes(1);
+    expect(rt.interventions[0].targets[0].userId).toBe(MEMBERS[0]);
+    const red = rt.windowEvaluations[0].contributionSplit.find(
+      (entry) => entry.userId === MEMBERS[0],
+    );
+    // Only "m-red" counts: 1 message + 20 words × 0.05 = 2 vs. Blue's 1.05.
+    expect(red).toMatchObject({
+      messageCount: 1,
+      wordCount: 20,
+      invitationCount: 1,
+      score: 2,
+    });
+    expect(red?.share).toBeCloseTo(2 / 3.05);
+    // The invitation's own meaningfulness (0) is left out of the mean too.
+    expect(red?.meaningfulnessScore).toBe(0.625);
+  });
+
+  it("gives a member whose only message is an invitation no share", async () => {
     const classify = vi.fn(
       async (message: Message, context: ClassifierContext) =>
         fakeClassification(message, context, {
@@ -345,31 +396,58 @@ describe("ContributionBotRules", () => {
     const { rt, bot } = runtime("public", { llmMode: "active" });
     const rules = new ContributionBotRules({ classify });
     const ts = Date.now() + 60_000;
-    record(rt, MEMBERS[1], "ok", "m-blue", ts);
-    const invite = record(
-      rt,
-      MEMBERS[0],
-      "I think oxygen matters most - but what do the rest of you think?",
-      "m-red-invite",
-      ts + 1_000,
-    );
-    await rules.onEvent(rt, invite);
-    await rules.onWindowElapsed(rt, invite.ts + 1_000);
-    // Dominant, but self-correcting: the invite suppresses the flag.
-    expect(bot.sendText).not.toHaveBeenCalled();
+    const events = [
+      record(rt, MEMBERS[1], "Water second, then the stellar map.", "m-blue", ts),
+      record(
+        rt,
+        MEMBERS[0],
+        "Blue, Green - I would really like to hear what both of you would rank first and why exactly?",
+        "m-red-invite",
+        ts + 1_000,
+      ),
+    ];
+    for (const event of events) await rules.onEvent(rt, event);
+    await rules.onWindowElapsed(rt, ts + 2_000);
 
-    // Still dominant once the 60s grace expired, and no new invitation.
-    const followUp = record(
-      rt,
-      MEMBERS[0],
-      "Here is even more of my own reasoning about the oxygen ranking.",
-      "m-red-2",
-      invite.ts + 61_000,
+    const split = rt.windowEvaluations[0].contributionSplit;
+    expect(split.find((entry) => entry.userId === MEMBERS[0])).toMatchObject({
+      messageCount: 0,
+      wordCount: 0,
+      invitationCount: 1,
+      score: 0,
+      share: 0,
+      meaningfulnessScore: 0,
+      dominanceScore: 0,
+    });
+    // Blue holds the whole counted airtime and is the one nudged.
+    expect(bot.sendText).toHaveBeenCalledWith("!r", expect.stringContaining("@Blue"));
+  });
+
+  it("counts only invitations inside the closed window", async () => {
+    const classify = vi.fn(
+      async (message: Message, context: ClassifierContext) =>
+        fakeClassification(message, context, {
+          invitesParticipation: message.id.startsWith("invite"),
+        }),
     );
-    await rules.onEvent(rt, followUp);
-    await rules.onWindowElapsed(rt, followUp.ts + 1_000);
-    expect(bot.sendText).toHaveBeenCalledTimes(1);
-    expect(rt.interventions[0].targets[0].userId).toBe(MEMBERS[0]);
+    const { rt } = runtime("public", {
+      llmMode: "active",
+      contributionWindowMinutes: 1,
+    });
+    const rules = new ContributionBotRules({ classify });
+    const now = rt.startedAtMs + 5 * 60_000;
+    const events = [
+      record(rt, MEMBERS[0], "Blue, what do you think?", "invite-old", now - 2 * 60_000),
+      record(rt, MEMBERS[0], "Green, your view?", "invite-new", now - 10_000),
+      record(rt, MEMBERS[1], "Oxygen first.", "m-blue", now - 5_000),
+    ];
+    for (const event of events) await rules.onEvent(rt, event);
+    await rules.onWindowElapsed(rt, now);
+
+    const red = rt.windowEvaluations[0].contributionSplit.find(
+      (entry) => entry.userId === MEMBERS[0],
+    );
+    expect(red).toMatchObject({ messageCount: 0, invitationCount: 1 });
   });
 
   it("uses the rolling contribution window for dominance checks", async () => {
@@ -599,6 +677,10 @@ describe("window evaluation records", () => {
     expect(rt.windowEvaluations[0].candidateTargets).toEqual([
       { userId: MEMBERS[0], identityName: "Red" },
     ]);
+    // No classifier in the baseline: nothing is ever excluded.
+    expect(
+      rt.windowEvaluations[0].contributionSplit.map((s) => s.invitationCount),
+    ).toEqual([0, 0, 0]);
   });
 
   it("records no-target with the split when nobody crosses the threshold", async () => {
@@ -646,34 +728,6 @@ describe("window evaluation records", () => {
       outcome: "too-few-participants",
     });
     expect(rt.windowEvaluations[0].contributionSplit).toEqual([]);
-  });
-
-  it("records grace-suppressed when the only candidate is inside invite grace", async () => {
-    const classify = vi.fn(
-      async (message: Message, context: ClassifierContext) =>
-        fakeClassification(message, context, { invitesParticipation: true }),
-    );
-    const { rt } = runtime("public", { llmMode: "active" });
-    const rules = new ContributionBotRules({ classify });
-    const ts = Date.now() + 60_000;
-    record(rt, MEMBERS[1], "ok", "m-blue", ts);
-    const invite = record(
-      rt,
-      MEMBERS[0],
-      "I think oxygen matters most - but what do the rest of you think?",
-      "m-red-invite",
-      ts + 1_000,
-    );
-    await rules.onEvent(rt, invite);
-    await rules.onWindowElapsed(rt, invite.ts + 1_000);
-
-    expect(rt.interventions).toHaveLength(0);
-    expect(rt.windowEvaluations[0]).toMatchObject({
-      outcome: "grace-suppressed",
-    });
-    expect(rt.windowEvaluations[0].candidateTargets).toEqual([
-      { userId: MEMBERS[0], identityName: "Red" },
-    ]);
   });
 
   it("indexes evaluations on the session's window grid", async () => {

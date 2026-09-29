@@ -20,6 +20,14 @@ const API_HEADERS = ADMIN_TOKEN
  * run can never soak up this run's participants.
  */
 const CONDITION_ID = `e2e-${Date.now().toString(36)}`;
+// Readable run time so accumulated runs are told apart in the dashboard's
+// Testing tab. Computed once: the condition is upserted again to switch off.
+const CONDITION_NAME = `E2E Golden Path · ${new Date().toLocaleString("en-GB", {
+  day: "numeric",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+})}`;
 const DISCUSSION_MINUTES = 1;
 const GROUP_SIZE = 3;
 const TEST_PROLIFIC = (() => {
@@ -79,9 +87,7 @@ async function upsertCondition(request: APIRequestContext, active: boolean) {
     data: {
       condition: {
         id: CONDITION_ID,
-        // Unique per run so accumulated test arms stay distinguishable in
-        // the dashboard's "Test conditions" group.
-        name: `E2E Golden Path (${CONDITION_ID.slice(4)})`,
+        name: CONDITION_NAME,
         active,
         goal: 100,
         durationMinutes: DISCUSSION_MINUTES,
@@ -254,21 +260,17 @@ test("@golden three participants run a full study session end to end", async ({
         }
         await page.getByRole("button", { name: "Submit" }).click();
 
-        // Debriefing: must be acknowledged before the study can be finished.
-        // Direct participants finish in place; the (optional) Prolific seat
-        // gets the completion link instead.
+        // Debriefing: direct participants finish in place; the (optional)
+        // Prolific seat gets the completion link instead. No acknowledgement
+        // checkbox — both actions are available right away.
         await expect(
           page.getByRole("heading", { name: "Debrief" }),
         ).toBeVisible();
         const prolificSeat = seat === 0 && Boolean(TEST_PROLIFIC);
         if (prolificSeat) {
-          await expect(page.getByRole("link", { name: "Return to Prolific" })).toBeHidden();
-          await page.getByRole("checkbox").check();
           await expect(page.getByRole("link", { name: "Return to Prolific" })).toBeVisible();
         } else {
           const finish = page.getByRole("button", { name: "Finish study" });
-          await expect(finish).toBeDisabled();
-          await page.getByRole("checkbox").check();
           await expect(finish).toBeEnabled();
           await finish.click();
           await expect(
@@ -358,8 +360,10 @@ test("@golden three participants run a full study session end to end", async ({
     const admin = await adminContext.newPage();
     await admin.goto(ADMIN);
     await expect(admin.getByRole("heading", { name: "Study Admin" })).toBeVisible();
-    // E2E sessions live in the Testing view (Overview shows study arms only).
+    // E2E sessions live in the Testing view (Overview shows study arms only),
+    // behind its collapsed test history.
     await admin.getByRole("button", { name: "Testing" }).click();
+    await admin.getByRole("button", { name: "Show test history" }).click();
     const row = admin.locator("tr", { hasText: sessionId.slice(0, 8) });
     await expect(row.locator(".status")).toHaveText("completed", { timeout: 20_000 });
   });

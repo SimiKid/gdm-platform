@@ -240,6 +240,12 @@ export class SessionsService
       );
       return;
     }
+    // One evaluation per boundary, claimed synchronously so a still-running
+    // evaluation of the same boundary counts too.
+    if (!runtime.claimWindowBoundary(windowEndMs)) {
+      this.scheduleWindowTick(runtime, windowEndMs);
+      return;
+    }
     const previous = this.windowRequests.get(runtime.roomId) ?? Promise.resolve();
     const request = previous
       .then(() => this.rules.onWindowElapsed?.(runtime, windowEndMs))
