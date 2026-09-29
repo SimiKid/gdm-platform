@@ -112,9 +112,11 @@ In the admin dashboard:
       ranking edits), the nudge response timeline (one step line per
       participant, a marker per nudge with a dot on the targeted person,
       message ticks, a key under the chart; hover or arrow keys read a
-      window), and a before/after table per nudge (share and messages in the
-      triggering window vs. the next window — or, when no later window was
-      evaluated, message shares up to the end of the chat, marked by a note)
+      window), and a before/after table per nudge listing every group
+      member — target, quiet members, and the rest as "other" (share
+      and messages in the triggering window vs. the next window — or, when no
+      later window was evaluated, message shares up to the end of the chat,
+      marked by a note)
 - [ ] The intervention audit (mode, targets, quiet members, contribution
       split, message text) is present in the nudge-events export
       (`/api/export/interventions`) or the full JSON dump — the dashboard

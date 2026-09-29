@@ -10,6 +10,7 @@ import {
   nudgeComparisons,
   participantIdentities,
   sessionTimeline,
+  spreadLabels,
   type ComparisonRow,
   type Engagement,
   type NudgeComparison,
@@ -248,6 +249,7 @@ const TOP = 24;
 const PLOT_H = 140;
 const AXIS_H = 22;
 const TICK_ROW = 10;
+const LABEL_GAP = 12;
 const INK = "#172033";
 const INK_MUTED = "#65758c";
 const GRID = "#e8edf4";
@@ -290,13 +292,22 @@ function NudgeTimeline({
     }))
     .filter((s) => s.steps.length > 0);
 
-  // Direct end labels, pushed apart when lines converge at the right edge.
-  const endLabels = series
-    .map((s) => ({ name: s.name, px: s.steps.at(-1)!.x1, py: s.steps.at(-1)!.py }))
-    .sort((a, b) => a.py - b.py);
-  for (let i = 1; i < endLabels.length; i += 1) {
-    if (endLabels[i].py - endLabels[i - 1].py < 12) endLabels[i].py = endLabels[i - 1].py + 12;
-  }
+  // Direct labels sit in the right gutter, clear of the wrap-up band and the
+  // time axis; a dotted leader ties each one to where its line ends.
+  const labelYs = spreadLabels(
+    series.map((s) => s.steps.at(-1)!.py),
+    LABEL_GAP,
+    TOP + 4,
+    TOP + PLOT_H,
+  );
+  const endLabels = series.map((s, i) => ({
+    name: s.name,
+    color: s.color,
+    px: s.steps.at(-1)!.x1,
+    py: s.steps.at(-1)!.py,
+    ly: labelYs[i],
+  }));
+  const labelX = LEFT + plotW + 10;
 
   const nearestWindow = (px: number): number | null => {
     if (timeline.windows.length === 0) return null;
@@ -477,18 +488,21 @@ function NudgeTimeline({
           </g>
         ))}
         {endLabels.map((l) => (
-          <text
-            key={l.name}
-            x={l.px + 9}
-            y={l.py + 4}
-            fontSize={11}
-            fill="#45566e"
-            stroke="#fff"
-            strokeWidth={3}
-            paintOrder="stroke"
-          >
-            {l.name}
-          </text>
+          <g key={l.name} data-testid="end-label">
+            <line
+              x1={l.px + 3}
+              y1={l.py}
+              x2={labelX - 3}
+              y2={l.ly}
+              stroke={l.color}
+              strokeWidth={1}
+              strokeDasharray="2 2"
+              opacity={0.7}
+            />
+            <text x={labelX} y={l.ly + 3.5} fontSize={10} fill="#45566e">
+              {l.name}
+            </text>
+          </g>
         ))}
 
         {/* Message ticks, one row per participant */}
@@ -707,6 +721,12 @@ function NudgeBlock({
   );
 }
 
+const ROLE_LABEL: Record<ComparisonRow["role"], string> = {
+  target: "target",
+  quiet: "quiet member",
+  unaddressed: "other",
+};
+
 function ComparisonRowView({
   row,
   color,
@@ -717,9 +737,10 @@ function ComparisonRowView({
   /** Count deltas only make sense when both spans are equally long windows. */
   countDelta: boolean;
 }) {
-  // "Good" follows the nudge's intent: the target should shrink, quiet members grow.
+  // "Good" follows the nudge's intent: the target should shrink, quiet members
+  // grow. The nudge had no intent for unaddressed members, so they stay neutral.
   const direction = (delta: number) =>
-    Math.round(delta * 100) === 0
+    row.role === "unaddressed" || Math.round(delta * 100) === 0
       ? ""
       : (row.role === "target" ? delta < 0 : delta > 0)
         ? "good"
@@ -730,7 +751,7 @@ function ComparisonRowView({
         <span className="swatch dot" style={{ background: color, marginRight: 6 }} aria-hidden />
         {row.name}
       </td>
-      <td>{row.role === "target" ? "target" : "quiet member"}</td>
+      <td>{ROLE_LABEL[row.role]}</td>
       <td>
         {formatShare(row.before.share)} → {formatShare(row.after.share)}{" "}
         <span className={`delta ${direction(row.deltaShare)}`}>({formatSharePoints(row.deltaShare)})</span>
