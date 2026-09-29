@@ -962,9 +962,12 @@ tbody tr:last-child td {
   font-size: 0.95rem;
 }
 
+/* The SVG scales with its box; the cap keeps chart text from growing large on
+   wide screens. Capping the box (not the svg) keeps the tooltip aligned. */
 .timeline {
   position: relative;
   overflow-x: auto;
+  max-width: 960px;
 }
 
 .timeline > svg {
@@ -1031,6 +1034,11 @@ tbody tr:last-child td {
 .nudge-block td,
 .window-table td {
   font-variant-numeric: tabular-nums;
+}
+
+/* Keep "45% → 30% (−15 pp)" on one line; the table-wrap scrolls instead. */
+.nudge-block td {
+  white-space: nowrap;
 }
 
 .delta {

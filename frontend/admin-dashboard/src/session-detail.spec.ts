@@ -10,6 +10,7 @@ import {
   nudgeComparisons,
   participantIdentities,
   sessionTimeline,
+  spreadLabels,
 } from "./session-detail";
 import { session } from "./test-utils";
 
@@ -90,7 +91,11 @@ describe("nudgeComparisons", () => {
     expect(c.afterUntil).toBeNull();
     expect(c.activeBefore).toBe(2);
     expect(c.activeAfter).toBe(3);
-    expect(c.rows).toHaveLength(2);
+    expect(c.rows.map((r) => [r.name, r.role])).toEqual([
+      ["Red", "target"],
+      ["Blue", "unaddressed"],
+      ["Green", "quiet"],
+    ]);
     expect(c.rows[0]).toMatchObject({
       name: "Red",
       role: "target",
@@ -100,12 +105,37 @@ describe("nudgeComparisons", () => {
     });
     expect(c.rows[0].deltaShare).toBeCloseTo(-0.33);
     expect(c.rows[1]).toMatchObject({
+      name: "Blue",
+      before: { share: 0.33, messageCount: 1 },
+      after: { share: 0.33, messageCount: 1 },
+      deltaMessages: 0,
+    });
+    expect(c.rows[2]).toMatchObject({
       name: "Green",
       role: "quiet",
       before: { share: 0, messageCount: 0 },
       after: { share: 0.33, messageCount: 1 },
       deltaMessages: 1,
     });
+  });
+
+  it("lists every member of a larger group, not just the logged target and quiet members", () => {
+    // The log names one target and at most two quiet members, so in a group
+    // of four the second-most active member is in neither list.
+    const s = session();
+    const log = s.interventions[0];
+    log.contributionSplit = [
+      ...log.contributionSplit,
+      { ...log.contributionSplit[1], userId: "@d:localhost", identityName: "Yellow", share: 0.2 },
+    ];
+    log.quietMembers = [...log.quietMembers, { userId: "@b:localhost", identityName: "Blue" }];
+    const [c] = nudgeComparisons(s);
+    expect(c.rows.map((r) => [r.name, r.role])).toEqual([
+      ["Red", "target"],
+      ["Yellow", "unaddressed"],
+      ["Green", "quiet"],
+      ["Blue", "quiet"],
+    ]);
   });
 
   it("links by timestamp when the window record carries no intervention id", () => {
@@ -131,7 +161,8 @@ describe("nudgeComparisons", () => {
     expect(c.rows[0]).toMatchObject({ name: "Red", before: { messageCount: 2 }, after: { messageCount: 1 }, deltaMessages: -1 });
     expect(c.rows[0].before.share).toBeCloseTo(2 / 3);
     expect(c.rows[0].after.share).toBeCloseTo(1 / 3);
-    expect(c.rows[1]).toMatchObject({ name: "Green", before: { share: 0, messageCount: 0 }, after: { messageCount: 1 } });
+    expect(c.rows[1]).toMatchObject({ name: "Blue", role: "unaddressed", before: { messageCount: 1 }, after: { messageCount: 1 } });
+    expect(c.rows[2]).toMatchObject({ name: "Green", before: { share: 0, messageCount: 0 }, after: { messageCount: 1 } });
     expect(c.activeBefore).toBe(2);
     expect(c.activeAfter).toBe(3);
   });
@@ -196,6 +227,25 @@ describe("engagementSummary", () => {
       rankingMoves: 0,
     });
     expect(e.totals).toEqual({ messages: 6, typingMs: 8000, tabHidden: 1, rankingMoves: 2 });
+  });
+});
+
+describe("spreadLabels", () => {
+  it("keeps labels at their line ends when they do not collide", () => {
+    expect(spreadLabels([30, 100, 60], 12, 0, 140)).toEqual([30, 100, 60]);
+  });
+
+  it("pushes colliding labels apart in their original order", () => {
+    expect(spreadLabels([50, 50, 55], 12, 0, 140)).toEqual([50, 62, 74]);
+  });
+
+  it("pushes a stack that would leave the plot back up above the bottom edge", () => {
+    // Four lines at 0% end on the bottom edge — the case that ran into the time axis.
+    expect(spreadLabels([140, 140, 140, 140], 12, 0, 140)).toEqual([104, 116, 128, 140]);
+  });
+
+  it("clamps labels that start outside the plot", () => {
+    expect(spreadLabels([-20, 200], 12, 0, 140)).toEqual([0, 140]);
   });
 });
 

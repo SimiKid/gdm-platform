@@ -168,7 +168,8 @@ export interface ComparisonCell {
 export interface ComparisonRow {
   userId: string;
   name: string;
-  role: "target" | "quiet";
+  /** "unaddressed": in the split, but neither the target nor a logged quiet member. */
+  role: "target" | "quiet" | "unaddressed";
   before: ComparisonCell;
   after: ComparisonCell;
   deltaShare: number;
@@ -237,6 +238,12 @@ export function nudgeComparisons(session: Session, now = Date.now()): NudgeCompa
         deltaMessages: a.messageCount - b.messageCount,
       };
     };
+    // The log names at most one target and two quiet members, so in larger
+    // groups the rest of the split would otherwise drop out of the table.
+    const named = new Set([...log.targets, ...log.quietMembers].map((m) => m.userId));
+    const unaddressed = log.contributionSplit
+      .filter((s) => !named.has(s.userId))
+      .sort((a, b) => b.share - a.share || a.identityName.localeCompare(b.identityName));
     return {
       nudge,
       windowIndex: trigger?.windowIndex ?? null,
@@ -245,6 +252,7 @@ export function nudgeComparisons(session: Session, now = Date.now()): NudgeCompa
       live,
       rows: [
         ...log.targets.map((t) => row(t, "target")),
+        ...unaddressed.map((s) => row(s, "unaddressed")),
         ...log.quietMembers.map((t) => row(t, "quiet")),
       ],
       activeBefore: activeCount(before),
@@ -405,6 +413,29 @@ export function engagementSummary(session: Session): EngagementSummary {
     totals.rankingMoves += entry.rankingMoves;
   }
   return { perUser, totals, botMessages };
+}
+
+/**
+ * Chart label positions: each label wants its line's end height `ys[i]`, but
+ * labels must stay `gap` apart and within [min, max]. Labels keep their
+ * vertical order; overlaps are pushed down, and a stack that runs past `max`
+ * is pushed back up. Returns positions in the input order.
+ */
+export function spreadLabels(ys: number[], gap: number, min: number, max: number): number[] {
+  const order = ys.map((y, i) => ({ y, i })).sort((a, b) => a.y - b.y || a.i - b.i);
+  const placed = order.map((o) => Math.min(max, Math.max(min, o.y)));
+  for (let k = 1; k < placed.length; k += 1) {
+    placed[k] = Math.max(placed[k], placed[k - 1] + gap);
+  }
+  for (let k = placed.length - 1; k >= 0; k -= 1) {
+    const ceiling = k === placed.length - 1 ? max : placed[k + 1] - gap;
+    placed[k] = Math.min(placed[k], ceiling);
+  }
+  const out = [...ys];
+  order.forEach((o, k) => {
+    out[o.i] = placed[k];
+  });
+  return out;
 }
 
 /** Milliseconds → `m:ss`. */
