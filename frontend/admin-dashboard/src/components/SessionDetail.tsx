@@ -4,9 +4,7 @@ import {
   classifierSummary,
   engagementSummary,
   formatClock,
-  formatCount,
   formatShare,
-  formatSharePoints,
   nudgeComparisons,
   participantIdentities,
   sessionTimeline,
@@ -708,7 +706,6 @@ function NudgeBlock({
                 key={`${row.userId}-${row.role}`}
                 row={row}
                 color={colorOf(row.userId)}
-                countDelta={basis === "window"}
               />
             ))}
           </tbody>
@@ -727,24 +724,7 @@ const ROLE_LABEL: Record<ComparisonRow["role"], string> = {
   unaddressed: "other",
 };
 
-function ComparisonRowView({
-  row,
-  color,
-  countDelta,
-}: {
-  row: ComparisonRow;
-  color: string;
-  /** Count deltas only make sense when both spans are equally long windows. */
-  countDelta: boolean;
-}) {
-  // "Good" follows the nudge's intent: the target should shrink, quiet members
-  // grow. The nudge had no intent for unaddressed members, so they stay neutral.
-  const direction = (delta: number) =>
-    row.role === "unaddressed" || Math.round(delta * 100) === 0
-      ? ""
-      : (row.role === "target" ? delta < 0 : delta > 0)
-        ? "good"
-        : "bad";
+function ComparisonRowView({ row, color }: { row: ComparisonRow; color: string }) {
   return (
     <tr>
       <td>
@@ -753,19 +733,10 @@ function ComparisonRowView({
       </td>
       <td>{ROLE_LABEL[row.role]}</td>
       <td>
-        {formatShare(row.before.share)} → {formatShare(row.after.share)}{" "}
-        <span className={`delta ${direction(row.deltaShare)}`}>({formatSharePoints(row.deltaShare)})</span>
+        {formatShare(row.before.share)} → {formatShare(row.after.share)}
       </td>
       <td>
         {row.before.messageCount} → {row.after.messageCount}
-        {countDelta && (
-          <>
-            {" "}
-            <span className={`delta ${direction(row.deltaMessages / 100)}`}>
-              ({formatCount(row.deltaMessages)})
-            </span>
-          </>
-        )}
       </td>
     </tr>
   );
