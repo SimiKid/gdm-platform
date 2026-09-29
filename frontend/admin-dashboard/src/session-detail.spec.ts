@@ -4,9 +4,7 @@ import {
   classifierSummary,
   engagementSummary,
   formatClock,
-  formatCount,
   formatShare,
-  formatSharePoints,
   nudgeComparisons,
   participantIdentities,
   sessionTimeline,
@@ -101,21 +99,17 @@ describe("nudgeComparisons", () => {
       role: "target",
       before: { share: 0.67, messageCount: 2 },
       after: { share: 0.34, messageCount: 1 },
-      deltaMessages: -1,
     });
-    expect(c.rows[0].deltaShare).toBeCloseTo(-0.33);
     expect(c.rows[1]).toMatchObject({
       name: "Blue",
       before: { share: 0.33, messageCount: 1 },
       after: { share: 0.33, messageCount: 1 },
-      deltaMessages: 0,
     });
     expect(c.rows[2]).toMatchObject({
       name: "Green",
       role: "quiet",
       before: { share: 0, messageCount: 0 },
       after: { share: 0.33, messageCount: 1 },
-      deltaMessages: 1,
     });
   });
 
@@ -158,7 +152,7 @@ describe("nudgeComparisons", () => {
     expect(c.afterUntil).toBe(Date.parse("2026-09-01T10:10:00.000Z"));
     // Before: the window's message counts (Red 2, Blue 1, Green 0). After:
     // m4 (Red), m5 (Green), m6 (Blue) — the bot's own message is not counted.
-    expect(c.rows[0]).toMatchObject({ name: "Red", before: { messageCount: 2 }, after: { messageCount: 1 }, deltaMessages: -1 });
+    expect(c.rows[0]).toMatchObject({ name: "Red", before: { messageCount: 2 }, after: { messageCount: 1 } });
     expect(c.rows[0].before.share).toBeCloseTo(2 / 3);
     expect(c.rows[0].after.share).toBeCloseTo(1 / 3);
     expect(c.rows[1]).toMatchObject({ name: "Blue", role: "unaddressed", before: { messageCount: 1 }, after: { messageCount: 1 } });
@@ -250,16 +244,10 @@ describe("spreadLabels", () => {
 });
 
 describe("formatters", () => {
-  it("format clocks, shares and signed deltas", () => {
+  it("format clocks and shares", () => {
     expect(formatClock(0)).toBe("0:00");
     expect(formatClock(65_400)).toBe("1:05");
     expect(formatShare(0.666)).toBe("67%");
-    expect(formatSharePoints(0.12)).toBe("+12 pp");
-    expect(formatSharePoints(-0.084)).toBe("−8 pp");
-    expect(formatSharePoints(0.001)).toBe("±0 pp");
-    expect(formatCount(3)).toBe("+3");
-    expect(formatCount(-2)).toBe("−2");
-    expect(formatCount(0)).toBe("±0");
   });
 });
 

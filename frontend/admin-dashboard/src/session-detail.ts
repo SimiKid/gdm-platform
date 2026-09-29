@@ -172,8 +172,6 @@ export interface ComparisonRow {
   role: "target" | "quiet" | "unaddressed";
   before: ComparisonCell;
   after: ComparisonCell;
-  deltaShare: number;
-  deltaMessages: number;
 }
 
 export interface NudgeComparison {
@@ -225,19 +223,13 @@ export function nudgeComparisons(session: Session, now = Date.now()): NudgeCompa
     const after = next
       ? windowCells(next.contributionSplit)
       : messageShareCells(messagesBetween(session, nudge.at, chatEnd));
-    const row = (member: InterventionTarget, role: ComparisonRow["role"]): ComparisonRow => {
-      const b = before.get(member.userId) ?? EMPTY_CELL;
-      const a = after.get(member.userId) ?? EMPTY_CELL;
-      return {
-        userId: member.userId,
-        name: member.identityName,
-        role,
-        before: b,
-        after: a,
-        deltaShare: a.share - b.share,
-        deltaMessages: a.messageCount - b.messageCount,
-      };
-    };
+    const row = (member: InterventionTarget, role: ComparisonRow["role"]): ComparisonRow => ({
+      userId: member.userId,
+      name: member.identityName,
+      role,
+      before: before.get(member.userId) ?? EMPTY_CELL,
+      after: after.get(member.userId) ?? EMPTY_CELL,
+    });
     // The log names at most one target and two quiet members, so in larger
     // groups the rest of the split would otherwise drop out of the table.
     const named = new Set([...log.targets, ...log.quietMembers].map((m) => m.userId));
@@ -449,17 +441,4 @@ export function formatClock(ms: number): string {
 /** Share (0..1) → `62%`. */
 export function formatShare(value: number): string {
   return `${Math.round(value * 100)}%`;
-}
-
-/** Signed share change in percentage points, `+12 pp` / `−8 pp` / `±0 pp`. */
-export function formatSharePoints(delta: number): string {
-  const points = Math.round(delta * 100);
-  if (points === 0) return "±0 pp";
-  return `${points > 0 ? "+" : "−"}${Math.abs(points)} pp`;
-}
-
-/** Signed integer change, `+3` / `−2` / `±0`. */
-export function formatCount(delta: number): string {
-  if (delta === 0) return "±0";
-  return `${delta > 0 ? "+" : "−"}${Math.abs(delta)}`;
 }

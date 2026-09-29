@@ -88,26 +88,14 @@ describe("SessionDetail", () => {
       .filter((r) => within(r).queryByText(/^(target|quiet member|other)$/));
     expect(rows).toHaveLength(3);
     expect(rows[0]).toHaveTextContent("Red");
-    expect(rows[0]).toHaveTextContent("67% → 34% (−33 pp)");
-    expect(rows[0]).toHaveTextContent("2 → 1 (−1)");
-    expect(within(rows[0]).getAllByText(/pp\)|\(−1\)/)[0]).toHaveClass("delta", "good");
+    expect(rows[0]).toHaveTextContent("67% → 34%");
+    expect(cellsOf(rows[0])[3]).toBe("2 → 1");
+    expect(rows[0]).not.toHaveTextContent("pp");
     expect(rows[1]).toHaveTextContent("Blue");
     expect(rows[1]).toHaveTextContent("other");
     expect(rows[2]).toHaveTextContent("Green");
-    expect(rows[2]).toHaveTextContent("0% → 33% (+33 pp)");
+    expect(rows[2]).toHaveTextContent("0% → 33%");
     expect(screen.getByText("Active participants 2 → 3")).toBeInTheDocument();
-  });
-
-  it("never colours a change for a member the nudge did not address", () => {
-    const s = session();
-    s.windowEvaluations![1].contributionSplit[1].share = 0.5;
-    render(<SessionDetail session={s} />);
-    const blue = screen.getByText("other").closest("tr")!;
-    expect(blue).toHaveTextContent("33% → 50% (+17 pp)");
-    const delta = within(blue).getByText("(+17 pp)");
-    expect(delta).toHaveClass("delta");
-    expect(delta).not.toHaveClass("good");
-    expect(delta).not.toHaveClass("bad");
   });
 
   it("reads the active window on hover and via the keyboard", () => {
@@ -216,8 +204,7 @@ describe("SessionDetail", () => {
     const rows = screen
       .getAllByRole("row")
       .filter((r) => within(r).queryByText(/^(target|quiet member|other)$/));
-    expect(rows[0]).toHaveTextContent("67% → 33% (−33 pp)");
-    // Spans differ in length, so raw counts carry no delta.
+    expect(rows[0]).toHaveTextContent("67% → 33%");
     expect(cellsOf(rows[0])[3]).toBe("2 → 1");
     expect(screen.getByText("Active participants 2 → 3")).toBeInTheDocument();
   });
