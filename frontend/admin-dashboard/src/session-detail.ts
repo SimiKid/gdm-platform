@@ -92,11 +92,6 @@ export interface SessionTimeline {
   messageTicks: Array<{ at: number; userId: string }>;
 }
 
-const SUPPRESSED: ReadonlySet<WindowOutcome> = new Set([
-  "baseline-suppressed",
-  "grace-suppressed",
-]);
-
 /** Null before the chat starts: there is no time axis to draw yet. */
 export function sessionTimeline(session: Session): SessionTimeline | null {
   if (!session.startedAt) return null;
@@ -118,7 +113,7 @@ export function sessionTimeline(session: Session): SessionTimeline | null {
     .filter((w) => w.contributionSplit.length > 0)
     .map(toTimelineWindow);
   const suppressed = evaluations
-    .filter((w) => SUPPRESSED.has(w.outcome))
+    .filter((w) => w.outcome === "baseline-suppressed")
     .map(toTimelineWindow);
   const latest = evaluations.at(-1);
   const windowMinutes =
@@ -175,32 +170,47 @@ export interface ComparisonRow {
   name: string;
   role: "target" | "quiet";
   before: ComparisonCell;
-  /** Null when no later window has been evaluated (yet). */
-  after: ComparisonCell | null;
-  deltaShare: number | null;
-  deltaMessages: number | null;
+  after: ComparisonCell;
+  deltaShare: number;
+  deltaMessages: number;
 }
 
 export interface NudgeComparison {
   nudge: TimelineNudge;
   /** Index of the window that triggered the nudge; null if it cannot be linked. */
   windowIndex: number | null;
+  /**
+   * "window": both sides are the bot's own contribution shares (triggering
+   * window vs. the next evaluated one). "messages": no later window exists
+   * (with the default timing the only window closes right before wrap-up), so
+   * both sides are plain message shares — the triggering window's message
+   * counts vs. every participant message from the nudge to `afterUntil`.
+   */
+  basis: "window" | "messages";
+  /** End of the "after" span for the messages basis (chat end, or now while live). */
+  afterUntil: number | null;
+  /** True while the session is live, so a messages-basis "after" is still growing. */
+  live: boolean;
   rows: ComparisonRow[];
-  /** Participants with at least one message in the triggering / following window. */
+  /** Participants with at least one message before / after the nudge. */
   activeBefore: number;
-  activeAfter: number | null;
+  activeAfter: number;
 }
 
 /**
- * Before/after view of every nudge, measured in the bot's own contribution
- * windows: the split that triggered the nudge versus the next evaluated
- * window. The "before" split is carried by the InterventionLog itself, so
- * it never depends on the window record being present.
+ * Before/after view of every nudge. Preferably measured in the bot's own
+ * contribution windows: the split that triggered the nudge versus the next
+ * evaluated window. Without a later window it falls back to message shares
+ * over the rest of the chat (see `NudgeComparison.basis`). The "before"
+ * split is carried by the InterventionLog itself, so it never depends on the
+ * window record being present.
  */
-export function nudgeComparisons(session: Session): NudgeComparison[] {
+export function nudgeComparisons(session: Session, now = Date.now()): NudgeComparison[] {
   const evaluations = [...(session.windowEvaluations ?? [])].sort(
     (a, b) => a.windowIndex - b.windowIndex,
   );
+  const live = !session.completedAt;
+  const chatEnd = session.completedAt ? Date.parse(session.completedAt) : now;
   return session.interventions.map((log) => {
     const nudge = toTimelineNudge(log);
     const trigger = linkedWindow(log, evaluations);
@@ -210,34 +220,80 @@ export function nudgeComparisons(session: Session): NudgeComparison[] {
         : evaluations.find(
             (w) => w.windowIndex > trigger.windowIndex && w.contributionSplit.length > 0,
           );
-    const beforeSplit = new Map(log.contributionSplit.map((s) => [s.userId, s]));
-    const afterSplit = next
-      ? new Map(next.contributionSplit.map((s) => [s.userId, s]))
-      : null;
+    const before = next ? windowCells(log.contributionSplit) : messageShareCells(log.contributionSplit);
+    const after = next
+      ? windowCells(next.contributionSplit)
+      : messageShareCells(messagesBetween(session, nudge.at, chatEnd));
     const row = (member: InterventionTarget, role: ComparisonRow["role"]): ComparisonRow => {
-      const before = cell(beforeSplit.get(member.userId));
-      const after = afterSplit ? cell(afterSplit.get(member.userId)) : null;
+      const b = before.get(member.userId) ?? EMPTY_CELL;
+      const a = after.get(member.userId) ?? EMPTY_CELL;
       return {
         userId: member.userId,
         name: member.identityName,
         role,
-        before,
-        after,
-        deltaShare: after ? after.share - before.share : null,
-        deltaMessages: after ? after.messageCount - before.messageCount : null,
+        before: b,
+        after: a,
+        deltaShare: a.share - b.share,
+        deltaMessages: a.messageCount - b.messageCount,
       };
     };
     return {
       nudge,
       windowIndex: trigger?.windowIndex ?? null,
+      basis: next ? "window" : "messages",
+      afterUntil: next ? null : chatEnd,
+      live,
       rows: [
         ...log.targets.map((t) => row(t, "target")),
         ...log.quietMembers.map((t) => row(t, "quiet")),
       ],
-      activeBefore: active(log.contributionSplit),
-      activeAfter: next ? active(next.contributionSplit) : null,
+      activeBefore: activeCount(before),
+      activeAfter: activeCount(after),
     };
   });
+}
+
+const EMPTY_CELL: ComparisonCell = { share: 0, messageCount: 0, dominanceScore: 0 };
+
+function windowCells(split: ContributionShare[]): Map<string, ComparisonCell> {
+  return new Map(
+    split.map((s) => [
+      s.userId,
+      { share: s.share, messageCount: s.messageCount, dominanceScore: s.dominanceScore },
+    ]),
+  );
+}
+
+/** Message counts per user → cells whose share is the plain message share. */
+function messageShareCells(
+  counts: Array<{ userId: string; messageCount: number }>,
+): Map<string, ComparisonCell> {
+  const total = counts.reduce((sum, c) => sum + c.messageCount, 0);
+  return new Map(
+    counts.map((c) => [
+      c.userId,
+      {
+        share: total > 0 ? c.messageCount / total : 0,
+        messageCount: c.messageCount,
+        dominanceScore: 0,
+      },
+    ]),
+  );
+}
+
+/** Participant messages in (from, to], counted per sender. */
+function messagesBetween(
+  session: Session,
+  from: number,
+  to: number,
+): Array<{ userId: string; messageCount: number }> {
+  const counts = new Map<string, number>();
+  for (const m of session.chat.messages) {
+    const at = Date.parse(m.timestamp);
+    if (isServiceUser(m.senderId) || at <= from || at > to) continue;
+    counts.set(m.senderId, (counts.get(m.senderId) ?? 0) + 1);
+  }
+  return [...counts].map(([userId, messageCount]) => ({ userId, messageCount }));
 }
 
 function linkedWindow(
@@ -262,16 +318,8 @@ function linkedWindow(
   return best;
 }
 
-function cell(share: ContributionShare | undefined): ComparisonCell {
-  return {
-    share: share?.share ?? 0,
-    messageCount: share?.messageCount ?? 0,
-    dominanceScore: share?.dominanceScore ?? 0,
-  };
-}
-
-function active(split: ContributionShare[]): number {
-  return split.filter((s) => s.messageCount > 0).length;
+function activeCount(cells: Map<string, ComparisonCell>): number {
+  return [...cells.values()].filter((c) => c.messageCount > 0).length;
 }
 
 export type ClassifierSummary =

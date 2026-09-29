@@ -51,6 +51,8 @@ export class SessionRuntime {
   private participantUserIds?: Promise<string[]>;
   /** Monotonic snapshot revision; restored after a Chat Service restart. */
   private checkpointRevision = 0;
+  /** End of the latest window boundary handed to the rules; restored too. */
+  private lastWindowBoundaryMs = 0;
 
   constructor(
     readonly sessionId: string,
@@ -153,6 +155,17 @@ export class SessionRuntime {
 
   recordWindowEvaluation(evaluation: WindowEvaluation): void {
     this.windowEvaluations.push(evaluation);
+  }
+
+  /**
+   * Claim a window boundary for evaluation. False when this boundary — or a
+   * later one — was already claimed or restored: evaluating a boundary twice
+   * records a second (after a nudge, all-zero) copy of the same window.
+   */
+  claimWindowBoundary(windowEndMs: number): boolean {
+    if (windowEndMs <= this.lastWindowBoundaryMs) return false;
+    this.lastWindowBoundaryMs = windowEndMs;
+    return true;
   }
 
   recordClassificationFailure(failure: ClassificationFailure): void {
@@ -266,6 +279,12 @@ export class SessionRuntime {
     this.contributionClassifications.push(...checkpoint.contributionClassifications);
     // Checkpoints written before these fields existed omit them.
     this.windowEvaluations.push(...(checkpoint.windowEvaluations ?? []));
+    for (const evaluation of this.windowEvaluations) {
+      const endMs = Date.parse(evaluation.windowEnd);
+      if (Number.isFinite(endMs)) {
+        this.lastWindowBoundaryMs = Math.max(this.lastWindowBoundaryMs, endMs);
+      }
+    }
     this.classificationFailures.push(...(checkpoint.classificationFailures ?? []));
     for (const eventId of checkpoint.processedEventIds) {
       this.processedEventIds.add(eventId);

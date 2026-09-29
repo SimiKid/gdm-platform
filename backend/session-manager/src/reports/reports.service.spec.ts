@@ -176,6 +176,7 @@ async function seedSession(
           identityName: "Red",
           messageCount: 1,
           wordCount: 4,
+          invitationCount: 2,
           score: 1.2,
           share: 0.53,
           meaningfulnessScore: 0.67,
@@ -368,6 +369,24 @@ describe("ReportsService (in-memory store)", () => {
     expect(lines[2].endsWith("true,false")).toBe(true); // candidate, not nudged
     expect(lines[3]).toContain("wrap-up");
     expect(csv).not.toContain(U1);
+
+    const header = lines[0].split(",");
+    const column = header.indexOf("invitation_count");
+    expect(column).toBe(header.indexOf("word_count") + 1);
+    for (const line of lines) {
+      expect(line.split(",")).toHaveLength(header.length);
+    }
+    expect(lines[1].split(",")[column]).toBe("2");
+    // Blue's split entry predates the field: unknown, not 0.
+    expect(lines[2].split(",")[column]).toBe("");
+    expect(lines[3].split(",")[column]).toBe("");
+  });
+
+  it("carries the invitation count in the windows JSON", async () => {
+    const { windows } = await reports.exportWindows();
+    expect(
+      windows[0].contributionSplit.map((share) => share.invitationCount),
+    ).toEqual([2, null]);
   });
 
   it("links pseudonyms back to identifying data only in linkage.csv", async () => {

@@ -47,7 +47,7 @@ describe("Etherpad study lifecycle", () => {
     const s = await store.createForming({ id: "etherpad-test", name: "Writing", active: true, goal: 10, groupSize: tokens.length, durationMinutes: 1,
       config: { ...DEFAULT_INTERVENTION_CONFIG, workspaceMode: "etherpad" } });
     for (const token of tokens) {
-      s.participants.push({ id: `id-${token}`, name: token, trackingToken: token });
+      s.participants.push({ id: `id-${token}`, name: token, trackingToken: token, recruitmentSource: "direct" });
       await service.attach(token, s, `id-${token}`);
     }
     s.status = "running"; s.startedAt = new Date().toISOString();

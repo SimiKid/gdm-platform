@@ -38,6 +38,10 @@ describe("StoreService", () => {
     );
   });
 
+  it("has no condition creation times without a database", async () => {
+    expect(await store.conditionCreatedAt()).toEqual(new Map());
+  });
+
   it("upsertCondition updates editable condition settings", async () => {
     const condition = (await store.listConditions())[0];
     const updated = await store.upsertCondition({
@@ -87,6 +91,49 @@ describe("StoreService", () => {
     );
     expect(session.interventions).toEqual([]);
     expect(await store.getSession(session.id)).toBe(session);
+  });
+
+  it("keeps one window record per boundary when a checkpoint repeats a boundary", async () => {
+    const cond = (await store.listConditions())[1];
+    const session = await store.createForming(cond);
+    const windowEnd = "2026-07-31T08:31:54.000Z";
+    const record = (id: string, messageCount: number, interventionId: string | null) => ({
+      id,
+      sessionId: session.id,
+      conditionId: cond.id,
+      windowIndex: 0,
+      windowStart: "2026-07-31T08:30:54.000Z",
+      windowEnd,
+      contributionWindowMinutes: 1,
+      llmMode: "active" as const,
+      threshold: 0.4,
+      outcome: interventionId ? ("nudged" as const) : ("no-target" as const),
+      contributionSplit: [
+        { userId: "@a:test", identityName: "Red", messageCount, wordCount: 5, score: 1, share: 1, meaningfulnessScore: 0, dominanceScore: 1 },
+      ],
+      candidateTargets: [],
+      maxDominanceScore: null,
+      interventionId,
+    });
+    const checkpoint = (windowEvaluations: ReturnType<typeof record>[]) => ({
+      messages: [],
+      rankingHistory: [],
+      interventions: [],
+      behavioralEvents: [],
+      contributionClassifications: [],
+      windowEvaluations,
+      classificationFailures: [],
+      processedEventIds: [],
+      ruleState: {},
+    });
+
+    // A pre-2026-09-20 chat service could send the real (nudged) record and
+    // a later all-zero copy of the same boundary under a different id.
+    await store.saveRuntimeCheckpoint(session.id, checkpoint([record("real", 3, "n1")]));
+    await store.saveRuntimeCheckpoint(session.id, checkpoint([record("copy", 0, null)]));
+
+    const stored = await store.getSession(session.id);
+    expect(stored!.windowEvaluations!.map((w) => w.id)).toEqual(["real"]);
   });
 
   it("shuffles a ranking without mutating the task item order", () => {

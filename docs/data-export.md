@@ -164,7 +164,7 @@ The example below is **abridged**: each session object additionally embeds `bot`
           "contributionSplit": [
             {
               "userId": "@gdm_user_abc:synapse", "identityName": "Blue",
-              "messageCount": 9, "wordCount": 140, "score": 16,
+              "messageCount": 9, "wordCount": 140, "invitationCount": 1, "score": 16,
               "share": 0.72, "meaningfulnessScore": 0.5, "dominanceScore": 0.698
             }
           ],
@@ -255,7 +255,7 @@ One row per session. Intended for a quick overview of study progress and session
 
 **Endpoint:** `GET /api/export/sessions-detailed.csv`
 
-One row per session with the **frozen condition snapshot** the session ran with — the file to consult when reconstructing which parameters applied in a given round. Columns: `session_id`, `status`, `round_id`, `condition_id`, `condition_name`, `goal`, `group_size`, `duration_minutes`, `llm_mode`, `workspace_mode`, `intervention_mode`, `invite_grace_seconds`, `protected_start_minutes`, `protected_end_minutes`, `contribution_threshold`, `contribution_window_minutes`, `score_weight_words`, `score_weight_messages`, `dominance_weight_share`, `dominance_weight_meaningfulness`, `final_group_ranking` (pipe-joined item ids), `room_id`, `created_at`, `started_at`, `completed_at`. Config keys missing from old snapshots are filled with the current defaults; legacy mode strings such as `public-engaging` are folded onto `baseline` / `public` / `private`.
+One row per session with the **frozen condition snapshot** the session ran with — the file to consult when reconstructing which parameters applied in a given round. Columns: `session_id`, `status`, `round_id`, `condition_id`, `condition_name`, `goal`, `group_size`, `duration_minutes`, `llm_mode`, `workspace_mode`, `intervention_mode`, `protected_start_minutes`, `protected_end_minutes`, `contribution_threshold`, `contribution_window_minutes`, `score_weight_words`, `score_weight_messages`, `dominance_weight_share`, `dominance_weight_meaningfulness`, `final_group_ranking` (pipe-joined item ids), `room_id`, `created_at`, `started_at`, `completed_at`. Config keys missing from old snapshots are filled with the current defaults; legacy mode strings such as `public-engaging` are folded onto `baseline` / `public` / `private`.
 
 ---
 
@@ -334,7 +334,7 @@ One record per bot intervention across all sessions. (`GET /api/interventions` r
       "contributionSplit": [
         {
           "userId": "@gdm_user_abc:synapse", "identityName": "Blue",
-          "messageCount": 9, "wordCount": 140, "score": 16,
+          "messageCount": 9, "wordCount": 140, "invitationCount": 1, "score": 16,
           "share": 0.72, "meaningfulnessScore": 0.5, "dominanceScore": 0.698
         }
       ],
@@ -541,7 +541,7 @@ The JSON export contains three arrays. The CSV contains only the aggregate contr
 |---|---|
 | `relevance` | `{ rating, reason }` — integer 1–5: how much of the message contributes content relevant to the ranking task (naming items, stating stances, making proposals); 5 = fully task-focused, 1 = entirely off-topic |
 | `coherence` | `{ rating, reason }` — integer 1–5: how well the message connects to and builds on the ongoing discussion; 5 = clearly addresses or extends prior messages or members, 1 = stands alone |
-| `invitesParticipation` | `{ value, reason }` — explicitly invites another member to contribute. Tracked separately; never part of the meaningfulness score. |
+| `invitesParticipation` | `{ value, reason }` — explicitly invites another member to contribute. Tracked separately; never part of the meaningfulness score. In the nudging arms a message marked `true` is excluded from the bot's contribution split. |
 | `meaningfulnessScore` | `(mean(relevance, coherence) − 1) / 4`, continuous in 0..1 |
 
 Records written before this version (`promptVersion: "meaningfulness-v1"`)
@@ -603,7 +603,7 @@ One row per participant. Columns in order:
 
 **Endpoints:** `GET /api/export/sessions-analysis` (JSON) · `GET /api/export/sessions-analysis.csv` → `sessions_analysis.csv`
 
-One row per session. Columns: `session_pseudonym`, `condition_id`, `condition_name`, `round`, `intervention_mode`, `llm_mode`, `status`, `n_participants`, `group_size`, `created_at`, `started_at`, `completed_at`, `planned_duration_minutes`, `group_ranking_error` (NASA score of the final shared ranking — read together with `ranking_edit_count`), `ranking_edit_count`, `participant_message_count`, `bot_message_count`, `word_count_total` (participant messages only — there is no bot word count), `share_std_dev`, `share_gini`, `intervention_count`, `interventions_public`, `interventions_private`, `windows_evaluated`, `windows_nudged`, `windows_no_target`, `windows_grace_suppressed`, `windows_baseline_suppressed` (the `warm-up` / `wrap-up` / `too-few-participants` outcomes have no count column), `classification_count`, `classification_failure_count`, `entry_surveys`, `exit_surveys`, `mean_satisfaction`, `mean_fairness`, `mean_felt_heard` (the three means are computed from the legacy exit keys and are empty for data collected with the current exit survey).
+One row per session. Columns: `session_pseudonym`, `condition_id`, `condition_name`, `round`, `intervention_mode`, `llm_mode`, `status`, `n_participants`, `group_size`, `created_at`, `started_at`, `completed_at`, `planned_duration_minutes`, `group_ranking_error` (NASA score of the final shared ranking — read together with `ranking_edit_count`), `ranking_edit_count`, `participant_message_count`, `bot_message_count`, `word_count_total` (participant messages only — there is no bot word count), `share_std_dev`, `share_gini`, `intervention_count`, `interventions_public`, `interventions_private`, `windows_evaluated`, `windows_nudged`, `windows_no_target`, `windows_baseline_suppressed` (the `warm-up` / `wrap-up` / `too-few-participants` outcomes have no count column), `classification_count`, `classification_failure_count`, `entry_surveys`, `exit_surveys`, `mean_satisfaction`, `mean_fairness`, `mean_felt_heard` (the three means are computed from the legacy exit keys and are empty for data collected with the current exit survey).
 
 ### Rankings (raw orders)
 
@@ -615,7 +615,7 @@ One row per ranking. Columns: `session_pseudonym`, `condition_id`, `round`, `typ
 
 **Endpoints:** `GET /api/export/windows` (JSON) · `GET /api/export/windows.csv`
 
-The bot records **every** evaluated contribution-window boundary, not just fired nudges — including baseline sessions, where `baseline-suppressed` rows show when a nudge *would* have fired. The CSV is long format (one row per window × participant, ready for mixed-effects models; a window without a computed split — `warm-up`, `wrap-up`, `too-few-participants` — emits a single row with empty participant columns); the JSON nests the per-participant split inside each window record. CSV columns: `session_pseudonym`, `condition_id`, `round`, `intervention_mode`, `llm_mode`, `window_index`, `window_start`, `window_end`, `window_minutes`, `threshold` (the two frozen parameters), `outcome`, `max_dominance_score`, `intervention_fired`, `participant_pseudonym`, `message_count`, `word_count`, `score`, `share`, `meaningfulness_score`, `dominance_score`, `is_candidate_target`, `was_nudged`. Outcomes: `nudged`, `no-target`, `grace-suppressed`, `baseline-suppressed`, `warm-up`, `wrap-up`, `too-few-participants`. Only sessions run after this instrumentation was deployed have window records.
+The bot records **every** evaluated contribution-window boundary, not just fired nudges — including baseline sessions, where `baseline-suppressed` rows show when a nudge *would* have fired. The CSV is long format (one row per window × participant, ready for mixed-effects models; a window without a computed split — `warm-up`, `wrap-up`, `too-few-participants` — emits a single row with empty participant columns); the JSON nests the per-participant split inside each window record. CSV columns: `session_pseudonym`, `condition_id`, `round`, `intervention_mode`, `llm_mode`, `window_index`, `window_start`, `window_end`, `window_minutes`, `threshold` (the two frozen parameters), `outcome`, `max_dominance_score`, `intervention_fired`, `participant_pseudonym`, `message_count`, `word_count`, `invitation_count`, `score`, `share`, `meaningfulness_score`, `dominance_score`, `is_candidate_target`, `was_nudged`. Outcomes: `nudged`, `no-target`, `baseline-suppressed`, `warm-up`, `wrap-up`, `too-few-participants`. The participant columns are the bot's own split: in the nudging arms (`llm_mode` = `active`), messages classified as inviting others to participate (`invitesParticipation`) are excluded from `message_count`, `word_count`, `score`, `share` and `meaningfulness_score`; in the baseline every message counts. `invitation_count` (JSON: `invitationCount`) is the number of messages excluded this way per participant and window — always `0` in the baseline, which has no classifier, and empty (`null`) for windows recorded before the exclusion was introduced. Only sessions run after this instrumentation was deployed have window records. **One record per boundary:** Chat Service builds before 2026-09-20 could evaluate a boundary twice when the window timer fired a few milliseconds early — after a nudge the second pass recorded an all-zero `no-target` copy (the tracker had just been reset), otherwise an identical copy. Such duplicates share `window_end` and are dropped whenever session data is read: per boundary the nudged record is kept, else the one that counted the most messages, else the first. Every export, `GET /api/reports/summary` and the dashboard therefore show one record per boundary; the stored database rows themselves are left untouched.
 
 ### Linkage (identifying — handle with care)
 

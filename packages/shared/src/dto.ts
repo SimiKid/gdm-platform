@@ -149,6 +149,11 @@ export interface ConditionProgress {
   completed: number;
   /** Mirrors condition.goal; auto-off triggers once completed >= goal. */
   goal: number;
+  /**
+   * When the condition was first stored (ISO). Absent without a database.
+   * The Testing tab dates automated `e2e-` runs by it.
+   */
+  createdAt?: string;
 }
 
 /** One study round. Counts exclude automated `e2e-` test conditions. */

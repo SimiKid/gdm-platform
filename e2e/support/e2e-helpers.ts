@@ -176,6 +176,20 @@ export function uniqueId(prefix: string): string {
     .slice(2, 8)}`;
 }
 
+/**
+ * Suffix like "· 29 Sep, 14:03" so conditions from different runs are told
+ * apart by name in the dashboard's Testing tab and session list.
+ */
+export function withRunTime(name: string): string {
+  const time = new Date().toLocaleString("en-GB", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `${name} · ${time}`;
+}
+
 export async function createCondition(
   request: APIRequestContext,
   overrides: TestConditionOverrides = {},
@@ -185,14 +199,15 @@ export async function createCondition(
     throw new Error(`E2E conditions must use the e2e- prefix (received ${id})`);
   }
 
+  const { name = "E2E condition", ...rest } = overrides;
   const condition: TestCondition = {
     id,
-    name: `E2E ${id.slice(4)}`,
+    name: withRunTime(name),
     active: true,
     goal: 1_000,
     durationMinutes: 2,
     groupSize: 2,
-    ...overrides,
+    ...rest,
     config: {
       interventionMode: "baseline",
       ...overrides.config,

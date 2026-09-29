@@ -686,7 +686,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         "llm_mode",
         "workspace_mode",
         "intervention_mode",
-        "invite_grace_seconds",
         "protected_start_minutes",
         "protected_end_minutes",
         "contribution_threshold",
@@ -730,7 +729,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           // Fold retired tone suffixes (e.g. "public-neutral") onto the
           // canonical baseline/public/private axis, matching the stored type.
           normalizeInterventionMode(config.interventionMode),
-          String(config.inviteGraceSeconds),
           String(config.protectedStartMinutes),
           String(config.protectedEndMinutes),
           String(config.contributionThreshold),

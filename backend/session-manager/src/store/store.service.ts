@@ -38,6 +38,7 @@ import type {
 } from "@gdm/shared";
 import type { MatrixCreds } from "../matrix/matrix.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { dedupeWindowEvaluations } from "./window-evaluations";
 
 const BRIEFING = MOON_SURVIVAL_BRIEFING;
 const RANKING_TASK = MOON_SURVIVAL;
@@ -135,6 +136,16 @@ export class StoreService implements OnModuleInit {
     await this.ensureSeeded();
     const rows = await this.db.conditionRecord.findMany();
     return rows.map(conditionFromRow).sort(sortConditions);
+  }
+
+  /** Creation time (ISO) per condition id; empty without a database. */
+  async conditionCreatedAt(): Promise<Map<string, string>> {
+    if (!this.dbEnabled) return new Map();
+    await this.ensureSeeded();
+    const rows = await this.db.conditionRecord.findMany({
+      select: { id: true, createdAt: true },
+    });
+    return new Map(rows.map((row) => [row.id, row.createdAt.toISOString()]));
   }
 
   async upsertCondition(condition: Condition): Promise<Condition> {
@@ -2212,10 +2223,12 @@ function mergeCheckpointIntoSession(
     (classification) => classification.messageId,
     acceptsMutableState,
   );
-  session.windowEvaluations = mergeByKey(
-    session.windowEvaluations ?? [],
-    checkpoint.windowEvaluations ?? [],
-    (evaluation) => evaluation.id,
+  session.windowEvaluations = dedupeWindowEvaluations(
+    mergeByKey(
+      session.windowEvaluations ?? [],
+      checkpoint.windowEvaluations ?? [],
+      (evaluation) => evaluation.id,
+    ),
   );
   session.classificationFailures = mergeCheckpointValues(
     session.classificationFailures ?? [],
@@ -2602,8 +2615,10 @@ function sessionFromRow(row: SessionRow): Session {
     contributionClassifications: fromJson<ContributionClassification[]>(
       row.classifications,
     ),
-    windowEvaluations: row.windowEvaluations.map(
-      (evaluation) => fromJson<WindowEvaluation>(evaluation.payload),
+    windowEvaluations: dedupeWindowEvaluations(
+      row.windowEvaluations.map(
+        (evaluation) => fromJson<WindowEvaluation>(evaluation.payload),
+      ),
     ),
     classificationFailures: fromJson<ClassificationFailure[]>(
       row.classificationFailures,

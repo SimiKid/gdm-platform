@@ -6,6 +6,9 @@ dist/
 !infra/.env.example
 !loadtest/.env.example
 
+# Local access tokens
+access token/
+
 # Structurizr Lite working files
 .structurizr/
 docs/architecture/workspace.json

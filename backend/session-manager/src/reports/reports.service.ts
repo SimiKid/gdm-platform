@@ -284,7 +284,6 @@ export class ReportsService {
         "windows_evaluated",
         "windows_nudged",
         "windows_no_target",
-        "windows_grace_suppressed",
         "windows_baseline_suppressed",
         "classification_count",
         "classification_failure_count",
@@ -321,7 +320,6 @@ export class ReportsService {
         String(row.windowsEvaluated),
         String(row.windowsNudged),
         String(row.windowsNoTarget),
-        String(row.windowsGraceSuppressed),
         String(row.windowsBaselineSuppressed),
         String(row.classificationCount),
         String(row.classificationFailureCount),
@@ -359,6 +357,7 @@ export class ReportsService {
             participantPseudonym: senderPseudonym(session, share.userId),
             messageCount: share.messageCount,
             wordCount: share.wordCount,
+            invitationCount: share.invitationCount ?? null,
             score: share.score,
             share: share.share,
             meaningfulnessScore: share.meaningfulnessScore,
@@ -403,7 +402,7 @@ export class ReportsService {
           evaluation.outcome === "nudged" ? "true" : "false",
         ];
         if (evaluation.contributionSplit.length === 0) {
-          rows.push([...windowCells, "", "", "", "", "", "", "", "", ""]);
+          rows.push([...windowCells, "", "", "", "", "", "", "", "", "", ""]);
           continue;
         }
         for (const share of evaluation.contributionSplit) {
@@ -412,6 +411,7 @@ export class ReportsService {
             senderPseudonym(session, share.userId),
             String(share.messageCount),
             String(share.wordCount),
+            cell(share.invitationCount),
             String(share.score),
             String(share.share),
             String(share.meaningfulnessScore),
@@ -444,6 +444,7 @@ export class ReportsService {
         "participant_pseudonym",
         "message_count",
         "word_count",
+        "invitation_count",
         "score",
         "share",
         "meaningfulness_score",
@@ -1221,9 +1222,6 @@ function sessionRow(session: Session) {
     windowsEvaluated: windows.length,
     windowsNudged: windows.filter((w) => w.outcome === "nudged").length,
     windowsNoTarget: windows.filter((w) => w.outcome === "no-target").length,
-    windowsGraceSuppressed: windows.filter(
-      (w) => w.outcome === "grace-suppressed",
-    ).length,
     windowsBaselineSuppressed: windows.filter(
       (w) => w.outcome === "baseline-suppressed",
     ).length,
@@ -1479,7 +1477,6 @@ Every contribution-window boundary produces exactly one evaluation.
 - \`nudged\` — a nudge fired (\`intervention_fired\` = true; \`was_nudged\`
   marks the targeted participant)
 - \`no-target\` — nobody crossed the threshold
-- \`grace-suppressed\` — only members inside the invite grace period crossed it
 - \`baseline-suppressed\` — baseline arm: a member crossed the threshold but
   nothing was delivered (counterfactual)
 - \`warm-up\` / \`wrap-up\` / \`too-few-participants\` — boundary not
@@ -1487,6 +1484,13 @@ Every contribution-window boundary produces exactly one evaluation.
 
 The contribution tracker resets after each fired nudge, so scores reflect
 activity since the last nudge (or warm-up end), not cumulative history.
+The participant columns are the bot's own split: in the nudging arms
+(\`llm_mode\` = active), messages classified as inviting others to
+participate are excluded from \`message_count\`, \`word_count\`, \`score\`,
+\`share\` and \`meaningfulness_score\`; in the baseline every message counts.
+\`invitation_count\` is the number of messages excluded this way (always 0
+in the baseline, which has no classifier; empty for windows recorded before
+the exclusion was introduced).
 Windows exist only for sessions run after this instrumentation was deployed.
 
 ### rankings.csv — one row per ranking (raw orders)

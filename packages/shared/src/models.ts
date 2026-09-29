@@ -236,8 +236,9 @@ export interface ClassifierRating {
  *
  * Two graded dimensions (rated in this order) combine into
  * `meaningfulnessScore = (mean(relevance, coherence) - 1) / 4`, continuous
- * in 0..1. `invitesParticipation` is tracked separately — it feeds the
- * dominant contributor's self-correction grace period, never the score.
+ * in 0..1. `invitesParticipation` is tracked separately — never part of the
+ * score; a message classified as an invitation is excluded from the
+ * contribution split instead.
  */
 export interface ContributionClassification {
   messageId: string;

@@ -105,6 +105,8 @@ describe("research reports (integration)", () => {
           windowEvaluation(sessionId, userIds),
           windowEvaluation(sessionId, [], {
             windowIndex: 1,
+            windowStart: "2026-07-30T10:12:00.000Z",
+            windowEnd: "2026-07-30T10:16:00.000Z",
             outcome: "warm-up",
             maxDominanceScore: null,
           }),
@@ -145,6 +147,59 @@ describe("research reports (integration)", () => {
       windowsEvaluated: 2,
       classificationFailureCount: 1,
     });
+  });
+
+  it("exports one window per boundary when stored rows repeat a boundary", async () => {
+    const responses = await fillSession(t, "public-llm");
+    const sessionId = responses[0].session.id;
+    const userIds = responses.map((r) => r.matrix.userId);
+
+    // Pre-2026-09-20 chat services could evaluate a boundary twice: the real
+    // nudged record plus an all-zero copy under a different id. Both rows
+    // reach Postgres; reads must keep only the nudged one.
+    const nudged = windowEvaluation(sessionId, userIds, {
+      id: "w-real",
+      outcome: "nudged",
+      interventionId: "n-1",
+    });
+    const zeroCopy = windowEvaluation(sessionId, userIds, { id: "w-copy" });
+    zeroCopy.contributionSplit = zeroCopy.contributionSplit.map((share) => ({
+      ...share,
+      messageCount: 0,
+      wordCount: 0,
+      score: 0,
+      share: 0,
+      dominanceScore: 0,
+    }));
+    await request(t.http)
+      .put(`/api/sessions/${sessionId}/checkpoint`)
+      .send({ ...emptyCheckpoint(), windowEvaluations: [nudged] })
+      .expect(200);
+    await request(t.http)
+      .put(`/api/sessions/${sessionId}/checkpoint`)
+      .send({ ...emptyCheckpoint(), windowEvaluations: [zeroCopy] })
+      .expect(200);
+
+    await t.close();
+    t = await createTestApp();
+
+    const windows = (
+      await request(t.http).get("/api/export/windows").expect(200)
+    ).body;
+    expect(windows.windows).toHaveLength(1);
+    expect(windows.windows[0]).toMatchObject({ outcome: "nudged" });
+
+    const analysis = (
+      await request(t.http).get("/api/export/sessions-analysis").expect(200)
+    ).body;
+    expect(analysis.sessions[0]).toMatchObject({ windowsEvaluated: 1 });
+
+    const detail = (
+      await request(t.http)
+        .get(`/api/admin/sessions/${sessionId}`)
+        .expect(200)
+    ).body;
+    expect(detail.windowEvaluations.map((w: WindowEvaluation) => w.id)).toEqual(["w-real"]);
   });
 
   it("accepts old-shape checkpoints without the new fields", async () => {

@@ -207,15 +207,17 @@ export class SessionsController {
   @Get("conditions/progress")
   @UseGuards(AdminGuard)
   async progress(): Promise<ConditionProgress[]> {
-    const [conditions, round] = await Promise.all([
+    const [conditions, round, createdAt] = await Promise.all([
       this.store.listConditions(),
       this.store.currentRound(),
+      this.store.conditionCreatedAt(),
     ]);
     return Promise.all(
       conditions.map(async (condition) => ({
         condition,
         completed: await this.store.completedCount(condition.id, round.id),
         goal: condition.goal,
+        createdAt: createdAt.get(condition.id),
       })),
     );
   }

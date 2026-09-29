@@ -51,7 +51,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByRole("heading", { name: "Study Rounds" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Testing" }));
-    expect(screen.getByRole("heading", { name: "Testing Workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Automated Tests" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Overview" }));
     expect(screen.getByText("Study Link")).toBeInTheDocument();
   });

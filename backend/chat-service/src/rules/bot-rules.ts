@@ -61,10 +61,6 @@ interface RuleState {
    * toward dominance again ("back to 20-20-20").
    */
   lastInterventionAtMs?: number;
-  /** userId -> epoch ms until which the invite grace period suppresses flags. */
-  inviteGraceUntilByUser: Record<string, number>;
-  /** Event time that opened the current grace period for each user. */
-  inviteGraceStartedAtByUser: Record<string, number>;
 }
 
 type LlmMode = "off" | "active";
@@ -85,8 +81,10 @@ interface PendingClassification {
  * score over that window crosses the condition threshold, and at most one
  * nudge is sent per window. Both nudging arms run `llmMode: "active"`: the
  * score is the composite `0.90 × contribution share + 0.10 × mean
- * meaningfulness` (study protocol). With `llmMode: "off"` (the silent
- * baseline) the score is the raw share of message count + word count.
+ * meaningfulness` (study protocol), and messages classified as inviting
+ * others to participate do not count toward the split at all. With
+ * `llmMode: "off"` (the silent baseline) the score is the raw share of
+ * message count + word count over every message.
  * Detection is identical across delivery conditions — only public vs. private
  * delivery differs.
  */
@@ -108,8 +106,7 @@ export class ContributionBotRules implements BotRules {
     const llmMode = resolveLlmMode(config);
     if (llmMode === "off" || !this.classifier) return;
     const participantIds = await this.getParticipantIds(runtime);
-    const state = getRuleState(runtime, STATE_KEY);
-    await this.classifyMessage(runtime, event, config, llmMode, participantIds, state);
+    await this.classifyMessage(runtime, event, participantIds);
   }
 
   /** Evaluate the closed window and nudge (at most once per window). */
@@ -173,16 +170,11 @@ export class ContributionBotRules implements BotRules {
       llmMode,
       Math.max(state.lastInterventionAtMs ?? 0, warmupEndMs),
     );
-    // Over-threshold members BEFORE grace filtering, so grace-suppressed
-    // windows stay distinguishable from windows where nobody dominated.
     const overThreshold = split
       .filter((entry) => entry.dominanceScore >= config.contributionThreshold)
       .sort(
         (a, b) => b.dominanceScore - a.dominanceScore || b.score - a.score,
       );
-    const targets = overThreshold.filter(
-      (entry) => !isInInviteGrace(state, entry.userId, windowEndMs),
-    );
     const evaluated: Partial<WindowEvaluation> = {
       contributionSplit: split,
       candidateTargets: overThreshold.map(toTarget),
@@ -196,17 +188,13 @@ export class ContributionBotRules implements BotRules {
       record("no-target", evaluated);
       return;
     }
-    if (targets.length === 0) {
-      record("grace-suppressed", evaluated);
-      return;
-    }
 
     const audience = audienceForMode(config.interventionMode);
     if (audience === "none") {
       record("baseline-suppressed", evaluated);
       return;
     }
-    const target = targets[0];
+    const target = overThreshold[0];
     const quietMembers = quietestMembers(split, target, config.contributionThreshold);
     // Rotate the operational fallback variants across the session's nudges.
     const nudgeIndex = runtime.interventions.length;
@@ -255,12 +243,9 @@ export class ContributionBotRules implements BotRules {
   private async classifyMessage(
     runtime: SessionRuntime,
     event: TimelineEvent,
-    config: InterventionConfig,
-    llmMode: LlmMode,
     participantIds: string[],
-    state: RuleState,
   ): Promise<void> {
-    if (llmMode === "off" || !this.classifier) return;
+    if (!this.classifier) return;
     const messageIndex = runtime.messages.findIndex(
       (message) => message.id === event.eventId,
     );
@@ -275,25 +260,11 @@ export class ContributionBotRules implements BotRules {
     });
     if (!isClassification(classification)) {
       // Coverage accounting: an unclassified message must not silently look
-      // like a meaningless one. No grace update either.
+      // like a meaningless one (or like an invitation).
       runtime.recordClassificationFailure(classification);
       return;
     }
     runtime.recordClassification(classification);
-    // Self-correction reward: inviting others suppresses being flagged for a
-    // moment.
-    if (classification.invitesParticipation.value) {
-      const previousStart =
-        state.inviteGraceStartedAtByUser[message.senderId] ??
-        Number.NEGATIVE_INFINITY;
-      // Classifications finish concurrently and may resolve out of order.
-      // Keep the newest invitation, never whichever request happened to end last.
-      if (event.ts >= previousStart) {
-        state.inviteGraceStartedAtByUser[message.senderId] = event.ts;
-        state.inviteGraceUntilByUser[message.senderId] =
-          event.ts + config.inviteGraceSeconds * 1000;
-      }
-    }
   }
 
   private async getParticipantIds(runtime: SessionRuntime): Promise<string[]> {
@@ -342,9 +313,6 @@ function getRuleState(runtime: SessionRuntime, stateKey: string): RuleState {
   const existing = runtime.state[stateKey] as Partial<RuleState> | undefined;
   const state: RuleState = {
     lastInterventionAtMs: existing?.lastInterventionAtMs,
-    inviteGraceUntilByUser: existing?.inviteGraceUntilByUser ?? {},
-    inviteGraceStartedAtByUser:
-      existing?.inviteGraceStartedAtByUser ?? {},
   };
   runtime.state[stateKey] = state;
   return state;
@@ -384,19 +352,6 @@ function isInsideInterventionWindow(
   return true;
 }
 
-function isInInviteGrace(
-  state: RuleState,
-  userId: string,
-  nowMs: number,
-): boolean {
-  const until = state.inviteGraceUntilByUser[userId];
-  if (until === undefined || nowMs >= until) return false;
-  const startedAt = state.inviteGraceStartedAtByUser[userId];
-  // A message arriving after this boundary must never affect the already
-  // closed window, even if its concurrent classification finishes first.
-  return startedAt === undefined || startedAt <= nowMs;
-}
-
 function contributionSplit(
   messages: Message[],
   classifications: ContributionClassification[],
@@ -410,15 +365,25 @@ function contributionSplit(
   const windowCutoffMs = nowMs - config.contributionWindowMinutes * 60_000;
   const byUser = new Map<
     string,
-    { messageCount: number; wordCount: number; meaningfulness: number[] }
+    {
+      messageCount: number;
+      wordCount: number;
+      invitationCount: number;
+      meaningfulness: number[];
+    }
   >();
 
   for (const id of participantIds) {
-    byUser.set(id, { messageCount: 0, wordCount: 0, meaningfulness: [] });
+    byUser.set(id, {
+      messageCount: 0,
+      wordCount: 0,
+      invitationCount: 0,
+      meaningfulness: [],
+    });
   }
 
-  const scoreByMessageId = new Map(
-    classifications.map((item) => [item.messageId, item.meaningfulnessScore]),
+  const classificationByMessageId = new Map(
+    classifications.map((item) => [item.messageId, item]),
   );
   for (const message of messages) {
     const messageMs = new Date(message.timestamp).getTime();
@@ -432,10 +397,18 @@ function contributionSplit(
     }
     const stats = byUser.get(message.senderId);
     if (!stats) continue;
+    const classification = classificationByMessageId.get(message.id);
+    // Inviting others to speak is not airtime: the whole message is left out
+    // of the split. Unclassified messages (failed or still in flight) count.
+    if (llmMode === "active" && classification?.invitesParticipation.value) {
+      stats.invitationCount += 1;
+      continue;
+    }
     stats.messageCount += 1;
     stats.wordCount += countWords(message.text);
-    const meaningfulness = scoreByMessageId.get(message.id);
-    if (meaningfulness !== undefined) stats.meaningfulness.push(meaningfulness);
+    if (classification) {
+      stats.meaningfulness.push(classification.meaningfulnessScore);
+    }
   }
 
   const scores = participantIds.map((userId) => {
@@ -453,6 +426,7 @@ function contributionSplit(
       identityName: identityFor(identities, userId).name,
       messageCount: stats.messageCount,
       wordCount: stats.wordCount,
+      invitationCount: stats.invitationCount,
       score,
       share: 0,
       meaningfulnessScore,

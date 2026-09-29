@@ -154,24 +154,42 @@ cd infra && sh start.sh     # the stack must be up; global-setup fails fast if n
 pnpm test:e2e
 ```
 
-Two disruptive or externally billed specs are opt-in. They are collected by
-the default run too but **self-skip** unless their env gate is set
-(`E2E_LIVE_ANTHROPIC` / `E2E_ALLOW_SERVICE_RESTART`); the dedicated scripts
-just set the gate and narrow the file list:
+Four disruptive, billed or long-running specs are opt-in. They are collected
+by the default run too but **self-skip** unless their env gate is set
+(`E2E_LIVE_ANTHROPIC`, `E2E_ALLOW_SERVICE_RESTART`, `E2E_ETHERPAD`,
+`E2E_REAL_STUDY`); the first two have dedicated scripts that just set the
+gate and narrow the file list:
 
 ```bash
-# Three real classifications through the deployed Anthropic integration.
+# Three real classifications through the deployed Anthropic integration
+# (needs ANTHROPIC_API_KEY in the chat service; makes paid calls).
 pnpm --dir e2e test:e2e:live
 
 # Local compose only: stops and starts Session Manager + Chat Service in order.
 pnpm --dir e2e test:e2e:recovery
+
+# Local only, Etherpad containers running: flips the global workspace switch
+# to Etherpad and back (see etherpad.md).
+E2E_ETHERPAD=1 pnpm --dir e2e exec playwright test tests/etherpad.spec.ts
+
+# N independent participants take the REAL study arms concurrently (no test
+# condition) and react to bot nudges; sessions count toward the open round.
+E2E_REAL_STUDY=1 E2E_REAL_USERS=9 E2E_REAL_MINUTES=5 \
+  pnpm --dir e2e exec playwright test tests/real-study.spec.ts
 ```
 
 The restart profile refuses non-local API URLs and refuses to run while a
 non-E2E session is waiting or running. The live profile is intentionally one
 test; it verifies the two graded meaningfulness ratings (relevance and
 coherence, 1–5), the separate invitation flag and pseudonymized prompts on a
-baseline condition, where no nudge may ever render.
+baseline condition, where no nudge may ever render. The Etherpad spec only
+accepts a local API target and switches Etherpad off again when it finishes.
+The real-study spec uses no admin API: matchmaking assigns the active arms
+exactly as for recruited participants, so its sessions appear in Overview and
+the exports — start a new round (or exclude them) afterwards. Set
+`E2E_REAL_USERS` to a multiple of the group size so every participant gets a
+group, and `E2E_REAL_MINUTES` to the arms' discussion length (it only sizes
+timeouts and chat pacing).
 
 First-time setup: `pnpm --filter @gdm/e2e exec playwright install chromium`.
 
@@ -184,8 +202,14 @@ Notes:
   recovery spec uses 3 minutes; the golden path uses `e2e-<timestamp>` with 1
   minute and group size 3; `research-exports.spec.ts` is read-only and
   creates none), so runs never touch the real study arms and stale sessions
-  from an aborted run can't soak up participants. Test rows remain in the research DB; wipe with
-  `sh stop.sh --volumes` when you want a clean slate.
+  from an aborted run can't soak up participants. Condition names carry the
+  run time so runs can be told apart in the dashboard (`withRunTime()` in
+  `support/e2e-helpers.ts`, e.g. `E2E Collaboration · 29 Sept, 15:06`; the
+  golden path names its own `E2E Golden Path · …`). Test rows remain in the
+  research DB and show up only in the dashboard's **Testing** tab (behind
+  "Show test history", where a condition left recruiting by an interrupted
+  run can be switched off); wipe with `sh stop.sh --volumes` when you want a
+  clean slate.
 - Discussion durations must be **whole minutes**: the research DB stores
   `durationMinutes` as an integer and the session manager rounds and clamps
   every condition write to 1–240 (`0.25` becomes `1`, `1.5` becomes `2`), so
