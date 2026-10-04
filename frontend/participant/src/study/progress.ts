@@ -4,6 +4,7 @@
  * (which would strand their seat and poison the group). sessionStorage keeps
  * it scoped to the tab, like the tracking token.
  */
+import type { OpenSessionResponse } from "@gdm/shared";
 
 /** Stages worth resuming. Consent/survey restart from scratch on refresh. */
 export type ProgressStage = "waiting" | "chat" | "exit" | "done";
@@ -12,17 +13,15 @@ export interface StudyProgress {
   stage: ProgressStage;
   sessionId: string;
   participantId: string;
-  matrix: {
-    homeserverUrl: string;
-    userId: string;
-    accessToken: string;
-    roomId: string;
-  };
+  matrix: OpenSessionResponse["matrix"];
 }
 
 const KEY = "gdm-study-progress";
 
-/** Per-tab storage key for the participant's tracking token (see Recruiting). */
+/**
+ * Per-tab storage key for the participant's tracking token (see Recruiting).
+ * The token doubles as the participant's bearer credential for the API.
+ */
 export const TOKEN_STORAGE_KEY = "gdm-tracking-token";
 
 export function loadProgress(): StudyProgress | null {

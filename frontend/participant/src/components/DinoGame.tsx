@@ -102,6 +102,16 @@ function drawBird(ctx: CanvasRenderingContext2D, ob: Obstacle, frame: number) {
   }
 }
 
+/** Keys pressed in a control (e.g. Space on a button) belong to that control. */
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest(
+      "button, input, textarea, select, a, [contenteditable]:not([contenteditable='false'])",
+    ) !== null
+  );
+}
+
 /* ── Component ───────────────────────────────────────────── */
 
 export default function DinoGame() {
@@ -165,9 +175,12 @@ export default function DinoGame() {
     let raf = 0;
 
     const onKey = (e: KeyboardEvent) => {
+      if (isInteractiveTarget(e.target)) return;
       if (e.code === "Space" || e.code === "ArrowUp") {
         e.preventDefault();
-        handleAction("jump");
+        // Jump on press only: releasing the key must not start a second jump
+        // (it used to jump right after starting or restarting the game).
+        if (e.type === "keydown") handleAction("jump");
       } else if (e.code === "ArrowDown") {
         e.preventDefault();
         handleAction(e.type === "keydown" ? "duck-start" : "duck-end");
@@ -181,7 +194,8 @@ export default function DinoGame() {
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKey);
     canvas.addEventListener("touchstart", onTouch, { passive: false });
-    canvas.addEventListener("click", () => handleAction("jump"));
+    const onClick = () => handleAction("jump");
+    canvas.addEventListener("click", onClick);
 
     function tick() {
       const s = stateRef.current;
@@ -366,6 +380,7 @@ export default function DinoGame() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKey);
       canvas.removeEventListener("touchstart", onTouch);
+      canvas.removeEventListener("click", onClick);
     };
   }, [handleAction]);
 

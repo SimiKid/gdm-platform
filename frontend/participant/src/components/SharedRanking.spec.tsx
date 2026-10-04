@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { MatrixClient } from "matrix-js-sdk";
 import { RoomEvent } from "matrix-js-sdk";
 import { describe, expect, it, vi } from "vitest";
@@ -125,5 +125,42 @@ describe("SharedRanking", () => {
 
     expect(screen.getByText(/moved B from #2 to #1/)).toBeInTheDocument();
     expect(screen.getByText("B").closest("li")).toHaveClass("remote-move");
+  });
+
+  it("names the item on its move buttons", () => {
+    const { client } = createClient();
+    render(
+      <SharedRanking
+        client={client}
+        roomId={ROOM_ID}
+        task={task}
+        initial={initial}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Move up: B" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Move down: C" })).toBeDisabled();
+  });
+
+  it("rolls the optimistic move back when the ranking event cannot be sent", async () => {
+    const { client, sendEvent } = createClient();
+    sendEvent.mockRejectedValueOnce(new Error("offline"));
+    const onChange = vi.fn();
+    render(
+      <SharedRanking
+        client={client}
+        roomId={ROOM_ID}
+        task={task}
+        initial={initial}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Move down: A" }));
+    expect(onChange).toHaveBeenCalledWith(["b", "a", "c"]);
+
+    await waitFor(() => expect(onChange).toHaveBeenLastCalledWith(["a", "b", "c"]));
+    const labels = screen.getAllByRole("listitem").map((item) => item.textContent);
+    expect(labels[0]).toContain("A");
   });
 });

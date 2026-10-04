@@ -20,9 +20,7 @@
 			path('/admin', '/admin/*',
 				'/api/admin', '/api/admin/*',
 				'/api/conditions', '/api/conditions/*',
-				'/api/interventions',
 				'/api/export/*',
-				'/api/reports', '/api/reports/*',
 				'/api/rounds', '/api/rounds/*')
 			|| (path('/api/sessions') && method('GET'))
 			|| path('/api/settings')

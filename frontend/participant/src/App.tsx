@@ -6,82 +6,29 @@ import ExitSurvey from "./components/ExitSurvey";
 import Chat from "./components/Chat";
 import DebriefingPage from "./components/DebriefingPage";
 import StudyExitPage from "./components/StudyExitPage";
-import { createClient, ClientEvent, EventTimeline } from "matrix-js-sdk";
+import { createClient } from "matrix-js-sdk";
 import type { MatrixClient } from "matrix-js-sdk";
 import type {
   ParticipationOutcomeResponse,
   ProlificIdentity,
   PublicSession,
+  StudyInfoResponse,
+  StudyTaskMode,
   Survey as SurveyData,
+  TerminateParticipationRequest,
 } from "@gdm/shared";
 import { httpSessionManager } from "./study/sessionClient";
-import {
-  loadProgress,
-  saveProgress,
-  updateStage,
-  TOKEN_STORAGE_KEY,
-} from "./study/progress";
+import { clearProgress, loadProgress, updateStage } from "./study/progress";
 import type { StudyProgress } from "./study/progress";
 import { loadProlificIdentity } from "./study/prolific";
+import { startMatrixClient } from "./study/matrixClient";
+import { restoreFromProgress, restoreProlificSeat } from "./study/restore";
+import type { RestoredStudy, Stage } from "./study/restore";
 import "./App.css";
 import { workspaceClient } from "./study/workspaceClient";
 
 const HOMESERVER =
-  import.meta.env.VITE_MATRIX_HOMESERVER ?? "http://localhost:8008";
-
-/**
- * The participant journey from the wireframe:
- *   recruiting → survey → waiting → chat → (exit survey)
- */
-type Stage =
-  | "recruiting"
-  | "survey"
-  | "waiting"
-  | "chat"
-  | "exit"
-  | "done"
-  | "terminated";
-
-/** Start a Matrix client from stored credentials and wait for the first sync.
- *  After sync, backfill the room timeline so reloads never lose messages. */
-async function startMatrixClient(matrix: {
-  homeserverUrl: string;
-  userId: string;
-  accessToken: string;
-  roomId?: string;
-}): Promise<MatrixClient> {
-  const client = createClient({
-    baseUrl: matrix.homeserverUrl,
-    accessToken: matrix.accessToken,
-    userId: matrix.userId,
-  });
-  await client.startClient({ initialSyncLimit: 20 });
-  await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Sync timed out")), 15000);
-    client.once(ClientEvent.Sync, (state: string) => {
-      clearTimeout(timeout);
-      if (state === "PREPARED") resolve();
-      else reject(new Error(`Sync failed: ${state}`));
-    });
-  });
-
-  // Study rooms are small — backfill the full timeline so a page reload never
-  // drops earlier messages that fell outside the initialSyncLimit window.
-  if (matrix.roomId) {
-    const room = client.getRoom(matrix.roomId);
-    if (room) {
-      const timeline = room.getLiveTimeline();
-      while (timeline.getPaginationToken(EventTimeline.BACKWARDS)) {
-        await client.paginateEventTimeline(timeline, {
-          backwards: true,
-          limit: 100,
-        });
-      }
-    }
-  }
-
-  return client;
-}
+  import.meta.env.VITE_MATRIX_HOMESERVER ?? "http://localhost:8010";
 
 export default function App() {
   const [stage, setStage] = useState<Stage>("recruiting");
@@ -90,10 +37,13 @@ export default function App() {
   const [conditionId, setConditionId] = useState<string | undefined>();
   const [entrySurvey, setEntrySurvey] = useState<SurveyData | null>(null);
   const [session, setSession] = useState<PublicSession | null>(null);
+  // Set when a refresh restores the "done" page, which has no session object.
+  const [restoredSessionId, setRestoredSessionId] = useState("");
   const [participantId, setParticipantId] = useState("");
   const [client, setClient] = useState<MatrixClient | null>(null);
   const [groupRanking, setGroupRanking] = useState<string[]>([]);
-  const [taskMode, setTaskMode] = useState<"ranking" | "etherpad">("ranking");
+  const [taskMode, setTaskMode] = useState<StudyTaskMode>("ranking");
+  const [studyInfo, setStudyInfo] = useState<StudyInfoResponse | null>(null);
   const [compensationUrl, setCompensationUrl] = useState("");
   const [termination, setTermination] =
     useState<ParticipationOutcomeResponse | null>(null);
@@ -149,6 +99,24 @@ export default function App() {
     };
   }, [client, prolific, stage]);
 
+  /** Continue the study at a stage restored after a refresh or reopen. */
+  function applyRestored(restored: RestoredStudy) {
+    if (restored.trackingToken) setTrackingToken(restored.trackingToken);
+    if (restored.session) setSession(restored.session);
+    if (restored.sessionId) setRestoredSessionId(restored.sessionId);
+    if (restored.participantId) setParticipantId(restored.participantId);
+    if (restored.client) setClient(restored.client);
+    if (restored.groupRanking) setGroupRanking(restored.groupRanking);
+    if (restored.compensationUrl !== undefined) {
+      setCompensationUrl(restored.compensationUrl);
+    }
+    if (restored.termination) {
+      setError(null);
+      setTermination(restored.termination);
+    }
+    setStage(restored.stage);
+  }
+
   async function enterStudy(
     token: string,
     forcedConditionId?: string,
@@ -158,75 +126,16 @@ export default function App() {
       if (prolificIdentity) {
         setBooting(true);
         // Resume first: a participant may reopen after accepting Prolific's
-        // return request. The resume endpoint deliberately accepts ended
-        // submission statuses so an already-recorded terminal outcome can
-        // still show its debrief. A genuinely new visit is persisted below
-        // and continues to use active-submission validation.
-        const resumed =
-          await httpSessionManager.resumeProlific(prolificIdentity);
-        if (resumed) {
-          if (resumed.stage === "terminated" && resumed.termination) {
-            setProlific(prolificIdentity);
-            setTermination(resumed.termination);
-            setStage("terminated");
-            return;
-          }
-          if (!resumed.openSession) {
-            throw new Error("The saved Prolific participation could not be resumed");
-          }
-          const { openSession, stage: resumedStage } = resumed;
-          const {
-            session: resumedSession,
-            participantId: resumedParticipantId,
-            matrix,
-          } = openSession;
-          setTrackingToken(token);
-          setConditionId(forcedConditionId);
+        // return request. A genuinely new visit is persisted below and
+        // continues to use active-submission validation.
+        const restored = await restoreProlificSeat(prolificIdentity);
+        if (restored) {
           setProlific(prolificIdentity);
-          setSession(resumedSession);
-          setParticipantId(resumedParticipantId);
-
-          if (resumedStage === "waiting") {
-            saveProgress({
-              stage: "waiting",
-              sessionId: resumedSession.id,
-              participantId: resumedParticipantId,
-              matrix,
-            });
-            setStage("waiting");
-          } else if (resumedStage === "chat") {
-            const matrixClient = await startMatrixClient(matrix);
-            saveProgress({
-              stage: "chat",
-              sessionId: resumedSession.id,
-              participantId: resumedParticipantId,
-              matrix,
-            });
-            setClient(matrixClient);
-            setStage("chat");
-          } else if (resumedStage === "exit") {
-            setGroupRanking(resumedSession.ranking.order);
-            saveProgress({
-              stage: "exit",
-              sessionId: resumedSession.id,
-              participantId: resumedParticipantId,
-              matrix,
-            });
-            setStage("exit");
-          } else {
-            const completion = await httpSessionManager.completeParticipant(
-              resumedSession.id,
-              resumedParticipantId,
-            );
-            setCompensationUrl(completion.compensationUrl);
-            saveProgress({
-              stage: "done",
-              sessionId: resumedSession.id,
-              participantId: resumedParticipantId,
-              matrix,
-            });
-            setStage("done");
+          if (restored.stage !== "terminated") {
+            setTrackingToken(token);
+            setConditionId(forcedConditionId);
           }
+          applyRestored(restored);
           return;
         }
         await httpSessionManager.recordProlificArrival(prolificIdentity);
@@ -234,6 +143,12 @@ export default function App() {
       setTrackingToken(token);
       setConditionId(forcedConditionId);
       setProlific(prolificIdentity);
+      // Group size and discussion length for the instructions; the pages use
+      // neutral wording until (or unless) this arrives.
+      void httpSessionManager
+        .getStudyInfo(forcedConditionId)
+        .then(setStudyInfo)
+        .catch(() => undefined);
       if (prolificIdentity) {
         await httpSessionManager.recordParticipationProgress(
           prolificIdentity,
@@ -269,71 +184,11 @@ export default function App() {
     setBooting(false);
   }, []);
 
-  /**
-   * A refresh must not restart the flow: the participant already holds a seat
-   * (and their group would wait for a ghost). Waiting resumes via openSession
-   * (the backend hands the same seat back for the same tracking token); chat
-   * and exit resume from the stored session + Matrix credentials.
-   */
   async function resume(progress: StudyProgress) {
     try {
       const storedProlific = loadProlificIdentity();
       setProlific(storedProlific);
-      if (storedProlific) {
-        const outcome =
-          await httpSessionManager.getParticipationOutcome(storedProlific);
-        if (outcome && outcome.outcome !== "completed") {
-          setError(null);
-          setTermination(outcome);
-          setStage("terminated");
-          return;
-        }
-      }
-      switch (progress.stage) {
-        case "done":
-          setParticipantId(progress.participantId);
-          // Idempotently retrieve the completion URL again after a refresh.
-          try {
-            const completion = await httpSessionManager.completeParticipant(
-              progress.sessionId,
-              progress.participantId,
-            );
-            setCompensationUrl(completion.compensationUrl);
-          } catch {
-            /* keep the debriefing fallback */
-          }
-          setStage("done");
-          break;
-        case "waiting": {
-          // Re-enter the waiting room; WaitingRoom re-runs openSession and
-          // the backend hands back the seat this token already holds.
-          const token = sessionStorage.getItem(TOKEN_STORAGE_KEY);
-          if (token) {
-            setTrackingToken(token);
-            setStage("waiting");
-          } else {
-            setStage("recruiting");
-          }
-          break;
-        }
-        case "exit": {
-          const refreshed = await httpSessionManager.getSession(progress.sessionId);
-          setSession(refreshed);
-          setGroupRanking(refreshed.ranking.order);
-          setParticipantId(progress.participantId);
-          setStage("exit");
-          break;
-        }
-        case "chat": {
-          const refreshed = await httpSessionManager.getSession(progress.sessionId);
-          const matrixClient = await startMatrixClient(progress.matrix);
-          setSession(refreshed);
-          setParticipantId(progress.participantId);
-          setClient(matrixClient);
-          setStage("chat");
-          break;
-        }
-      }
+      applyRestored(await restoreFromProgress(progress, storedProlific));
     } catch (err: unknown) {
       setError(
         err instanceof Error
@@ -375,10 +230,12 @@ export default function App() {
   }
 
   async function endParticipation(
-    outcome: "declined_consent" | "ineligible" | "voluntary_withdrawal",
+    outcome: TerminateParticipationRequest["outcome"],
     reason?: string,
   ) {
-    if (taskMode === "etherpad" && trackingToken) void workspaceClient.leave(trackingToken).catch(() => undefined);
+    if (taskMode === "etherpad" && trackingToken) {
+      void workspaceClient.leave(trackingToken).catch(() => undefined);
+    }
     if (!prolific) {
       // No Prolific submission to return, so mirror the server's per-outcome
       // wording without its return instructions.
@@ -394,6 +251,9 @@ export default function App() {
         redirectUrl: "",
         message,
       });
+      // Nothing server-side remembers a direct participant's exit, so drop the
+      // saved progress: a refresh must not resume them into the study again.
+      clearProgress();
       client?.stopClient();
       setClient(null);
       setStage("terminated");
@@ -423,7 +283,9 @@ export default function App() {
   function withdraw() {
     if (
       window.confirm(
-        "Do you want to stop participating? Your progress will be recorded and the researcher will review any compensation due.",
+        prolific
+          ? "Do you want to stop participating? Your progress will be recorded and the researcher will review any compensation due."
+          : "Do you want to stop participating?",
       )
     ) {
       void endParticipation("voluntary_withdrawal");
@@ -455,7 +317,12 @@ export default function App() {
   }
 
   if (stage === "terminated" && termination) {
-    return <StudyExitPage termination={termination} />;
+    return (
+      <StudyExitPage
+        termination={termination}
+        prolificParticipant={Boolean(prolific)}
+      />
+    );
   }
 
   // In the chat room: a live Matrix client + the chat stage. (Dev fast-path
@@ -465,13 +332,15 @@ export default function App() {
       <Chat
         client={client}
         session={session}
-        onWithdraw={prolific ? withdraw : undefined}
+        onWithdraw={withdraw}
         onTimeUp={(finalOrder) => {
           client.stopClient();
           setClient(null);
           setGroupRanking(finalOrder);
           if (prolific) {
-            void httpSessionManager.recordParticipationProgress(prolific, "exit");
+            void httpSessionManager
+              .recordParticipationProgress(prolific, "exit")
+              .catch(() => undefined);
           }
           updateStage("exit");
           setStage("exit");
@@ -494,6 +363,7 @@ export default function App() {
       return (
         <Survey
           taskMode={taskMode}
+          studyInfo={studyInfo}
           onDecline={() => void endParticipation("declined_consent")}
           onIneligible={(reason) =>
             void endParticipation("ineligible", reason)
@@ -502,7 +372,9 @@ export default function App() {
           onComplete={(survey) => {
             setEntrySurvey(survey);
             if (prolific) {
-              void httpSessionManager.recordParticipationProgress(prolific, "entry");
+              void httpSessionManager
+                .recordParticipationProgress(prolific, "entry")
+                .catch(() => undefined);
             }
             setStage("waiting");
           }}
@@ -517,7 +389,7 @@ export default function App() {
           prolific={prolific}
           conditionId={conditionId}
           entrySurvey={entrySurvey}
-          onWithdraw={prolific ? withdraw : undefined}
+          onWithdraw={withdraw}
           onTerminated={(outcome) => {
             setTermination(outcome);
             setStage("terminated");
@@ -527,7 +399,9 @@ export default function App() {
             setParticipantId(readyParticipantId);
             setClient(readyClient);
             if (prolific) {
-              void httpSessionManager.recordParticipationProgress(prolific, "chat");
+              void httpSessionManager
+                .recordParticipationProgress(prolific, "chat")
+                .catch(() => undefined);
             }
             updateStage("chat");
             setStage("chat");
@@ -556,7 +430,7 @@ export default function App() {
         <DebriefingPage
           completionUrl={compensationUrl}
           prolificParticipant={Boolean(prolific)}
-          sessionId={session?.id ?? ""}
+          sessionId={session?.id ?? restoredSessionId}
           participantId={participantId}
         />
       );

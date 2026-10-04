@@ -1,5 +1,5 @@
 import { expect, test, type Page, type APIRequestContext } from "@playwright/test";
-import { API, ADMIN, API_HEADERS, createCondition, deactivateCondition, participantHeaders, uniqueId } from "../support/e2e-helpers";
+import { API, ADMIN, API_HEADERS, acceptIntroAndConsent, completeEntrySurvey, createCondition, deactivateCondition, joinChatFromGroupIntro, participantHeaders, uniqueId } from "../support/e2e-helpers";
 
 // This test changes the global study mode. Run explicitly against a local stack.
 test.skip(process.env.E2E_ETHERPAD !== "1", "Set E2E_ETHERPAD=1 on the local mock stack");
@@ -10,25 +10,8 @@ async function status(request: APIRequestContext) { return (await request.get(`$
 async function questionnaires(page: Page, conditionId: string) {
   await page.goto(`/?conditionId=${conditionId}`);
   await page.getByRole("button", { name: "Start", exact: true }).click();
-  await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: /continue to the consent form/i }).click();
-  for (const box of await page.getByRole("checkbox").all()) await box.check();
-  await page.getByRole("button", { name: "Begin study" }).click();
-  await page.locator("#about-age").fill("30");
-  await page.getByRole("radio", { name: "Man", exact: true }).check();
-  await page.getByRole("radio", { name: "Bachelor's degree" }).check();
-  await page.getByRole("radio", { name: "Fluent (advanced)" }).check();
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
-  // Attitudes & Traits 1/2 (AI) and 2/2 (personality), then Skills & Experience.
-  for (let screen = 0; screen < 2; screen++) {
-    for (const radio of await page.getByRole("radio", { name: /: Disagree strongly$/i }).all()) await radio.check();
-    await page.getByRole("button", { name: "Continue", exact: true }).click();
-  }
-  await page.getByRole("group", { name: /work in teams/ }).getByRole("radio", { name: "Sometimes" }).check();
-  await page.getByRole("group", { name: /communicating via text chat/ }).getByRole("radio", { name: "Rather comfortable" }).check();
-  await page.getByRole("group", { name: /spaceflight-related/ }).getByRole("radio", { name: "Rather unfamiliar" }).check();
-  await page.getByRole("group", { name: /wilderness.*survival/i }).getByRole("radio", { name: "Rather unfamiliar" }).check();
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await acceptIntroAndConsent(page);
+  await completeEntrySurvey(page, { age: 30 });
   await expect(page.getByRole("heading", { name: "Your initial response" })).toBeVisible();
   await expect(editor(page)).toBeVisible({ timeout: 30000 });
 }
@@ -65,8 +48,7 @@ test("private entry/exit pads, shared capped text, exports and a draining switch
       await expect(editor(pages[1]).getByText("Bob entry: oxygen first.", { exact: true })).toHaveCSS("color", "rgb(0, 0, 0)");
       await expect(editor(pages[1]).locator('span[class*="author-"]').first()).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       await Promise.all(pages.map(p => p.getByRole("button", { name: "Submit my response" }).click()));
-      await Promise.all(pages.map(p => expect(p.getByRole("heading", { name: "Briefing Group Task" })).toBeVisible()));
-      for (const page of pages) { await page.getByRole("checkbox").check(); await page.getByRole("button", { name: "Join chat" }).click(); }
+      for (const page of pages) await joinChatFromGroupIntro(page);
     });
 
     await Promise.all(pages.map(p => expect(p.getByPlaceholder("Type a message")).toBeVisible({ timeout: 60000 })));

@@ -11,9 +11,9 @@ import type {
   ClassifierContext,
   ContributionClassifier,
 } from "./contribution-classifier";
+import { anthropicModel, requestAnthropicText } from "../anthropic/anthropic-client";
 
 const PROMPT_VERSION = "meaningfulness-v2";
-const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 const REQUEST_TIMEOUT_MS = 10_000;
 /** Preceding messages included for reference resolution (study protocol). */
 const CONTEXT_MESSAGES = 3;
@@ -67,7 +67,7 @@ export class AnthropicContributionClassifier implements ContributionClassifier {
     context: ClassifierContext,
   ): Promise<ContributionClassification | ClassificationFailure> {
     const apiKey = process.env.ANTHROPIC_API_KEY;
-    const model = process.env.ANTHROPIC_MODEL ?? DEFAULT_MODEL;
+    const model = anthropicModel();
     const failure = (error: string): ClassificationFailure => ({
       messageId: message.id,
       senderId: message.senderId,
@@ -86,17 +86,12 @@ export class AnthropicContributionClassifier implements ContributionClassifier {
 
     const prompt = buildPrompt(message, context);
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-        },
-        // A stuck external classifier must never prevent the server-side
-        // session timer from checkpointing/finalizing the research record.
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        body: JSON.stringify({
+      // The timeout matters: a stuck external classifier must never prevent
+      // the server-side session timer from checkpointing/finalizing the
+      // research record.
+      const rawOutput = await requestAnthropicText(
+        apiKey,
+        {
           model,
           max_tokens: 500,
           temperature: 0,
@@ -122,14 +117,9 @@ export class AnthropicContributionClassifier implements ContributionClassifier {
               },
             },
           },
-        }),
-      });
-      if (!res.ok) throw new Error(`Anthropic status ${res.status}: ${await res.text()}`);
-      const response = (await res.json()) as {
-        content?: Array<{ type?: string; text?: string }>;
-      };
-      const rawOutput = response.content?.find((block) => block.type === "text")?.text;
-      if (!rawOutput) throw new Error("Anthropic response contained no text block");
+        },
+        REQUEST_TIMEOUT_MS,
+      );
       const output = JSON.parse(rawOutput) as Partial<ClassificationOutput>;
       const relevance = toRating(output.relevance, "relevance");
       const coherence = toRating(output.coherence, "coherence");

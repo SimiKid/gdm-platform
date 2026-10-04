@@ -10,6 +10,7 @@ import RankingBoard from "./RankingBoard";
 import Likert from "./Likert";
 import LikertMatrix from "./LikertMatrix";
 import EtherpadTask from "./EtherpadTask";
+import { AGREE_SCALE_5 } from "../study/scales";
 
 interface Props {
   session: PublicSession;
@@ -50,20 +51,24 @@ const PSYCH_SAFETY_ITEMS = [
   { key: "heldBack", label: "There were things I wanted to contribute but held back." },
 ];
 
+/** The etherpad arm records a written response instead of a ranking. */
+const ETHERPAD_PSYCH_SAFETY_ITEMS = PSYCH_SAFETY_ITEMS.map((item) =>
+  item.key === "contributionInfluenced"
+    ? {
+        ...item,
+        label: "I felt that my contributions influenced the group's final response.",
+      }
+    : item,
+);
+
+// Asked in every arm, the baseline included: the research team keeps the exit
+// instrument identical across arms, so baseline answers are expected.
 const BOT_PERCEPTION_ITEMS = [
   { key: "botIntrusive", label: "The bot intervention felt intrusive to me." },
   { key: "botHelpful", label: "The bot interventions felt helpful to me." },
   { key: "botAppropriate", label: "The bot intervened appropriately in our discussion." },
   { key: "botObserved", label: "The bot made me feel somehow observed." },
   { key: "botSupport", label: "I would like to receive such bot support in meetings." },
-];
-
-const AGREE_SCALE_5 = [
-  "Disagree strongly",
-  "Disagree moderately",
-  "Neither disagree nor agree",
-  "Agree moderately",
-  "Agree strongly",
 ];
 
 /**
@@ -81,7 +86,7 @@ export default function ExitSurvey({
   onWithdraw,
 }: Props) {
   const items = session.rankingTask.items;
-  const etherpadMode = session.condition?.config.workspaceMode === "etherpad";
+  const etherpadMode = session.condition.config.workspaceMode === "etherpad";
   const [exitPadId, setExitPadId] = useState<string | null>(null);
   const [step, setStep] = useState<ExitStep>("ranking");
   const rankingFinished = useRef(false);
@@ -170,7 +175,18 @@ export default function ExitSurvey({
 
   // ── Step 1: Final ranking ─────────────────────────────────────────────
   if (step === "ranking" && etherpadMode) {
-    return <StudyShell onWithdraw={onWithdraw}><EtherpadTask phase="exit" sessionId={session.id} onComplete={pad => { setExitPadId(pad.id); finishRanking(); }} /></StudyShell>;
+    return (
+      <StudyShell onWithdraw={onWithdraw}>
+        <EtherpadTask
+          phase="exit"
+          sessionId={session.id}
+          onComplete={(pad) => {
+            setExitPadId(pad.id);
+            finishRanking();
+          }}
+        />
+      </StudyShell>
+    );
   }
   if (step === "ranking") {
     return (
@@ -236,7 +252,6 @@ export default function ExitSurvey({
 
           <Likert
             name="confidence"
-            layout="list"
             legend={etherpadMode ? "How confident are you in the decision your group recorded?" : "How confident are you that your group was able to submit the correct ranking?"}
             options={CONFIDENCE_OPTIONS}
             value={confidence}
@@ -287,7 +302,7 @@ export default function ExitSurvey({
         <LikertMatrix
           name="psych-safety"
           legend="To what extent do you agree with the following statements:"
-              items={etherpadMode ? PSYCH_SAFETY_ITEMS.map(item => item.key === "contributionInfluenced" ? { ...item, label: "I felt that my contributions influenced the group's final response." } : item) : PSYCH_SAFETY_ITEMS}
+          items={etherpadMode ? ETHERPAD_PSYCH_SAFETY_ITEMS : PSYCH_SAFETY_ITEMS}
           scaleLabels={AGREE_SCALE_5}
           values={psychSafety}
           onChange={(key, value) =>

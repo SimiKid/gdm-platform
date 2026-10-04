@@ -25,7 +25,7 @@ describe("AnthropicNudgeMessageGenerator", () => {
   it("generates a fresh nudge with the exact target and percentage", async () => {
     process.env.ANTHROPIC_API_KEY = "test-key";
     process.env.ANTHROPIC_MODEL = "test-haiku";
-    const fetchMock = vi.fn(async () =>
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
       response(
         "Great energy, @Red — you've contributed 66% so far! How about inviting another voice into the next step?",
       ),

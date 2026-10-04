@@ -7,7 +7,7 @@ export function toCsv(rows: string[][]): string {
   return rows.map((row) => row.map(csvCell).join(",")).join("\n");
 }
 
-export function csvCell(value: string): string {
+function csvCell(value: string): string {
   // Guard against spreadsheet formula injection: participant-authored text
   // starting with = + - @ would execute when the CSV is opened in Excel.
   const guarded = /^[=+\-@]/.test(value) ? `'${value}` : value;

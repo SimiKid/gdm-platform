@@ -13,7 +13,7 @@ Every export is a `GET` endpoint of the Session Manager under `/api/export/…`,
 
 Where the downloads live in the dashboard:
 
-- **Overview tab → Export Data**: one primary button, **Research Data (CSV)** (`research_data.zip`: the wide `results.csv` plus a flat `messages.csv`), and an "Advanced" fold-out with the **Full data dump** JSON. This is the only download surface in the dashboard.
+- **Overview tab → Export Data**: one primary button, **Research Data (CSV)** (`research_data.zip`: the wide `results.csv` plus a flat `messages.csv`, plus `etherpad.csv` when Etherpad pad records exist), and an "Advanced" fold-out with the **Full data dump** JSON. This is the only download surface in the dashboard.
 - Not linked anywhere (URL only, with the admin token): the [pseudonymized research exports](#research-exports-analysis-ready) (`research.zip` bundle with codebook and the four analysis files as JSON or CSV), `linkage.csv`, `overview.csv`, `detailed_overview.csv`, the raw messages / interventions / surveys / contributions exports, and the two Prolific exports. Fetch them with `curl -H "Authorization: Bearer $ADMIN_API_TOKEN" -OJ <url>`; `-OJ` keeps the server's filename.
 
 Every research and raw export accepts `?conditionIds=a,b,c` to restrict the export to specific study arms (e.g. `baseline,public-llm,private-llm`) and `?roundIds=1,2` to restrict to specific study rounds; both compose. Sessions from automated `e2e-…` test conditions are always excluded. Note the failure modes of `roundIds`: non-numeric or non-positive values are silently ignored (so `?roundIds=abc` returns **all** rounds, not none), while a valid but non-existent round number returns an empty dataset with HTTP 200. The two exceptions are `GET /api/export/prolific-arrivals` and `GET /api/export/prolific-outcomes`, which take no filters and are not e2e-filtered (they are not session-based).
@@ -24,7 +24,7 @@ Download filenames: the server sets a `Content-Disposition` filename (given belo
 
 ## Researcher workflow
 
-**1. During data collection — monitor.** Overview shows the current round, live sessions, per-condition completion for the current round, the study link for recruitment, and — per session — the inspector with the nudge response timeline. Per-arm descriptives (completed n and running n, participants, entry/exit survey submission counts, mean group ranking error vs. the NASA expert solution, share SD, nudges per session, windows evaluated and nudged) are available as JSON from `GET /api/reports/summary` — use them to catch problems early (an arm with low exit-survey returns, nudges never firing), not for inference. Reading notes: the participant and survey figures are raw counts over **all** sessions in the filter (including waiting/aborted), while the means on the same row are over completed sessions only; the satisfaction / fairness / felt-heard means come from the legacy exit-survey keys and stay `null` for data collected with the current exit survey (see [Survey responses](#survey-responses)); and a round filter does not shrink the condition list — arms with no sessions in the selected rounds still appear as all-zero rows. Settings → Recruiting toggles arms; goals auto-stop recruiting when reached.
+**1. During data collection — monitor.** Overview shows the current round, live sessions, per-condition completion for the current round, the study link for recruitment, and — per session — the inspector with the nudge response timeline. There is no per-arm summary endpoint or tab: to catch problems early (an arm with low exit-survey returns, nudges never firing), fetch [`sessions_analysis.csv`](#sessions-analysis) by URL (per session: status, `entry_surveys` / `exit_surveys`, `intervention_count`, `windows_evaluated` / `windows_nudged`, `group_ranking_error`, `share_std_dev`, …) and aggregate it per `condition_id` — for monitoring, not inference. Settings → Recruiting toggles arms; goals auto-stop recruiting when reached.
 
 **2. Study done — one download.** `GET /api/export/research.zip` (**Research Bundle, ZIP + codebook**). Append `?roundIds=…` for a per-round bundle, or omit it for the whole study. Restrict to specific arms by appending `?conditionIds=…`, or filter the `condition_id` column later. The bundle is fully pseudonymized and safe to share within the team (and as supplementary data), with `codebook.md` inside documenting the files (a full column table for `participants.csv`; prose descriptions of the derived measures for the other files).
 
@@ -54,10 +54,10 @@ The raw exports below remain the escape hatch when the analyst needs something t
 
 **Endpoint:** `GET /api/export/research-data.zip`
 
-The Overview tab's primary download. A zip with two **non-pseudonymized** wide-format files built for a spreadsheet-style workflow:
+The Overview tab's primary download. A zip with two **non-pseudonymized** wide-format files built for a spreadsheet-style workflow (plus `etherpad.csv` when Etherpad pad records exist — see [Etherpad mode](#etherpad-mode)):
 
 - `results.csv` — one row per participant: `prolific_id` (raw Prolific participant id, empty for direct participants), `group_id` (session UUID), `member_id` (1-based position in the session), `condition` (condition name), `round`, `session_status` (`1` completed / `0` otherwise), `age`, `gender`, `education`, `english`, `gaais1`–`gaais10`, `person1`–`person10` (TIPI items), `team` (teamwork frequency), `text` (chat comfort), `space` (spaceflight familiarity), `survival` (survival familiarity), `rank_true` (expert order), `rank_init` (entry individual ranking), `rank_fin` (exit individual ranking), `rank_group` (final shared ranking) — all four as pipe-joined item ids — `rank_completed`, `confidence` (task confidence), `groupcoh1`–`groupcoh5` (group considered / balanced / dominated / felt team / comfortable again), `psysafe1`–`psysafe6` (safe to speak up / raise concerns / contradicted / contribution serious / contribution influenced / held back), `attention1`, `attention2`, `feedback` (debrief free text), `message_count`, `character_count`, `intervention_count`, `intervention_id` (pipe-joined ids of the nudges that targeted this participant).
-- `messages.csv` — one row per chat message: `session_id`, `group_id` (same UUID), `condition`, `round`, `message_id`, `timestamp`, `member_id` (empty for bot messages), `sender_is_bot`, `intervention_id` (for bot messages, the intervention whose text matches), `text`, `word_count`.
+- `messages.csv` — one row per chat message: `session_id`, `group_id` (always equal to `session_id` — a session is one group; kept as a join key to `results.csv`), `condition`, `round`, `message_id`, `timestamp`, `member_id` (empty for bot messages), `sender_is_bot`, `intervention_id`, `text`, `word_count`. The Chat Service does not record which Matrix message delivered a nudge, so `intervention_id` is reconstructed by text **and occurrence**: within a session, each bot message (in chat order) is paired with the earliest not-yet-paired intervention whose text is identical — preferring one with the same audience (a private bot message ↔ a private intervention targeting its recipient; a group message ↔ a public one) — so the n-th bot message with a given text belongs to the n-th intervention with that text, and repeated fallback texts are not all attributed to one intervention. Bot messages without a matching intervention (e.g. moderation warnings) have an empty `intervention_id`.
 
 Because `results.csv` contains the Prolific id, keep this zip with the identifying data, not in the analysis folder.
 
@@ -67,7 +67,7 @@ Because `results.csv` contains the Prolific id, keep this zip with the identifyi
 
 The most complete export. Contains every session as a nested JSON object with all sub-records embedded. Use this when you need the full picture or when writing analysis scripts.
 
-The example below is **abridged**: each session object additionally embeds `bot`, `briefing`, `rankingTask`, `ranking` (the current shared ranking), `polls`, `roomId`, `waitingDeadlineAt`, `windowEvaluations` (one record per evaluated window boundary — the source of `windows.csv`), `classificationFailures` (failed classifier calls), `reactionEvents` / `redactedReactionEventIds`, and internal checkpoint fields (`processedEventIds`, `runtimeState`, `checkpointRevision`). Each participant additionally carries `recruitmentSource` (`direct` / `prolific`), an optional `prolific` identity (`participantId`, `studyId`, `sessionId`), and `completedAt` once their exit survey is stored.
+The example below is **abridged**: each session object additionally embeds `bot`, `briefing`, `rankingTask`, `ranking` (the current shared ranking), `polls`, `roomId`, `waitingDeadlineAt`, `windowEvaluations` (one record per evaluated window boundary — the source of `windows.csv`), `classificationFailures` (failed classifier calls), `reactionEvents` / `redactedReactionEventIds` (reaction audit data; empty for sessions recorded since the Chat Service stopped ingesting reactions), and internal checkpoint fields (`processedEventIds`, `runtimeState`, `checkpointRevision`). Each participant additionally carries `recruitmentSource` (`direct` / `prolific`), an optional `prolific` identity (`participantId`, `studyId`, `sessionId`), and `completedAt` once their exit survey is stored.
 
 ```json
 {
@@ -301,8 +301,8 @@ One record per chat message across all sessions.
 | `sender_id` | Participant or bot Matrix id |
 | `recipient_id` | Empty for group messages; participant Matrix id for private bot messages |
 | `text` | Full message text |
-| `reaction_count` | Number of reactions on this message |
-| `reaction_keys` | Pipe-separated reaction keys, e.g. `👍\|❤️` |
+| `reaction_count` | Number of reactions on this message (historical data only: the Chat Service no longer records emoji reactions, so it is 0 for new sessions) |
+| `reaction_keys` | Pipe-separated reaction keys, e.g. `👍\|❤️` (empty for new sessions, see `reaction_count`) |
 
 ---
 
@@ -310,7 +310,7 @@ One record per chat message across all sessions.
 
 **Endpoints:** `GET /api/export/interventions` (JSON) · `GET /api/export/interventions.csv` (CSV)
 
-One record per bot intervention across all sessions. (`GET /api/interventions` returns the newest interventions across all sessions without filters; it is an admin debugging aid, not an export.)
+One record per bot intervention across all sessions.
 
 **JSON structure**
 ```json
@@ -561,7 +561,7 @@ that is the mean of those booleans. They still count toward
 | `participant_id` | Participant Matrix user id |
 | `message_count` | Total messages sent |
 | `character_count` | Total characters written |
-| `reaction_count` | Total reactions given |
+| `reaction_count` | Total reactions given (0 for new sessions) |
 | `ranking_move_count` | Shared ranking edits made |
 | `typing_duration_ms` | Total typing time in milliseconds |
 | `relevance_mean` | Mean relevance rating (1..5) across classified messages; empty when none carries a rating |
@@ -581,7 +581,7 @@ JSON only, no filters, not session-based. `prolific-arrivals` returns every vali
 
 ## Research exports (analysis-ready)
 
-Available by URL only (no dashboard button); fetch them with the admin token as shown at the top of this document. These are the files intended for statistical analysis: identifiers are **pseudonymous** (`P-xxxxxxxx` for participants, `S-xxxxxxxx` for sessions — the first 8 hex chars of SHA-256 over the internal UUID, stable across re-downloads), surveys and activity are pre-joined, and derived measures (ranking scores, participation equality) are computed server-side. Bot senders appear as `BOT`.
+Available by URL only (no dashboard button); fetch them with the admin token as shown at the top of this document. These are the files intended for statistical analysis: identifiers are **pseudonymous** (`P-xxxxxxxx` for participants, `S-xxxxxxxx` for sessions — the first 8 hex chars of SHA-256 over the internal UUID, stable across re-downloads), surveys and activity are pre-joined, and derived measures (ranking scores, participation equality) are computed server-side. Bot senders appear as `BOT`. `intervention_mode` (participants, sessions analysis, windows) is always the canonical `baseline` / `public` / `private`: legacy mode strings stored before the tone axis was retired (e.g. `public-engaging`) are folded onto these values, as in `detailed_overview.csv`.
 
 **One-click bundle:** `GET /api/export/research.zip` → `research_bundle.zip`, containing `participants.csv`, `sessions_analysis.csv`, `windows.csv`, `rankings.csv`, a pseudonymized `messages.csv` (`sender_is_bot`, `recipient_pseudonym` on private nudges), and `codebook.md` — a generated data dictionary with a study-rounds section, a full column table for `participants.csv`, prose descriptions of the other files, the NASA scoring rule and expert key, the equality metrics, and the window-outcome glossary. The linkage file is deliberately **not** in the bundle.
 
@@ -593,7 +593,7 @@ One row per participant. Columns in order:
 
 - Context: `participant_pseudonym`, `session_pseudonym`, `condition_id`, `condition_name`, `round`, `intervention_mode`, `llm_mode`, `session_status`, `group_size`, `recruitment_source`, `started_at`
 - Entry survey: `entry_submitted`, `age`, `age_prefer_not_to_say`, `gender`, `gender_custom`, `education`, `education_other`, `field_of_study` (legacy), `english_proficiency`, `gaais1`–`gaais10`, `tipi1`–`tipi10`, `teamwork_frequency`, `chat_comfort`, `topic_familiarity` (legacy), `spaceflight_familiarity`, `survival_familiarity`, `individual_ranking_completed`, `individual_ranking_seconds_used`, `individual_ranking_error` (NASA error of the entry ranking; empty unless explicitly completed)
-- Exit survey: `exit_submitted`, `exit_ranking_error` (NASA error of the exit re-ranking), `satisfaction`, `fairness`, `felt_heard` (legacy, empty for current data), `task_confidence`, `group_considered`, `group_balanced`, `attention_check_1`, `group_dominated`, `felt_team`, `comfortable_again`, `safe_speak_up`, `raise_concerns`, `contradicted`, `attention_check_2`, `contribution_serious`, `contribution_influenced`, `held_back`, `bot_intrusive`, `bot_helpful`, `bot_appropriate`, `bot_observed`, `bot_support`, `debrief_feedback`
+- Exit survey: `exit_submitted`, `exit_ranking_error` (NASA error of the exit re-ranking), `satisfaction`, `fairness`, `felt_heard` (legacy, empty for current data), `task_confidence`, `group_considered`, `group_balanced`, `attention_check_1`, `group_dominated`, `felt_team`, `comfortable_again`, `safe_speak_up`, `raise_concerns`, `contradicted`, `attention_check_2`, `contribution_serious`, `contribution_influenced`, `held_back`, `bot_intrusive`, `bot_helpful`, `bot_appropriate`, `bot_observed`, `bot_support` (asked in every arm, including the baseline where the bot never posts, so the exit instrument is identical across arms), `debrief_feedback`
 - Chat activity: `message_count`, `word_count`, `character_count`, `contribution_share`
 - Classifier aggregates: `meaningfulness_score_mean`, `classified_message_count` (empty / 0 in the baseline)
 - Nudges received: `nudges_received_total`, `nudges_received_public`, `nudges_received_private`
@@ -615,19 +615,13 @@ One row per ranking. Columns: `session_pseudonym`, `condition_id`, `round`, `typ
 
 **Endpoints:** `GET /api/export/windows` (JSON) · `GET /api/export/windows.csv`
 
-The bot records **every** evaluated contribution-window boundary, not just fired nudges — including baseline sessions, where `baseline-suppressed` rows show when a nudge *would* have fired. The CSV is long format (one row per window × participant, ready for mixed-effects models; a window without a computed split — `warm-up`, `wrap-up`, `too-few-participants` — emits a single row with empty participant columns); the JSON nests the per-participant split inside each window record. CSV columns: `session_pseudonym`, `condition_id`, `round`, `intervention_mode`, `llm_mode`, `window_index`, `window_start`, `window_end`, `window_minutes`, `threshold` (the two frozen parameters), `outcome`, `max_dominance_score`, `intervention_fired`, `participant_pseudonym`, `message_count`, `word_count`, `invitation_count`, `score`, `share`, `meaningfulness_score`, `dominance_score`, `is_candidate_target`, `was_nudged`. Outcomes: `nudged`, `no-target`, `baseline-suppressed`, `warm-up`, `wrap-up`, `too-few-participants`. The participant columns are the bot's own split: in the nudging arms (`llm_mode` = `active`), messages classified as inviting others to participate (`invitesParticipation`) are excluded from `message_count`, `word_count`, `score`, `share` and `meaningfulness_score`; in the baseline every message counts. `invitation_count` (JSON: `invitationCount`) is the number of messages excluded this way per participant and window — always `0` in the baseline, which has no classifier, and empty (`null`) for windows recorded before the exclusion was introduced. Only sessions run after this instrumentation was deployed have window records. **One record per boundary:** Chat Service builds before 2026-09-20 could evaluate a boundary twice when the window timer fired a few milliseconds early — after a nudge the second pass recorded an all-zero `no-target` copy (the tracker had just been reset), otherwise an identical copy. Such duplicates share `window_end` and are dropped whenever session data is read: per boundary the nudged record is kept, else the one that counted the most messages, else the first. Every export, `GET /api/reports/summary` and the dashboard therefore show one record per boundary; the stored database rows themselves are left untouched.
+The bot records **every** evaluated contribution-window boundary, not just fired nudges — including baseline sessions, where `baseline-suppressed` rows show when a nudge *would* have fired. The CSV is long format (one row per window × participant, ready for mixed-effects models; a window without a computed split — `warm-up`, `wrap-up`, `too-few-participants` — emits a single row with empty participant columns); the JSON nests the per-participant split inside each window record. CSV columns: `session_pseudonym`, `condition_id`, `round`, `intervention_mode`, `llm_mode`, `window_index`, `window_start`, `window_end`, `window_minutes`, `threshold` (the two frozen parameters), `outcome`, `max_dominance_score`, `intervention_fired`, `participant_pseudonym`, `message_count`, `word_count`, `invitation_count`, `score`, `share`, `meaningfulness_score`, `dominance_score`, `is_candidate_target`, `was_nudged`. Outcomes: `nudged`, `no-target`, `baseline-suppressed`, `warm-up`, `wrap-up`, `too-few-participants`. The participant columns are the bot's own split: in the nudging arms (`llm_mode` = `active`), messages classified as inviting others to participate (`invitesParticipation`) are excluded from `message_count`, `word_count`, `score`, `share` and `meaningfulness_score`; in the baseline every message counts. `invitation_count` (JSON: `invitationCount`) is the number of messages excluded this way per participant and window — always `0` in the baseline, which has no classifier, and empty (`null`) for windows recorded before the exclusion was introduced. Only sessions run after this instrumentation was deployed have window records. **One record per boundary:** Chat Service builds before 2026-09-20 could evaluate a boundary twice when the window timer fired a few milliseconds early — after a nudge the second pass recorded an all-zero `no-target` copy (the tracker had just been reset), otherwise an identical copy. Such duplicates share `window_end` and are dropped whenever session data is read: per boundary the nudged record is kept, else the one that counted the most messages, else the first. Every export and the dashboard therefore show one record per boundary; the stored database rows themselves are left untouched.
 
 ### Linkage (identifying — handle with care)
 
 **Endpoint:** `GET /api/export/linkage.csv`
 
 Columns: `participant_pseudonym`, `session_pseudonym`, `round`, `participant_id`, `session_id` (internal UUIDs), `tracking_token`, `recruitment_source`, `matrix_user_id`. Needed for compensation and exclusions only. Keep it out of analysis folders and never share it with the analysis dataset; it is excluded from the research bundle by design.
-
-### Results summary (monitoring JSON)
-
-**Endpoint:** `GET /api/reports/summary`
-
-Per-condition descriptives (formerly shown on a Results tab, now API-only): session counts by status, participant and entry/exit survey counts over all sessions in the filter, and — over completed sessions only — means for group ranking error, entry/exit individual ranking errors, satisfaction/fairness/felt-heard (legacy keys), share SD/Gini, nudges per session, plus the total number of nudges and the **sums** of windows evaluated and nudged. Accepts `conditionIds` and `roundIds`. Monitoring only — the CSVs are the citable record.
 
 ## Etherpad mode
 

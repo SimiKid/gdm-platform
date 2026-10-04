@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect, beforeEach, vi } from "vitest";
-import { shuffleRankingOrder, StoreService } from "./store.service";
+import { StoreService } from "./store.service";
 import type { Participant } from "@gdm/shared";
 
 const participant = (id: string): Participant => ({
@@ -136,14 +136,6 @@ describe("StoreService", () => {
     expect(stored!.windowEvaluations!.map((w) => w.id)).toEqual(["real"]);
   });
 
-  it("shuffles a ranking without mutating the task item order", () => {
-    const itemIds = ["a", "b", "c", "d"];
-    const shuffled = shuffleRankingOrder(itemIds, () => 0);
-
-    expect(shuffled).toEqual(["b", "c", "d", "a"]);
-    expect(itemIds).toEqual(["a", "b", "c", "d"]);
-  });
-
   it("findForming returns the oldest waiting session with a free seat", async () => {
     const cond = (await store.listConditions())[0];
     const session = await store.createForming(cond);
@@ -276,5 +268,72 @@ describe("StoreService", () => {
       stage: "terminated",
       compensationAmountPence: 10,
     });
+  });
+
+  it("truncates a long termination reason in memory like the database does", async () => {
+    const identity = {
+      participantId: "aaaaaaaaaaaaaaaaaaaaaaaa",
+      studyId: "bbbbbbbbbbbbbbbbbbbbbbbb",
+      sessionId: "dddddddddddddddddddddddd",
+    };
+    const record = await store.terminateProlificParticipation(
+      identity,
+      "voluntary_withdrawal",
+      "r".repeat(800),
+      "none",
+    );
+    expect(record.outcomeReason).toHaveLength(500);
+    expect(record.endedAt).toEqual(expect.any(String));
+  });
+
+  it("aborts waiting lobbies on a round switch and expired lobbies by deadline", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime("2026-08-31T10:00:00.000Z");
+    const [condition] = await store.listConditions();
+    const waiting = await store.createForming(condition);
+    const provisioning = await store.createForming(condition);
+    provisioning.status = "provisioning";
+
+    // Before the deadline nothing has expired.
+    expect(await store.abortExpiredWaitingSessions()).toEqual([]);
+
+    const later = new Date("2026-08-31T11:00:00.000Z");
+    expect(await store.abortExpiredWaitingSessions(later)).toEqual([
+      expect.objectContaining({ id: waiting.id, priorStatus: "waiting" }),
+      expect.objectContaining({ id: provisioning.id, priorStatus: "provisioning" }),
+    ]);
+    expect(await store.abortExpiredWaitingSessions(later)).toEqual([]);
+
+    const next = await store.createForming(condition);
+    const running = await store.createForming(condition);
+    running.status = "running";
+    expect(await store.abortWaitingSessions()).toEqual([
+      {
+        id: next.id,
+        createdAt: next.createdAt,
+        participantCount: 0,
+        priorStatus: "waiting",
+      },
+    ]);
+    expect((await store.getSession(running.id))?.status).toBe("running");
+  });
+
+  it("patches an exit survey only within its own session", async () => {
+    const [condition] = await store.listConditions();
+    const session = await store.createForming(condition);
+    await store.addParticipant(session.id, participant("p1"));
+    await store.saveParticipantSurvey(session.id, "p1", "exit", {
+      submittedAt: "2026-08-31T10:00:00.000Z",
+      answers: { feltTeam: 4 },
+    });
+    expect(
+      await store.patchExitSurveyAnswers("other-session", "p1", { debriefFeedback: "x" }),
+    ).toBe(false);
+    expect(
+      await store.patchExitSurveyAnswers(session.id, "p1", { debriefFeedback: "ok" }),
+    ).toBe(true);
+    expect(
+      (await store.getSession(session.id))?.participants[0].exitSurvey?.answers,
+    ).toEqual({ feltTeam: 4, debriefFeedback: "ok" });
   });
 });

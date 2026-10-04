@@ -4,10 +4,12 @@ import userEvent from "@testing-library/user-event";
 import { MOON_SURVIVAL } from "@gdm/shared";
 import type { Session } from "@gdm/shared";
 import ExitSurvey from "./ExitSurvey";
+import { rankAllItems } from "../test-utils";
 
 const session = {
   id: "s",
   roomId: "!r",
+  condition: { config: {} },
   rankingTask: MOON_SURVIVAL,
   ranking: {
     taskId: MOON_SURVIVAL.id,
@@ -30,18 +32,6 @@ beforeEach(() => {
   );
 });
 afterEach(() => vi.unstubAllGlobals());
-
-async function rankAllItems() {
-  let addButtons = screen.getAllByRole("button", {
-    name: /^Add .* to the ranking$/,
-  });
-  while (addButtons.length > 0) {
-    await userEvent.click(addButtons[0]);
-    addButtons = screen.queryAllByRole("button", {
-      name: /^Add .* to the ranking$/,
-    });
-  }
-}
 
 async function completeReflection2() {
   // Confidence

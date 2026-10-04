@@ -8,8 +8,12 @@ import type {
   ProlificResumeResponse,
   PublicSession,
   RecordProlificArrivalResponse,
+  StudyInfoResponse,
   SubmitSurveyRequest,
+  TerminateParticipationRequest,
 } from "@gdm/shared";
+import { API_BASE } from "./api";
+import { TOKEN_STORAGE_KEY } from "./progress";
 
 /**
  * Client for the Session Manager backend.
@@ -38,8 +42,6 @@ export interface SessionManagerClient {
     participantId: string,
     feedback: string,
   ): Promise<void>;
-  /** Mark the session completed when the discussion timer ends. */
-  completeSession(id: string): Promise<void>;
   /** Mark this participant complete after their exit survey was saved. */
   completeParticipant(
     sessionId: string,
@@ -51,22 +53,19 @@ export interface SessionManagerClient {
   ): Promise<void>;
   terminateParticipation(
     prolific: ProlificIdentity,
-    outcome: "declined_consent" | "ineligible" | "voluntary_withdrawal",
+    outcome: TerminateParticipationRequest["outcome"],
     reason?: string,
   ): Promise<ParticipationOutcomeResponse>;
   getParticipationOutcome(
     prolific: ProlificIdentity,
   ): Promise<ParticipationOutcomeResponse | null>;
+  /**
+   * Public study facts (group size, discussion length) for the participant
+   * instructions. Fields are null when the recruiting arms disagree.
+   */
+  getStudyInfo(conditionId?: string): Promise<StudyInfoResponse>;
 }
 
-/**
- * Base URL of the Session Manager. Dev: the backend runs on :3001. The
- * container build sets VITE_SESSION_MANAGER_URL=/api so nginx proxies it.
- */
-const API_BASE =
-  import.meta.env.VITE_SESSION_MANAGER_URL ?? "http://localhost:3001/api";
-
-const PARTICIPANT_TOKEN_KEY = "gdm-tracking-token";
 const REQUEST_TIMEOUT_MS = 15_000;
 
 function participantHeaders(
@@ -74,7 +73,7 @@ function participantHeaders(
 ): Record<string, string> {
   let token = "";
   try {
-    token = sessionStorage.getItem(PARTICIPANT_TOKEN_KEY) ?? "";
+    token = sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? "";
   } catch {
     /* A missing token produces a normal 401 response. */
   }
@@ -176,13 +175,6 @@ export const httpSessionManager: SessionManagerClient = {
     });
     if (!res.ok) throw new Error(`submitDebriefFeedback failed: ${res.status}`);
   },
-  async completeSession(id) {
-    const res = await request(`${API_BASE}/sessions/${id}/complete`, {
-      method: "POST",
-      headers: participantHeaders(),
-    });
-    if (!res.ok) throw new Error(`completeSession failed: ${res.status}`);
-  },
   async completeParticipant(sessionId, participantId) {
     const res = await request(
       `${API_BASE}/sessions/${sessionId}/participants/${participantId}/complete`,
@@ -192,5 +184,13 @@ export const httpSessionManager: SessionManagerClient = {
       throw new Error(`completeParticipant failed: ${res.status}`);
     }
     return (await res.json()) as CompleteParticipantResponse;
+  },
+  async getStudyInfo(conditionId) {
+    const query = conditionId
+      ? `?${new URLSearchParams({ conditionId }).toString()}`
+      : "";
+    const res = await request(`${API_BASE}/study/info${query}`);
+    if (!res.ok) throw new Error(`getStudyInfo failed: ${res.status}`);
+    return (await res.json()) as StudyInfoResponse;
   },
 };

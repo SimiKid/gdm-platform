@@ -1,7 +1,8 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import Settings, { RecruitingTable } from "./Settings";
+import Settings from "./Settings";
+import RecruitingTable from "./settings/RecruitingTable";
 import { calledPaths, mockApi, progress } from "../test-utils";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -90,6 +91,35 @@ describe("Settings", () => {
     expect(screen.getByText("Start Round 2?")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Confirm" }));
     expect(await screen.findByText("Could not start the round.")).toBeInTheDocument();
+  });
+
+  it("renames a round and offers a retry when that fails", async () => {
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    let body: unknown;
+    settingsApi({
+      "/rounds/1": (init: RequestInit | undefined) => {
+        body = JSON.parse(String(init?.body));
+        return { number: 1, label: "pilot 2" };
+      },
+    });
+    const props = { etherpad: null, onToggleEtherpad: vi.fn(), rows: [], onSaved, lobbyCount: 0 };
+    const { rerender } = render(<Settings {...props} rounds={rounds} />);
+    const input = screen.getByLabelText("Label for round 1");
+    const row = input.closest("tr")!;
+    expect(within(row).queryByRole("button", { name: "Save" })).toBeNull();
+    await user.type(input, " 2");
+    await user.click(within(row).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    expect(body).toEqual({ label: "pilot 2" });
+    rerender(<Settings {...props} rounds={{ ...rounds, rounds: [{ ...rounds.rounds[0], label: "pilot 2" }] }} />);
+    expect(within(row).getByText("✓")).toBeInTheDocument();
+
+    settingsApi({ "/rounds/1": { status: 500 } });
+    await user.type(input, "b");
+    await user.click(within(row).getByRole("button", { name: "Save" }));
+    expect(await within(row).findByRole("button", { name: "Retry" })).toBeInTheDocument();
+    await settingsLoaded();
   });
 
   it("renders nothing for the rounds card until rounds are loaded", async () => {
@@ -289,6 +319,31 @@ describe("CompensationCard", () => {
     await user.type(inputs[2], "https://example.org/x");
     await user.click(save);
     expect(await within(card).findByText("Error")).toBeInTheDocument();
+  });
+});
+
+describe("CompensationCard load failure", () => {
+  it("explains a failed load and retries it", async () => {
+    const user = userEvent.setup();
+    settingsApi({ "/settings": { status: 503 } });
+    render(<Settings etherpad={null} onToggleEtherpad={vi.fn()} rows={[]} onSaved={vi.fn()} rounds={null} lobbyCount={0} />);
+    const card = screen.getByRole("heading", { name: "Prolific completion and exit paths" }).closest("section")!;
+    expect(await within(card).findByRole("alert")).toHaveTextContent("Could not load the saved paths (503).");
+    expect(screen.getByLabelText(/Full completion/)).toBeDisabled();
+
+    settingsApi();
+    await user.click(within(card).getByRole("button", { name: "Retry" }));
+    await settingsLoaded();
+    expect(within(card).queryByRole("alert")).toBeNull();
+    expect(screen.getByLabelText(/Full completion/)).toHaveValue(
+      "https://app.prolific.com/submissions/complete?cc=DONE",
+    );
+  });
+
+  it("reports a network error while loading", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new TypeError("Failed to fetch"))));
+    render(<Settings etherpad={null} onToggleEtherpad={vi.fn()} rows={[]} onSaved={vi.fn()} rounds={null} lobbyCount={0} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Failed to fetch");
   });
 });
 

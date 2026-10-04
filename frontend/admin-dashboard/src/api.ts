@@ -6,6 +6,8 @@
  * entering one.
  */
 
+import type { Condition } from "@gdm/shared";
+
 export const API_BASE =
   import.meta.env.VITE_SESSION_MANAGER_URL ?? "http://localhost:3001/api";
 export const PARTICIPANT_BASE =
@@ -44,34 +46,24 @@ export function apiFetch(path: string, init: RequestInit = {}): Promise<Response
   const token = getAdminToken();
   const headers = new Headers(init.headers);
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  return fetch(`${API_BASE}${path}`, {
+  return fetch(apiUrl(path), {
     ...init,
     headers,
   });
 }
 
-/**
- * Conditions created by the automated E2E suite (unique `e2e-…` id per run).
- * They are test residue, not study arms — the UI groups them separately and
- * flags them when active (an active test arm would recruit real participants).
- */
-export function isTestCondition(conditionId: string): boolean {
-  return conditionId.startsWith("e2e-");
+/** Session Manager URL for an API path (shared by fetches and download hrefs). */
+export function apiUrl(path: string): string {
+  return `${API_BASE}${path}`;
 }
 
-/**
- * Safe href used by authenticated download links. Credentials are never
- * included in URLs, browser history, or referrers.
- */
-export function exportUrl(path: string, query: string): string {
-  const params = new URLSearchParams(query);
-  const qs = params.toString();
-  return `${API_BASE}${path}${qs ? `?${qs}` : ""}`;
-}
-
-/** Relative version of exportUrl for apiFetch(). */
-export function exportPath(path: string, query: string): string {
-  const params = new URLSearchParams(query);
-  const qs = params.toString();
-  return `${path}${qs ? `?${qs}` : ""}`;
+/** PUT one condition (recruiting switch, goal, shared parameters). */
+export async function putCondition(condition: Condition): Promise<Condition> {
+  const res = await apiFetch(`/conditions/${condition.id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ condition }),
+  });
+  if (!res.ok) throw new Error(`Save failed (${res.status})`);
+  return (await res.json()) as Condition;
 }

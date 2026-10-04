@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { MOON_SURVIVAL } from "@gdm/shared";
+import { formatMmSs, MOON_SURVIVAL, MOON_SURVIVAL_BRIEFING } from "@gdm/shared";
 import RankingBoard from "./RankingBoard";
 
 export interface RankingTaskAnswers {
@@ -12,15 +12,12 @@ export interface RankingTaskAnswers {
 
 interface Props {
   onComplete: (answers: RankingTaskAnswers) => void;
+  /** Participants per group; null (unknown) keeps the wording number-free. */
+  groupSize?: number | null;
 }
 
 const TASK_SECONDS = 5 * 60;
 const ITEMS = MOON_SURVIVAL.items;
-
-function formatSeconds(s: number): string {
-  const m = Math.floor(s / 60);
-  return `${m}:${(s % 60).toString().padStart(2, "0")}`;
-}
 
 /**
  * Page 4 — the individual ranking task ("Survival on the Moon").
@@ -30,7 +27,7 @@ function formatSeconds(s: number): string {
  * items are appended in their shown order and the ranking is flagged
  * incomplete).
  */
-export default function RankingTaskPage({ onComplete }: Props) {
+export default function RankingTaskPage({ onComplete, groupSize = null }: Props) {
   const [ranked, setRanked] = useState<string[]>([]);
   const remaining = ITEMS.length - ranked.length;
 
@@ -39,14 +36,19 @@ export default function RankingTaskPage({ onComplete }: Props) {
 
   const submittedRef = useRef(false);
 
-  // Keep the latest state in refs so the timeout handler submits fresh data.
-  const stateRef = useRef({ ranked });
-  stateRef.current = { ranked };
+  // Keep the latest ranking and callback in refs so the timer, started once on
+  // mount, submits fresh data.
+  const rankedRef = useRef(ranked);
+  const onCompleteRef = useRef(onComplete);
+  useEffect(() => {
+    rankedRef.current = ranked;
+    onCompleteRef.current = onComplete;
+  });
 
   function doComplete(order: string[], completed: boolean, secondsUsed: number) {
     if (submittedRef.current) return;
     submittedRef.current = true;
-    onComplete({
+    onCompleteRef.current({
       individualRanking: order,
       rankingCompleted: completed,
       rankingSecondsUsed: secondsUsed,
@@ -63,7 +65,7 @@ export default function RankingTaskPage({ onComplete }: Props) {
       setSecondsLeft(left);
       if (left === 0) {
         clearInterval(id);
-        const { ranked: r } = stateRef.current;
+        const r = rankedRef.current;
         // Time is up: submit what we have, leftovers in shown order.
         const leftovers = ITEMS
           .map((i) => i.id)
@@ -77,7 +79,6 @@ export default function RankingTaskPage({ onComplete }: Props) {
     };
     const id = setInterval(tick, 500);
     return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function submitRanking() {
@@ -91,9 +92,9 @@ export default function RankingTaskPage({ onComplete }: Props) {
       <div
         className={`task-timer ${timerLow ? "low" : ""}`}
         role="timer"
-        aria-label={`Time remaining: ${formatSeconds(secondsLeft)}`}
+        aria-label={`Time remaining: ${formatMmSs(secondsLeft)}`}
       >
-        <span aria-hidden="true">⏱</span> {formatSeconds(secondsLeft)}
+        <span aria-hidden="true">⏱</span> {formatMmSs(secondsLeft)}
         <span className="task-timer-caption">time remaining</span>
       </div>
 
@@ -102,18 +103,14 @@ export default function RankingTaskPage({ onComplete }: Props) {
           Before you meet the group to solve the task together, we ask you to
           solve it individually. Once you are done, you will be directed to enter
           the group chat environment where you have time to discuss the task in
-          your group of five.
+          your group{groupSize === null ? "" : ` of ${groupSize}`}.
         </p>
 
         <h1>Study Task Description</h1>
-        <p>
-          As part of a space crew, you are ready to land on the lighted surface
-          of the moon where you planned to meet up with the mothership. Due to
-          mechanical problems, your ship was forced to crash-land about 200 miles
-          (320 km) from the calculated location. Much of the onboard equipment
-          was damaged. Your survival depends on reaching the mothership, so you
-          must choose the most critical items for the journey.
-        </p>
+        <div
+          // Trusted, repository-authored briefing shared with the chat panel.
+          dangerouslySetInnerHTML={{ __html: MOON_SURVIVAL_BRIEFING.html }}
+        />
 
         <h2>
           Rank the items below by importance for reaching the mothership. Most

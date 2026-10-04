@@ -1,5 +1,5 @@
-import type { ExecutionContext } from "@nestjs/common";
-import { describe, expect, it } from "vitest";
+import { Logger, type ExecutionContext } from "@nestjs/common";
+import { describe, expect, it, vi } from "vitest";
 import { InternalGuard } from "./internal.guard";
 
 function context(headers: Record<string, string | string[]>): ExecutionContext {
@@ -30,6 +30,21 @@ describe("InternalGuard", () => {
     } finally {
       if (previous === undefined) delete process.env.INTERNAL_API_TOKEN;
       else process.env.INTERNAL_API_TOKEN = previous;
+    }
+  });
+
+  it("stays open without a configured token and warns only once", () => {
+    const previous = process.env.INTERNAL_API_TOKEN;
+    delete process.env.INTERNAL_API_TOKEN;
+    const warn = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    try {
+      const guard = new InternalGuard();
+      expect(guard.canActivate(context({}))).toBe(true);
+      expect(guard.canActivate(context({ "x-internal-token": "anything" }))).toBe(true);
+      expect(warn).toHaveBeenCalledOnce();
+    } finally {
+      warn.mockRestore();
+      if (previous !== undefined) process.env.INTERNAL_API_TOKEN = previous;
     }
   });
 });

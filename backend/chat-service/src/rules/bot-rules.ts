@@ -5,6 +5,7 @@ import {
   MOON_SURVIVAL,
   audienceForMode,
   buildIdentities,
+  countWords,
   identityFor,
   normalizeInterventionMode,
   protectedEndMs,
@@ -43,8 +44,8 @@ import type { NudgeMessageGenerator } from "../nudge/nudge-message-generator";
  *   - runtime.condition  — the assigned experimental condition (+ its config)
  *   - runtime.state      — a scratchpad for per-session bookkeeping
  *   - runtime.post(text) — send a group message / nudge as the bot
- *   - event              — the incoming event (m.room.message, m.reaction,
- *                          de.gdm.ranking, ...)
+ *   - event              — the incoming event (m.room.message,
+ *                          de.gdm.ranking, de.gdm.behavior, ...)
  */
 export interface BotRules {
   onEvent(runtime: SessionRuntime, event: TimelineEvent): Promise<void> | void;
@@ -63,7 +64,8 @@ interface RuleState {
   lastInterventionAtMs?: number;
 }
 
-type LlmMode = "off" | "active";
+/** No named export in @gdm/shared; derived so it cannot drift from the log shape. */
+type LlmMode = InterventionLog["llmMode"];
 
 const STATE_KEY = "contributionBotRules";
 const CLASSIFICATION_WAIT_MS = 2_000;
@@ -74,7 +76,8 @@ interface PendingClassification {
 }
 
 /**
- * Turn-equalization logic for the current study design.
+ * Turn-equalization logic for the current study design. Not a Nest provider:
+ * {@link StudyBotRules} constructs it with its injected dependencies.
  *
  * The bot evaluates at the end of every contribution window (every
  * `contributionWindowMinutes`): a participant dominates once their dominance
@@ -88,13 +91,10 @@ interface PendingClassification {
  * Detection is identical across delivery conditions — only public vs. private
  * delivery differs.
  */
-@Injectable()
 export class ContributionBotRules implements BotRules {
   private readonly log = new Logger("ContributionBotRules");
 
   constructor(
-    @Optional()
-    @Inject(CONTRIBUTION_CLASSIFIER)
     private readonly classifier?: ContributionClassifier,
     private readonly messageGenerator?: NudgeMessageGenerator,
   ) {}
@@ -154,7 +154,7 @@ export class ContributionBotRules implements BotRules {
       record("too-few-participants");
       return;
     }
-    const state = getRuleState(runtime, STATE_KEY);
+    const state = getRuleState(runtime);
 
     // Warm-up messages never count, even if a window overlaps the warm-up
     // (the timer grid normally starts at warm-up end; this is the backstop
@@ -309,12 +309,12 @@ function normalizeConfig(
   };
 }
 
-function getRuleState(runtime: SessionRuntime, stateKey: string): RuleState {
-  const existing = runtime.state[stateKey] as Partial<RuleState> | undefined;
+function getRuleState(runtime: SessionRuntime): RuleState {
+  const existing = runtime.state[STATE_KEY] as Partial<RuleState> | undefined;
   const state: RuleState = {
     lastInterventionAtMs: existing?.lastInterventionAtMs,
   };
-  runtime.state[stateKey] = state;
+  runtime.state[STATE_KEY] = state;
   return state;
 }
 
@@ -444,10 +444,6 @@ function contributionSplit(
         : share;
     return { ...entry, share, dominanceScore };
   });
-}
-
-function countWords(text: string): number {
-  return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
 function quietestMembers(
@@ -606,12 +602,5 @@ export class StudyBotRules implements BotRules {
     } finally {
       if (timeout) clearTimeout(timeout);
     }
-  }
-}
-
-@Injectable()
-export class NoopBotRules implements BotRules {
-  onEvent(_runtime: SessionRuntime, _event: TimelineEvent): void {
-    // Intentionally empty — no interventions yet.
   }
 }

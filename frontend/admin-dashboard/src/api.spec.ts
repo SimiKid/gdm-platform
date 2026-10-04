@@ -1,13 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  API_BASE,
-  apiFetch,
-  exportPath,
-  exportUrl,
-  getAdminToken,
-  isTestCondition,
-  setAdminToken,
-} from "./api";
+import { API_BASE, apiFetch, apiUrl, getAdminToken, setAdminToken } from "./api";
 
 afterEach(() => {
   localStorage.clear();
@@ -74,20 +66,8 @@ describe("apiFetch", () => {
   });
 });
 
-describe("helpers", () => {
-  it("recognises automated e2e conditions", () => {
-    expect(isTestCondition("e2e-1234")).toBe(true);
-    expect(isTestCondition("baseline")).toBe(false);
-  });
-
-  it("builds credential-free export URLs with an optional query", () => {
-    expect(exportUrl("/export/research.zip", "")).toBe(`${API_BASE}/export/research.zip`);
-    expect(exportUrl("/export/research.zip", "roundIds=1,2")).toBe(
-      `${API_BASE}/export/research.zip?roundIds=1%2C2`,
-    );
-    expect(exportPath("/export/windows.csv", "")).toBe("/export/windows.csv");
-    expect(exportPath("/export/windows.csv", "conditionIds=a")).toBe(
-      "/export/windows.csv?conditionIds=a",
-    );
+describe("apiUrl", () => {
+  it("builds credential-free URLs for download links", () => {
+    expect(apiUrl("/export/research.zip")).toBe(`${API_BASE}/export/research.zip`);
   });
 });

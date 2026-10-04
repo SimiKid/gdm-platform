@@ -218,6 +218,25 @@ describe("matchmaking & lifecycle (integration)", () => {
       .expect(200);
   });
 
+  it("serves public study info from the recruiting conditions", async () => {
+    await request(t.http)
+      .get("/api/study/info")
+      .expect(200, { groupSize: 3, durationMinutes: 10 });
+    const conditions = (await request(t.http).get("/api/conditions").expect(200))
+      .body as Condition[];
+    const baseline = conditions.find((c) => c.id === "baseline")!;
+    await request(t.http)
+      .put("/api/conditions/baseline")
+      .send({ condition: { ...baseline, durationMinutes: 15 } })
+      .expect(200);
+    await request(t.http)
+      .get("/api/study/info")
+      .expect(200, { groupSize: 3, durationMinutes: null });
+    await request(t.http)
+      .get("/api/study/info?conditionId=baseline")
+      .expect(200, { groupSize: 3, durationMinutes: 15 });
+  });
+
   it("returns 404 for an unknown condition", async () => {
     await request(t.http)
       .post("/api/sessions")

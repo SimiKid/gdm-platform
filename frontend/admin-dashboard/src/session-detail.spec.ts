@@ -166,7 +166,7 @@ describe("nudgeComparisons", () => {
     const [c] = nudgeComparisons(s, Date.parse("2026-09-01T10:04:30.000Z"));
     expect(c.live).toBe(true);
     expect(c.afterUntil).toBe(Date.parse("2026-09-01T10:04:30.000Z"));
-    expect(c.rows[0].after).toEqual({ share: 1, messageCount: 1, dominanceScore: 0 });
+    expect(c.rows[0].after).toEqual({ share: 1, messageCount: 1 });
     expect(c.activeAfter).toBe(1);
   });
 
@@ -247,6 +247,9 @@ describe("formatters", () => {
   it("format clocks and shares", () => {
     expect(formatClock(0)).toBe("0:00");
     expect(formatClock(65_400)).toBe("1:05");
+    // Rounds to the nearest second (not down) and clamps negative spans.
+    expect(formatClock(59_600)).toBe("1:00");
+    expect(formatClock(-5_000)).toBe("0:00");
     expect(formatShare(0.666)).toBe("67%");
   });
 });

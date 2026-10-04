@@ -7,6 +7,7 @@ import type {
   WindowEvaluation,
 } from "@gdm/shared";
 import { pseudonymize } from "../../src/reports/pseudonym";
+import { StoreService } from "../../src/store/store.service";
 import {
   closeHarness,
   createTestApp,
@@ -264,6 +265,24 @@ describe("research reports (integration)", () => {
       })
       .expect(201);
     await request(t.http)
+      .post("/api/surveys/debrief-feedback")
+      .set("Authorization", "Bearer tt-P1-private-llm")
+      .send({ sessionId, participantId: first.participantId, feedback: "thanks" })
+      .expect(201);
+    await request(t.http)
+      .post("/api/surveys/debrief-feedback")
+      .set("Authorization", "Bearer tt-P1-private-llm")
+      .send({ sessionId, participantId: first.participantId })
+      .expect(400);
+    // The DB path scopes the patch to the survey's own session.
+    expect(
+      await t.app
+        .get(StoreService)
+        .patchExitSurveyAnswers("another-session", first.participantId, {
+          debriefFeedback: "elsewhere",
+        }),
+    ).toBe(false);
+    await request(t.http)
       .post(`/api/sessions/${sessionId}/finalize`)
       .send({ messages: [], rankingHistory: [] })
       .expect(201);
@@ -287,6 +306,7 @@ describe("research reports (integration)", () => {
       .find((line) => line.startsWith(pseudonym))!;
     expect(row).toContain(",0,"); // ranking error 0 present
     expect(row).toContain("7");
+    expect(row).toContain(",thanks,");
 
     const rankingsCsv = (
       await request(t.http)
@@ -310,20 +330,9 @@ describe("research reports (integration)", () => {
     expect(linkage).toContain(first.participantId);
     expect(linkage).toContain(first.matrix.userId);
 
-    const summary = (
-      await request(t.http).get("/api/reports/summary").expect(200)
-    ).body;
-    const conditionRow = summary.conditions.find(
-      (item: { conditionId: string }) => item.conditionId === "private-llm",
-    );
-    expect(conditionRow).toMatchObject({
-      sessionsCompleted: 1,
-      participants: 3,
-      entrySurveys: 1,
-      exitSurveys: 1,
-      meanSatisfaction: 7,
-      meanIndividualRankingError: 0,
-    });
+    // The monitoring summary and the debug intervention list were removed.
+    await request(t.http).get("/api/reports/summary").expect(404);
+    await request(t.http).get("/api/interventions").expect(404);
   });
 
   it("filters research exports by roundIds and stamps the round column", async () => {

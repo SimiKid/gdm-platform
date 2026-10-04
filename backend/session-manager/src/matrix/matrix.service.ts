@@ -1,5 +1,10 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { randomBytes, randomUUID } from "node:crypto";
+import {
+  fetchWithRateLimitRetry,
+  nonNegativeInt,
+  positiveInt,
+} from "@gdm/shared/server";
 
 export interface MatrixCreds {
   userId: string;
@@ -45,7 +50,7 @@ export class MatrixService {
     const username = `${localpartHint}_${suffix}`;
     const password = `${randomBytes(24).toString("base64url")}Aa1!`;
 
-    const res = await this.fetchWithRateLimitRetry("register", () =>
+    const res = await this.requestWithRetry("register", () =>
       fetch(`${this.internalUrl}/_matrix/client/v3/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -73,7 +78,7 @@ export class MatrixService {
   }
 
   private async loginOrRegisterOrchestrator(): Promise<MatrixCreds> {
-    const login = await this.fetchWithRateLimitRetry("orchestrator login", () =>
+    const login = await this.requestWithRetry("orchestrator login", () =>
       fetch(`${this.internalUrl}/_matrix/client/v3/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -93,7 +98,7 @@ export class MatrixService {
       return { userId: data.user_id, accessToken: data.access_token };
     }
 
-    const register = await this.fetchWithRateLimitRetry(
+    const register = await this.requestWithRetry(
       "orchestrator register",
       () =>
         fetch(`${this.internalUrl}/_matrix/client/v3/register`, {
@@ -137,7 +142,7 @@ export class MatrixService {
 
   private async doCreateRoom(name: string): Promise<string> {
     const orch = await this.getOrchestrator();
-    const res = await this.fetchWithRateLimitRetry("createRoom", () =>
+    const res = await this.requestWithRetry("createRoom", () =>
       fetch(`${this.internalUrl}/_matrix/client/v3/createRoom`, {
         method: "POST",
         headers: {
@@ -165,7 +170,7 @@ export class MatrixService {
   /** Invite a user into a room (sent by the room-owning orchestrator). */
   async invite(roomId: string, userId: string): Promise<void> {
     const orch = await this.getOrchestrator();
-    const res = await this.fetchWithRateLimitRetry("invite", () =>
+    const res = await this.requestWithRetry("invite", () =>
       fetch(
         `${this.internalUrl}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/invite`,
         {
@@ -187,7 +192,7 @@ export class MatrixService {
   /** Remove a participant from an aborted live room so stale clients cannot write. */
   async kick(roomId: string, userId: string, reason: string): Promise<void> {
     const orch = await this.getOrchestrator();
-    const res = await this.fetchWithRateLimitRetry("kick", () =>
+    const res = await this.requestWithRetry("kick", () =>
       fetch(
         `${this.internalUrl}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/kick`,
         {
@@ -243,7 +248,7 @@ export class MatrixService {
 
   /** Join a user (by their own token) into a room. */
   async joinRoom(accessToken: string, roomId: string): Promise<void> {
-    const res = await this.fetchWithRateLimitRetry("join", () =>
+    const res = await this.requestWithRetry("join", () =>
       fetch(
         `${this.internalUrl}/_matrix/client/v3/join/${encodeURIComponent(roomId)}`,
         {
@@ -263,61 +268,18 @@ export class MatrixService {
   }
 
   /** Respect Synapse's retry_after hint, but keep retries bounded. */
-  private async fetchWithRateLimitRetry(
+  private requestWithRetry(
     operation: string,
     request: () => Promise<Response>,
   ): Promise<Response> {
-    for (let attempt = 0; ; attempt += 1) {
-      const response = await request();
-      if (response.status !== 429 || attempt >= this.rateLimitRetries) {
-        return response;
-      }
-      const hintedDelayMs = Math.min(
-        this.maxRetryDelayMs,
-        await matrixRetryAfterMs(response),
-      );
-      // Synapse gives many burst requests the same retry hint. Positive jitter
-      // prevents them all waking together and immediately recreating the 429.
-      const retryAfterMs = Math.min(
-        this.maxRetryDelayMs,
-        hintedDelayMs + Math.floor(Math.random() * Math.min(1000, hintedDelayMs / 4)),
-      );
-      this.log.warn(
-        `${operation} rate-limited; retrying in ${retryAfterMs}ms ` +
-          `(${attempt + 1}/${this.rateLimitRetries})`,
-      );
-      await delay(retryAfterMs);
-    }
+    return fetchWithRateLimitRetry(request, {
+      retries: this.rateLimitRetries,
+      maxDelayMs: this.maxRetryDelayMs,
+      onRetry: (retryAfterMs, attempt) =>
+        this.log.warn(
+          `${operation} rate-limited; retrying in ${retryAfterMs}ms ` +
+            `(${attempt}/${this.rateLimitRetries})`,
+        ),
+    });
   }
-}
-
-async function matrixRetryAfterMs(response: Response): Promise<number> {
-  const header = response.headers?.get?.("retry-after");
-  const headerSeconds = header ? Number(header) : Number.NaN;
-  if (Number.isFinite(headerSeconds) && headerSeconds >= 0) {
-    return Math.max(1, Math.round(headerSeconds * 1000));
-  }
-  try {
-    const clone = response.clone();
-    const body = (await clone.json()) as { retry_after_ms?: unknown };
-    const value = Number(body.retry_after_ms);
-    if (Number.isFinite(value) && value >= 0) return Math.max(1, Math.round(value));
-  } catch {
-    // Plain test doubles and malformed 429 responses fall back safely.
-  }
-  return 1000;
-}
-
-function nonNegativeInt(value: string | undefined, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : fallback;
-}
-
-function positiveInt(value: string | undefined, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -10,39 +10,19 @@ interface Props {
   options: Option[];
   value: string;
   onChange: (value: string) => void;
-  /** Optional scale anchors shown under the buttons, e.g. ["not at all", "very"]. */
-  anchors?: [string, string];
-  /**
-   * "buttons" (default) = horizontal pill group, right for numeric scales.
-   * "list" = one radio per line, right for categorical options whose labels
-   * are words rather than points on a scale.
-   */
-  layout?: "buttons" | "list";
 }
 
 /**
- * A single question block with its answer options as real radio inputs, so it
- * stays keyboard- and screen-reader-accessible in either layout.
+ * A single question block with its answer options as real radio inputs, one
+ * per line, so it stays keyboard- and screen-reader-accessible.
  */
-export default function Likert({
-  name,
-  legend,
-  options,
-  value,
-  onChange,
-  anchors,
-  layout = "buttons",
-}: Props) {
-  const list = layout === "list";
+export default function Likert({ name, legend, options, value, onChange }: Props) {
   return (
     <fieldset className="q-block">
       <legend className="q-label">{legend}</legend>
-      <div className={list ? "radio-list" : "likert-group"} role="presentation">
+      <div className="radio-list" role="presentation">
         {options.map((opt) => (
-          <label
-            key={opt.value}
-            className={list ? "radio-list-option" : "likert-option"}
-          >
+          <label key={opt.value} className="radio-list-option">
             <input
               type="radio"
               name={name}
@@ -54,12 +34,6 @@ export default function Likert({
           </label>
         ))}
       </div>
-      {anchors && (
-        <div className="likert-anchors" aria-hidden="true">
-          <span>{anchors[0]}</span>
-          <span>{anchors[1]}</span>
-        </div>
-      )}
     </fieldset>
   );
 }

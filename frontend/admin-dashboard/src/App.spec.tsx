@@ -48,8 +48,11 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: "Results" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Prolific" })).toBeNull();
     expect(within(screen.getByRole("navigation", { name: "Views" })).getAllByRole("button")).toHaveLength(3);
+    expect(screen.getByRole("button", { name: "Overview" })).toHaveAttribute("aria-current", "page");
     await user.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByRole("heading", { name: "Study Rounds" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "Overview" })).not.toHaveAttribute("aria-current");
     await user.click(screen.getByRole("button", { name: "Testing" }));
     expect(screen.getByRole("heading", { name: "Automated Tests" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Overview" }));
@@ -79,6 +82,14 @@ describe("App", () => {
     render(<App />);
     expect(await screen.findByText("Could not load sessions (503)")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Study Admin" })).toBeInTheDocument();
+  });
+
+  it("locks the whole dashboard, tabs included, while Etherpad starts", async () => {
+    dashboardApi({ "/admin/etherpad": { enabled: true, state: "starting", activeParticipants: 0 } });
+    render(<App />);
+    expect(await screen.findByText(/Settings are temporarily locked/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Testing" })).toBeDisabled();
   });
 
   it("tolerates a missing Etherpad status endpoint", async () => {

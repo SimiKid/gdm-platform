@@ -252,30 +252,6 @@ details summary {
   margin-top: 4px;
 }
 
-
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.chips.selectable label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border-radius: 999px;
-  background: #eef2f7;
-  color: #45566e;
-  cursor: pointer;
-  font-size: 0.8rem;
-  padding: 0.3rem 0.65rem;
-}
-
-.chips.selectable input[type="checkbox"] {
-  width: 14px;
-  height: 14px;
-}
-
 .export-table td {
   border-bottom: 0;
   padding: 6px 0;
@@ -380,6 +356,11 @@ tbody tr:last-child td {
   background: #f8fafc;
 }
 
+.clickable:focus-visible {
+  outline: 2px solid #1c7ed6;
+  outline-offset: -2px;
+}
+
 .clickable.selected td {
   background: #eef4fc;
 }
@@ -475,7 +456,7 @@ tbody tr:last-child td {
   overflow-wrap: anywhere;
 }
 
-/* Knob toggle (recruiting on/off, 2-bot test). */
+/* Knob toggle (recruiting on/off, Etherpad). */
 .switch {
   position: relative;
   display: inline-block;
@@ -529,10 +510,6 @@ tbody tr:last-child td {
   outline-offset: 2px;
 }
 
-.switch.danger input:checked + .knob {
-  background: #b45309;
-}
-
 .ok,
 .bad {
   display: block;
@@ -555,16 +532,11 @@ tbody tr:last-child td {
 
 /* ── Recruiting table ──────────────────────────────── */
 
-/* Read-only delivery badge per arm. */
-.arm-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin-top: 4px;
-}
-
+/* Read-only delivery badge per arm, on its own line under the name. */
 .arm {
-  display: inline-block;
+  display: block;
+  width: fit-content;
+  margin-top: 4px;
   padding: 2px 8px;
   border-radius: 999px;
   background: #eef2f7;
@@ -827,7 +799,7 @@ tbody tr:last-child td {
   margin: 12px 0 0;
 }
 
-.workspace-error {
+.error-row {
   display: flex;
   align-items: center;
   justify-content: space-between;

@@ -3,8 +3,8 @@ import type {
   NudgeMessageContext,
   NudgeMessageGenerator,
 } from "./nudge-message-generator";
+import { anthropicModel, requestAnthropicText } from "../anthropic/anthropic-client";
 
-const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 const REQUEST_TIMEOUT_MS = 5_000;
 const MAX_PREVIOUS_MESSAGES = 8;
 const MAX_ATTEMPTS = 2;
@@ -30,18 +30,12 @@ export class AnthropicNudgeMessageGenerator implements NudgeMessageGenerator {
       return null;
     }
 
-    const model = process.env.ANTHROPIC_MODEL ?? DEFAULT_MODEL;
+    const model = anthropicModel();
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
       try {
-        const res = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": apiKey,
-            "anthropic-version": "2023-06-01",
-          },
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-          body: JSON.stringify({
+        const rawOutput = await requestAnthropicText(
+          apiKey,
+          {
             model,
             max_tokens: 120,
             temperature: 0.9,
@@ -69,20 +63,9 @@ export class AnthropicNudgeMessageGenerator implements NudgeMessageGenerator {
                 },
               },
             },
-          }),
-        });
-        if (!res.ok) {
-          throw new Error(`Anthropic status ${res.status}: ${await res.text()}`);
-        }
-        const response = (await res.json()) as {
-          content?: Array<{ type?: string; text?: string }>;
-        };
-        const rawOutput = response.content?.find(
-          (block) => block.type === "text",
-        )?.text;
-        if (!rawOutput) {
-          throw new Error("Anthropic response contained no text block");
-        }
+          },
+          REQUEST_TIMEOUT_MS,
+        );
         const output = JSON.parse(rawOutput) as NudgeOutput;
         const candidate = normalizeMessage(output.message);
         if (candidate && isSafeCandidate(candidate, context)) return candidate;

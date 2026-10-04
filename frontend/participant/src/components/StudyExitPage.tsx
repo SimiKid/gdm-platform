@@ -1,19 +1,18 @@
-import { useState } from "react";
 import type { ParticipationOutcomeResponse } from "@gdm/shared";
 import DebriefingDisclosure from "./DebriefingDisclosure";
 import StudyShell from "./StudyShell";
 
-export default function StudyExitPage({
-  termination,
-}: {
+interface Props {
   termination: ParticipationOutcomeResponse;
-}) {
-  const [debriefAcknowledged, setDebriefAcknowledged] = useState(false);
+  /** Direct (non-Prolific) participants have no submission to return to. */
+  prolificParticipant: boolean;
+}
+
+export default function StudyExitPage({ termination, prolificParticipant }: Props) {
   const partial = termination.compensationKind === "partial";
   const showDebrief = !["declined_consent", "ineligible"].includes(
     termination.outcome,
   );
-  const mayReturn = !showDebrief || debriefAcknowledged;
   return (
     <StudyShell>
       <div className="study-card narrow">
@@ -34,46 +33,26 @@ export default function StudyExitPage({
             through Prolific.
           </p>
         )}
-        {showDebrief && (
-          <>
-            <DebriefingDisclosure />
-            <label className="consent-check">
-              <input
-                type="checkbox"
-                checked={debriefAcknowledged}
-                onChange={() => setDebriefAcknowledged((value) => !value)}
-              />
-              <span>I have read and understood the debriefing above.</span>
-            </label>
-          </>
-        )}
-        <div className="card-actions">
-          {termination.redirectUrl && mayReturn ? (
-            <a
-              className="btn btn-primary"
-              href={termination.redirectUrl}
-            >
-              Return to Prolific
-            </a>
-          ) : termination.redirectUrl ? (
-            <button type="button" className="btn btn-primary" disabled>
-              Return to Prolific
-            </button>
-          ) : (
-            <>
-              <button type="button" className="btn btn-primary" disabled>
+        {showDebrief && <DebriefingDisclosure />}
+        {prolificParticipant && (
+          <div className="card-actions">
+            {termination.redirectUrl ? (
+              <a className="btn btn-primary" href={termination.redirectUrl}>
                 Return to Prolific
-              </button>
-              <p className="error" role="alert">
-                The return link is not configured. Please keep this page open
-                and contact the researcher through Prolific.
-              </p>
-            </>
-          )}
-          {!mayReturn && (
-            <p className="action-hint">Please acknowledge the debriefing before returning.</p>
-          )}
-        </div>
+              </a>
+            ) : (
+              <>
+                <button type="button" className="btn btn-primary" disabled>
+                  Return to Prolific
+                </button>
+                <p className="error" role="alert">
+                  The return link is not configured. Please keep this page open
+                  and contact the researcher through Prolific.
+                </p>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </StudyShell>
   );

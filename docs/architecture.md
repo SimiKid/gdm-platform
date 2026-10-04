@@ -4,7 +4,7 @@ System architecture, service responsibilities, and data flow.
 
 ## Overview
 
-The GDM platform is a monorepo with two backend services, two frontends, a shared type package, a Playwright e2e suite (`e2e/`), a k6 load-test harness (`loadtest/`), and a Docker Compose infrastructure layer. (`backend/export-service/` is an empty placeholder — a single `.gitkeep` — for a possible future standalone export service.) All services communicate over HTTP and the Matrix protocol.
+The GDM platform is a monorepo with two backend services, two frontends, a shared type package, a Playwright e2e suite (`e2e/`), a k6 load-test harness (`loadtest/`), and a Docker Compose infrastructure layer. Besides the application services, the compose stack runs Synapse (Matrix) with its own Postgres, the research Postgres, and an Etherpad container with its own Postgres (a small supervisor that starts the optional Etherpad editor only when it is switched on in the admin dashboard — see [etherpad.md](etherpad.md)); production adds a Caddy reverse proxy. All services communicate over HTTP and the Matrix protocol.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -65,7 +65,7 @@ A Structurizr C4 model of the same system lives in
 
 ### Shared Package (`packages/shared`)
 
-TypeScript domain models, DTOs, and constants shared across all services. Defines the contract for `Session`, `Participant`, `Condition`, `Message`, `InterventionConfig`, `WindowEvaluation`, the Prolific lifecycle records, identity assignment, and the Moon Survival task (10 items and the expert ranking; the NASA error score itself is computed in the Session Manager's reports module).
+TypeScript domain models, DTOs, and constants shared across all services. Defines the contract for `Session`, `Participant`, `Condition`, `Message`, `InterventionConfig`, `WindowEvaluation`, the Prolific lifecycle records, identity assignment, the Moon Survival task (10 items and the expert ranking; the NASA error score itself is computed in the Session Manager's reports module), and small text helpers (`countWords`, `formatMmSs`, `isTestCondition` for the `e2e-` test-condition prefix). A separate Node-only subpath, `@gdm/shared/server`, holds helpers used only by the two backends: the timing-safe token comparison and the internal-token check/header, the bounded Matrix rate-limit retry, and environment-integer parsing.
 
 ### Session Manager (`backend/session-manager`)
 
@@ -82,9 +82,11 @@ NestJS API (all routes under `/api`) responsible for:
   `gdm_bot_<suffix>` account on every start and must be re-invited).
 - **Survey persistence** — stores entry and exit survey responses (`POST /api/surveys`, validated against a fixed key list) and the optional debriefing feedback (`POST /api/surveys/debrief-feedback`, merged into the exit answers).
 - **Session lifecycle** — status transitions: `waiting` → `provisioning` → `running` → `completed`. A session becomes `aborted` when its waiting deadline passes (outcome `unmatched`, or `technical_failure` if it was stuck provisioning), when a new study round starts, when a Prolific participant of a provisioning/running group disconnects (the whole group is aborted and all members are kicked from the room) or withdraws (group aborted, no kick), or when the last participant of a waiting lobby is terminated (an earlier termination only frees the seat). The end of the discussion is reported by the Chat Service (`POST /api/sessions/:id/finalize`), which sets `completed`; `POST /api/sessions/:id/complete` exists for the same purpose but is not called by the current participant app. Each participant is marked complete individually once their exit survey is stored.
-- **Prolific lifecycle** — `POST /api/prolific/{arrivals,resume,progress,terminate,outcome}` record arrivals before consent, heartbeats with the current stage, resumes, early exits, and terminal outcomes. A heartbeat gap longer than `PARTICIPANT_RECONNECT_GRACE_SECONDS` (default 30, sweep every 5 s) terminalizes the participant (`connection_timeout`), removes their seat or aborts their live group, and queues the compensation action. Researchers review those actions under `GET /api/admin/prolific/outcomes` and `POST /api/admin/prolific/outcomes/:id/actions/:action`. See [prolific-integration.md](prolific-integration.md).
+- **Prolific lifecycle** — `POST /api/prolific/{arrivals,resume,progress,terminate,outcome}` record arrivals before consent, heartbeats with the current stage, resumes, early exits, and terminal outcomes. A heartbeat gap longer than `PARTICIPANT_RECONNECT_GRACE_SECONDS` (default 30, sweep every 5 s) terminalizes the participant (`connection_timeout`), removes their seat or aborts their live group, and queues the compensation action. Researchers review those actions under `GET /api/admin/prolific/outcomes` and `POST /api/admin/prolific/outcomes/:id/actions/:action` (API-only; an unknown outcome id answers 404, an outcome that is not actionable or not in the required state 409). See [prolific-integration.md](prolific-integration.md).
 - **Study settings** — `GET/PUT /api/settings` hold the Prolific completion and early-exit URLs.
-- **Reports & export** — per-condition monitoring statistics (`GET /api/reports/summary`, API-only) plus pseudonymized analysis CSVs (participants, sessions, windows, rankings), a separately guarded linkage file, a research ZIP with codebook, an identifying wide-format "research data" ZIP for the Overview tab, the raw per-family exports, and the Prolific arrival/outcome exports. All session-based report/export endpoints accept `conditionIds` and `roundIds` filters. See [data-export.md](data-export.md).
+- **Study info** — `GET /api/study/info?conditionId=` (public, no credential, throttled to 300 requests per minute) returns `{ groupSize, durationMinutes }` for the participant pages. For an existing `conditionId` it returns that condition's values; otherwise each field is the value shared by all currently recruiting arms (active, below their goal in the current round, not `e2e-`), or `null` when they differ or no arm recruits.
+- **Etherpad workspace** — `GET/PUT /api/admin/etherpad` (status and the global on/off switch) and the participant pad routes `POST /api/workspace/{prepare,pads/:phase,finish/:id,leave}` (authorized by the participant's tracking token). See [etherpad.md](etherpad.md).
+- **Reports & export** — pseudonymized analysis CSVs (participants, sessions, windows, rankings), a separately guarded linkage file, a research ZIP with codebook, an identifying wide-format "research data" ZIP for the Overview tab, the raw per-family exports, and the Prolific arrival/outcome exports. All session-based report/export endpoints accept `conditionIds` and `roundIds` filters. See [data-export.md](data-export.md).
 - **Health** — `GET /api/health` and `GET /api/health/ready`.
 
 Researcher routes are guarded by `ADMIN_API_TOKEN`, participant routes by the seat credential issued at join time, and Chat-Service routes (`finalize`, `checkpoint`, `recover`) by `INTERNAL_API_TOKEN`. Data is stored in the research Postgres database via Prisma ORM; migrations run automatically at container start.
@@ -94,10 +96,10 @@ Researcher routes are guarded by `ADMIN_API_TOKEN`, participant routes by the se
 NestJS bot runtime responsible for:
 
 - **Matrix sync** — a bot user joins each session's room and tails the `/sync` stream for real-time events.
-- **Event processing** — normalizes Matrix events (messages, reactions, ranking edits, redactions, behavioral telemetry) and feeds them to the session runtime.
+- **Event processing** — normalizes Matrix events (messages, ranking edits, behavioral telemetry) and feeds them to the session runtime. Emoji reactions (`m.reaction`) and redactions are not processed.
 - **Bot rules** — the `ContributionBotRules` engine evaluates the contribution split at the end of every contribution window against the condition's intervention config and sends a nudge when the threshold is crossed. See [bot-rulebook.md](bot-rulebook.md).
-- **LLM usage** — Anthropic's Messages API (a) generates fresh nudge wording for every intervention in the two nudging arms, (b) in those arms (`llmMode: "active"`) classifies every participant message for meaningfulness (`src/classifier/`); the scores feed the composite dominance metric and messages classified as invitations are left out of the contribution split, but classifications never trigger nudges on their own, and (c) optionally moderates participant messages when `MODERATION=on` (flagged messages are redacted and the sender gets a private warning). With `GDM_ENV=production` the service refuses to start without `ANTHROPIC_API_KEY`.
-- **Session runtime** — one `SessionRuntime` instance per active session, collecting messages, reactions, ranking history, behavioral events, classifications, and intervention logs.
+- **LLM usage** — Anthropic's Messages API (a) generates fresh nudge wording for every intervention in the two nudging arms, (b) in those arms (`llmMode: "active"`) classifies every participant message for meaningfulness (`src/classifier/`); the scores feed the composite dominance metric and messages classified as invitations are left out of the contribution split, but classifications never trigger nudges on their own, and (c) optionally moderates participant messages when `MODERATION=on` (flagged messages are redacted in the Matrix room — the recorded chat log keeps them — and the sender gets a private warning). With `GDM_ENV=production` the service refuses to start without `ANTHROPIC_API_KEY`.
+- **Session runtime** — one `SessionRuntime` instance per active session, collecting messages, ranking history, behavioral events, classifications, and intervention logs. Reaction data restored from checkpoints written before reactions were dropped is passed through unchanged.
 - **Durable checkpoints** — live runtimes checkpoint messages, behavioral events,
   semantic classifications, window evaluations, processed Matrix event IDs, and
   rule tracker state into the research database via the Session Manager
@@ -120,11 +122,15 @@ React SPA served by nginx. Implements the participant journey:
 5. **Ranking Task** — individual Moon Survival ranking with a **5-minute** timer (auto-completed in shown order on expiry).
 6. **Group Intro** — explanation of the upcoming group discussion.
 7. **Waiting Room** — calls `POST /api/sessions` to join, polls for group readiness, shows the waiting deadline.
-8. **Chat** — Matrix-based group chat with WhatsApp-style UI, @mention picker, briefing panel, countdown timer (red "wrap up!" cue during the protected end), and a condition-selected shared workspace. Structured ranking is the default; a dormant external-iframe extension point shows a not-configured placeholder until a provider is supplied.
+8. **Chat** — Matrix-based group chat with WhatsApp-style UI, @mention picker, briefing panel, countdown timer (red "wrap up!" cue during the protected end), and a condition-selected shared workspace. Structured ranking is the default; a dormant external-iframe extension point shows a not-configured placeholder until a provider is supplied. Participants admitted while the global Etherpad switch is on use Etherpad writing tasks instead of the ranking tasks, including a shared group pad during the chat (see [etherpad.md](etherpad.md)).
 9. **Exit Survey** — three steps: individual re-ranking, task confidence + group-dynamics items, psychological-safety + bot-perception items (the bot block is shown in every arm).
-10. **Debriefing** — study explanation, an optional free-text feedback box, an acknowledgement checkbox, and the completion link (Prolific completion URL from Settings, or `VITE_PAYMENT_URL` as build-time fallback).
+10. **Debriefing** — study explanation and an optional free-text feedback box. Prolific participants get a **Return to Prolific** button with the completion link, which comes only from admin Settings (Full completion); while that field is empty the button stays disabled with a not-configured notice. Direct participants get a **Finish study** button instead.
 
-Early exits (consent declined, ineligible, voluntary withdrawal, disconnect, unmatched lobby, aborted group) land on a **study-exit page** that shows the server-recorded outcome, any partial compensation recorded for review, and the matching Prolific return link. Post-consent exits receive the same debriefing disclosure before their return link becomes active; consent declines and eligibility screen-outs do not.
+Consent, Ranking Task and Group Intro quote the configured group size (Group Intro also the discussion length), fetched from `GET /api/study/info` (with the forced `conditionId`, if any) when the participant enters the study; while it is unknown — arms differ, none recruits, or the request failed — they use neutral wording.
+
+From About You through the exit survey (waiting room and chat included) every participant is offered a **withdraw** link. For Prolific participants the withdrawal is recorded server-side (`voluntary_withdrawal`); for direct participants no outcome is sent to the server (in Etherpad mode only their writing admission is released), so a seat they hold in a waiting lobby or running group stays taken, as if they had closed the tab.
+
+Early exits (consent declined, ineligible, voluntary withdrawal, disconnect, unmatched lobby, aborted group) land on a **study-exit page** that shows the outcome message and any partial compensation recorded for review. Post-consent exits also show the debriefing disclosure; consent declines and eligibility screen-outs do not. Prolific participants additionally get the matching Prolific return link (disabled with a notice when that URL is not configured); direct participants see only the message (plus the disclosure where it applies), with no return button.
 
 The frontend sends a Prolific heartbeat every 10 seconds with the current stage, and batched typing, cursor-activity and tab-visibility telemetry to Matrix.
 
@@ -181,7 +187,7 @@ Participant opens http://localhost:3000/
   Participants enter exit survey; each is marked complete once it is stored
         |
         v
-  Debriefing: study explanation, optional feedback, completion link
+  Debriefing: study explanation, optional feedback, Prolific completion link (direct participants: Finish)
 ```
 
 ## Data Flow
@@ -196,7 +202,7 @@ Participant opens http://localhost:3000/
 - **Chat Service -> Anthropic**: nudge wording, message classification (nudging arms), optional moderation
 - **Chat Service -> Session Manager**: incremental live checkpoints, recovery requests after restart, and final session data at session end
 - **Session Manager -> Prolific**: submission validation, return requests, bonus batches (only when `PROLIFIC_API_TOKEN` is set)
-- **Admin Dashboard -> Session Manager**: condition updates, study settings (completion/exit URLs), study round management (start/edit rounds), session queries, result summaries, exports, Prolific compensation actions
+- **Admin Dashboard -> Session Manager**: condition updates, study settings (completion/exit URLs), study round management (start/edit rounds), the Etherpad switch, session queries, and the Overview-tab exports (the Prolific compensation queue and all other exports are API-only)
 
 ## Key Design Decisions
 

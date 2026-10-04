@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Message } from "@gdm/shared";
+import type {
+  ClassificationFailure,
+  ContributionClassification,
+  Message,
+} from "@gdm/shared";
 import { AnthropicContributionClassifier } from "./anthropic-contribution-classifier";
 import {
   isClassification,
@@ -32,9 +36,19 @@ function rating(value: unknown, reason = "because") {
   return { rating: value, reason };
 }
 
+/** Narrows a classify() result, failing the test on a failure record. */
+function expectClassification(
+  result: ContributionClassification | ClassificationFailure,
+): ContributionClassification {
+  if (!isClassification(result)) {
+    throw new Error(`expected a classification, got failure: ${result.error}`);
+  }
+  return result;
+}
+
 /** Stubs fetch so the "model" returns the given JSON text verbatim. */
 function stubModelOutput(text: string) {
-  const fetchMock = vi.fn(async () => ({
+  const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({
     ok: true,
     json: async () => ({ content: [{ type: "text", text }] }),
   }));
@@ -68,9 +82,11 @@ describe("AnthropicContributionClassifier", () => {
       participantIds: MEMBERS,
     };
 
-    const result = await new AnthropicContributionClassifier().classify(
-      message("m2", MEMBERS[1], "I agree, oxygen first. What do you think?", 2),
-      context,
+    const result = expectClassification(
+      await new AnthropicContributionClassifier().classify(
+        message("m2", MEMBERS[1], "I agree, oxygen first. What do you think?", 2),
+        context,
+      ),
     );
 
     expect(result).toMatchObject({
@@ -83,21 +99,21 @@ describe("AnthropicContributionClassifier", () => {
       invitesParticipation: { value: true, reason: "asks Blue directly" },
     });
     // (mean(5, 3) - 1) / 4 = 0.75; invites_participation must NOT count.
-    expect(result?.meaningfulnessScore).toBeCloseTo(0.75);
+    expect(result.meaningfulnessScore).toBeCloseTo(0.75);
 
-    expect(result?.prompt).toContain("MESSAGE TO CLASSIFY:");
-    expect(result?.prompt).toContain("Sender: Blue");
-    expect(result?.prompt).toContain("PRECEDING CONTEXT:");
-    expect(result?.prompt).toContain("TASK ITEMS:");
-    expect(result?.prompt).toContain("Box of matches, Two 100-lb tanks of oxygen");
-    expect(result?.prompt).toContain("GROUP MEMBERS:");
-    expect(result?.prompt).toContain("Red, Blue");
-    expect(result?.prompt).not.toContain("@secret-a:localhost");
-    expect(result?.prompt).not.toContain("@secret-b:localhost");
+    expect(result.prompt).toContain("MESSAGE TO CLASSIFY:");
+    expect(result.prompt).toContain("Sender: Blue");
+    expect(result.prompt).toContain("PRECEDING CONTEXT:");
+    expect(result.prompt).toContain("TASK ITEMS:");
+    expect(result.prompt).toContain("Box of matches, Two 100-lb tanks of oxygen");
+    expect(result.prompt).toContain("GROUP MEMBERS:");
+    expect(result.prompt).toContain("Red, Blue");
+    expect(result.prompt).not.toContain("@secret-a:localhost");
+    expect(result.prompt).not.toContain("@secret-b:localhost");
     // Ordering is intentional: relevance is asked before coherence.
-    expect(result?.prompt.indexOf("1. relevance")).toBeGreaterThan(-1);
-    expect(result?.prompt.indexOf("1. relevance")).toBeLessThan(
-      result?.prompt.indexOf("2. coherence") ?? -1,
+    expect(result.prompt.indexOf("1. relevance")).toBeGreaterThan(-1);
+    expect(result.prompt.indexOf("1. relevance")).toBeLessThan(
+      result.prompt.indexOf("2. coherence"),
     );
 
     const request = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
@@ -132,13 +148,14 @@ describe("AnthropicContributionClassifier", () => {
       }),
     );
 
-    const result = await new AnthropicContributionClassifier().classify(
-      message("m", MEMBERS[0], "text"),
-      EMPTY_CONTEXT,
+    const result = expectClassification(
+      await new AnthropicContributionClassifier().classify(
+        message("m", MEMBERS[0], "text"),
+        EMPTY_CONTEXT,
+      ),
     );
 
-    expect(isClassification(result)).toBe(true);
-    expect(result?.meaningfulnessScore).toBeCloseTo(expected);
+    expect(result.meaningfulnessScore).toBeCloseTo(expected);
   });
 
   it("includes only the last three messages as preceding context", async () => {
@@ -151,25 +168,27 @@ describe("AnthropicContributionClassifier", () => {
       }),
     );
 
-    const result = await new AnthropicContributionClassifier().classify(
-      message("m5", MEMBERS[1], "ok", 5),
-      {
-        priorMessages: [
-          message("m1", MEMBERS[0], "first", 1),
-          message("m2", MEMBERS[0], "second", 2),
-          message("m3", MEMBERS[0], "third", 3),
-          message("m4", MEMBERS[0], "fourth", 4),
-        ],
-        taskItems: ["Stellar map"],
-        participantIds: MEMBERS,
-      },
+    const result = expectClassification(
+      await new AnthropicContributionClassifier().classify(
+        message("m5", MEMBERS[1], "ok", 5),
+        {
+          priorMessages: [
+            message("m1", MEMBERS[0], "first", 1),
+            message("m2", MEMBERS[0], "second", 2),
+            message("m3", MEMBERS[0], "third", 3),
+            message("m4", MEMBERS[0], "fourth", 4),
+          ],
+          taskItems: ["Stellar map"],
+          participantIds: MEMBERS,
+        },
+      ),
     );
 
-    expect(result?.meaningfulnessScore).toBe(0);
-    expect(result?.prompt).not.toContain("first");
-    expect(result?.prompt).toContain("second");
-    expect(result?.prompt).toContain("third");
-    expect(result?.prompt).toContain("fourth");
+    expect(result.meaningfulnessScore).toBe(0);
+    expect(result.prompt).not.toContain("first");
+    expect(result.prompt).toContain("second");
+    expect(result.prompt).toContain("third");
+    expect(result.prompt).toContain("fourth");
   });
 
   it("returns a failure record without an API key", async () => {

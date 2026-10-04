@@ -28,18 +28,18 @@ describe("AuthenticatedDownloadLink", () => {
     const user = userEvent.setup();
     const fetchMock = mockApi({ "/export/research.zip": { ok: true } });
     render(
-      <AuthenticatedDownloadLink path="/export/research.zip" query="roundIds=2" filename="research_bundle.zip">
+      <AuthenticatedDownloadLink path="/export/research.zip" filename="research_bundle.zip">
         Bundle
       </AuthenticatedDownloadLink>,
     );
     const link = screen.getByRole("link", { name: "Bundle" });
-    expect(link).toHaveAttribute("href", `${API_BASE}/export/research.zip?roundIds=2`);
+    expect(link).toHaveAttribute("href", `${API_BASE}/export/research.zip`);
     expect(link.getAttribute("href")).not.toContain("secret");
 
     await user.click(link);
 
     await waitFor(() => expect(anchorClick).toHaveBeenCalledTimes(1));
-    expect(calledPaths(fetchMock)).toEqual(["/export/research.zip?roundIds=2"]);
+    expect(calledPaths(fetchMock)).toEqual(["/export/research.zip"]);
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect((init.headers as Headers).get("Authorization")).toBe("Bearer secret");
     const clicked = anchorClick.mock.instances[0] as unknown as HTMLAnchorElement;

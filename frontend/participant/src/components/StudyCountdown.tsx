@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { formatMmSs } from "@gdm/shared";
 
 interface Props {
   deadline: number;
@@ -35,7 +36,7 @@ export default function StudyCountdown({ deadline, label, onExpire }: Props) {
 
   return (
     <div className={`task-timer ${secondsLeft <= 60 ? "low" : ""}`} role="timer" aria-label={label}>
-      <span>{Math.floor(secondsLeft / 60)}:{(secondsLeft % 60).toString().padStart(2, "0")}</span>
+      <span>{formatMmSs(secondsLeft)}</span>
       <span className="task-timer-caption">{label}</span>
     </div>
   );

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Survey from "./Survey";
+import { rankAllItems } from "../test-utils";
 
 async function completeConsent() {
   // Step 1: intro screen — tick acknowledgment, then continue to consent form
@@ -68,17 +69,6 @@ async function completeAttitudes() {
     within(survival).getByRole("radio", { name: "Rather unfamiliar" }),
   );
   await userEvent.click(screen.getByRole("button", { name: "Continue" }));
-}
-
-async function rankAllItems() {
-  // Keyboard-accessible alternative to drag-and-drop: the "Add" buttons.
-  let addButtons = screen.getAllByRole("button", { name: /^Add .* to the ranking$/ });
-  while (addButtons.length > 0) {
-    await userEvent.click(addButtons[0]);
-    addButtons = screen.queryAllByRole("button", {
-      name: /^Add .* to the ranking$/,
-    });
-  }
 }
 
 describe("Survey", () => {

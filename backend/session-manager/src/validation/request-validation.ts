@@ -1,5 +1,7 @@
 import { BadRequestException } from "@nestjs/common";
+import { PARTICIPATION_STAGES } from "@gdm/shared";
 import type {
+  CheckpointSessionRequest,
   Condition,
   OpenSessionRequest,
   RecordParticipationProgressRequest,
@@ -9,6 +11,25 @@ import type {
 } from "@gdm/shared";
 
 const SAFE_ID = /^[A-Za-z0-9._:@-]+$/;
+
+/** Stages a participant's browser may report; done/terminated are server-set. */
+const CLIENT_REPORTED_STAGES: readonly string[] = PARTICIPATION_STAGES.filter(
+  (stage) => stage !== "done" && stage !== "terminated",
+);
+
+/** Checkpoint collections the Chat Service sends as arrays. */
+const CHECKPOINT_ARRAY_FIELDS = [
+  "messages",
+  "rankingHistory",
+  "interventions",
+  "behavioralEvents",
+  "contributionClassifications",
+  "windowEvaluations",
+  "classificationFailures",
+  "processedEventIds",
+  "redactedReactionEventIds",
+  "reactionEvents",
+] as const;
 
 export function validateOpenSessionRequest(
   value: unknown,
@@ -38,7 +59,7 @@ export function validateParticipationProgressRequest(
 ): asserts value is RecordParticipationProgressRequest {
   const request = record(value, "Invalid participation progress");
   validateProlificShape(request.prolific);
-  if (!['arrived', 'consent', 'entry', 'waiting', 'chat', 'exit'].includes(String(request.stage))) {
+  if (!CLIENT_REPORTED_STAGES.includes(String(request.stage))) {
     bad("Invalid participation stage");
   }
 }
@@ -79,6 +100,42 @@ export function validateSurveyRequest(
   }
   const answers = record(survey.answers, "survey.answers must be an object");
   validateBoundedJson(answers, "survey.answers");
+}
+
+export function validateDebriefFeedbackRequest(
+  value: unknown,
+): asserts value is { sessionId: string; participantId: string; feedback: string } {
+  const request = record(value, "Invalid debrief feedback");
+  boundedString(request.sessionId, "sessionId", 1, 100);
+  boundedString(request.participantId, "participantId", 1, 100);
+  if (typeof request.feedback !== "string") bad("feedback must be a string");
+}
+
+/**
+ * Shape check of a Chat Service checkpoint/finalize body. The service is
+ * trusted (internal token); this only rejects malformed payloads before they
+ * reach the merge logic, which tolerates missing collections.
+ */
+export function validateCheckpointRequest(
+  value: unknown,
+): asserts value is CheckpointSessionRequest {
+  const request = record(value, "Invalid checkpoint");
+  if (
+    request.revision !== undefined &&
+    (typeof request.revision !== "number" ||
+      !Number.isFinite(request.revision) ||
+      request.revision < 0)
+  ) {
+    bad("revision must be a non-negative number");
+  }
+  for (const field of CHECKPOINT_ARRAY_FIELDS) {
+    if (request[field] !== undefined && !Array.isArray(request[field])) {
+      bad(`${field} must be an array`);
+    }
+  }
+  if (request.ruleState !== undefined) {
+    record(request.ruleState, "ruleState must be an object");
+  }
 }
 
 /** Validate the actual study questionnaire before it reaches persistence. */

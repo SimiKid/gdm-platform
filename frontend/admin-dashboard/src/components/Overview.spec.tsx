@@ -1,11 +1,14 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Session } from "@gdm/shared";
 import Overview, { SessionsTable } from "./Overview";
 import { calledPaths, mockApi, progress, session, sessionSummary } from "../test-utils";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 const rounds = {
   currentRound: 2,
@@ -67,6 +70,18 @@ describe("Overview", () => {
     expect(screen.queryByText(/Current round/)).toBeNull();
     expect(screen.getByText("No sessions yet.")).toBeInTheDocument();
   });
+
+  it("selects the link for a manual copy when the clipboard refuses", async () => {
+    const user = userEvent.setup();
+    mockApi({});
+    render(<Overview rounds={null} rows={[]} sessions={[]} />);
+    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("denied"));
+    await user.click(screen.getByRole("button", { name: "Copy" }));
+    expect(await screen.findByRole("button", { name: "Press Ctrl/⌘+C" })).toBeInTheDocument();
+    const input = screen.getByDisplayValue("http://localhost:3000/") as HTMLInputElement;
+    expect(input).toHaveFocus();
+    expect(input.selectionEnd! - input.selectionStart!).toBe(input.value.length);
+  });
 });
 
 describe("SessionsTable", () => {
@@ -118,12 +133,74 @@ describe("SessionsTable", () => {
     expect(list).toHaveClass("compact");
   });
 
-  it("ignores a failed detail fetch", async () => {
+  it("shows a failed detail fetch in the inspector", async () => {
     const user = userEvent.setup();
     mockApi({ "/admin/sessions/x": { status: 404 } });
     render(<SessionsTable sessions={[sessionSummary({ id: "x" })]} />);
     await user.click(screen.getAllByRole("row")[1]);
-    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not load this session (404).");
     expect(screen.queryByLabelText("Participants")).toBeNull();
+  });
+
+  it("reports a network error while loading a session", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new TypeError("Failed to fetch"))));
+    render(<SessionsTable sessions={[sessionSummary({ id: "x" })]} />);
+    await user.click(screen.getAllByRole("row")[1]);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Failed to fetch");
+  });
+
+  it("opens and closes a session from the keyboard", async () => {
+    const user = userEvent.setup();
+    mockApi({ [`/admin/sessions/${detail.id}`]: detail });
+    render(<SessionsTable sessions={[sessionSummary()]} />);
+    const row = screen.getAllByRole("row")[1];
+    expect(row).toHaveAttribute("aria-expanded", "false");
+    row.focus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByLabelText("Participants")).toBeInTheDocument();
+    expect(row).toHaveAttribute("aria-expanded", "true");
+    await user.keyboard(" ");
+    await waitFor(() => expect(screen.queryByLabelText("Participants")).toBeNull());
+    await user.keyboard("{Tab}");
+    expect(row).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("drops a detail response that arrives after its row was closed or replaced", async () => {
+    const user = userEvent.setup();
+    // Each request waits until the test releases it, in any order.
+    const pending = new Map<string, () => void>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string) => {
+        const id = String(input).split("/").pop()!;
+        return new Promise((resolve) => {
+          pending.set(id, () =>
+            resolve({ ok: true, status: 200, json: async () => ({ ...detail, id, roomId: `!room-${id}` }) }),
+          );
+        });
+      }),
+    );
+    render(<SessionsTable sessions={[sessionSummary({ id: "a" }), sessionSummary({ id: "b" })]} />);
+    const [, rowA, rowB] = screen.getAllByRole("row");
+
+    // Open A, close it again, then A's response lands: it must stay closed.
+    await user.click(rowA);
+    expect(screen.getByText("Loading session…")).toBeInTheDocument();
+    await user.click(rowA);
+    await act(async () => pending.get("a")!());
+    expect(rowA).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("Participants")).toBeNull();
+
+    // Open A, switch to B, then A answers late and B afterwards: only B shows.
+    await user.click(rowA);
+    await user.click(rowB);
+    await act(async () => pending.get("a")!());
+    expect(screen.queryByText("!room-a")).toBeNull();
+    expect(screen.getByText("Loading session…")).toBeInTheDocument();
+    await act(async () => pending.get("b")!());
+    expect(await screen.findByText("!room-b")).toBeInTheDocument();
+    expect(rowB.nextElementSibling).toHaveClass("detail-row");
+    expect(screen.queryByText("!room-a")).toBeNull();
   });
 });

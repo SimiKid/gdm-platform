@@ -185,6 +185,9 @@ function enroll() {
     vuId,
     sessionId: data.session.id,
     participantId: data.participantId,
+    // ParticipantGuard authorizes session polls and survey submissions with
+    // the same tracking token that opened the seat (Bearer header).
+    trackingToken,
     homeserverUrl: normalizeHomeserverUrl(data.matrix.homeserverUrl || baseUrl),
     userId: data.matrix.userId,
     accessToken: data.matrix.accessToken,
@@ -215,7 +218,7 @@ function enroll() {
       "GET",
       `${apiUrl}/sessions/${encodeURIComponent(participantState.sessionId)}`,
       null,
-      requestParams("session_poll"),
+      participantParams(participantState, "session_poll", false),
     );
     apiLatencyMs.add(Date.now() - pollStarted, {
       ...metricTags(),
@@ -257,7 +260,7 @@ function submitEntrySurvey(participantState) {
         },
       },
     }),
-    jsonParams("entry_survey"),
+    participantParams(participantState, "entry_survey"),
   );
   apiLatencyMs.add(Date.now() - started, {
     ...metricTags(),
@@ -503,9 +506,19 @@ function jsonParams(endpoint) {
   return params;
 }
 
+function participantParams(participantState, endpoint, json = true) {
+  return withBearer(
+    json ? jsonParams(endpoint) : requestParams(endpoint),
+    participantState.trackingToken,
+  );
+}
+
 function matrixParams(participantState, endpoint) {
-  const params = jsonParams(endpoint);
-  params.headers.Authorization = `Bearer ${participantState.accessToken}`;
+  return withBearer(jsonParams(endpoint), participantState.accessToken);
+}
+
+function withBearer(params, token) {
+  params.headers = { ...params.headers, Authorization: `Bearer ${token}` };
   return params;
 }
 

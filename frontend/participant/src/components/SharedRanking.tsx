@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
 import type { MatrixClient, MatrixEvent } from "matrix-js-sdk";
 import { RoomEvent } from "matrix-js-sdk";
-import { MATRIX_EVENT_TYPES } from "@gdm/shared";
+import { buildIdentities, identityFor, MATRIX_EVENT_TYPES } from "@gdm/shared";
 import type { Ranking, RankingTask } from "@gdm/shared";
-import { buildIdentities, identityFor } from "../study/identity";
+import { insertBeforeAnchor } from "../study/ranking";
 
 const RANKING_EVENT = MATRIX_EVENT_TYPES.ranking; // "de.gdm.ranking"
 
@@ -29,8 +29,11 @@ export default function SharedRanking({ client, roomId, task, initial, onChange 
   useEffect(() => { onChangeRef.current = onChange; });
 
   const [order, setOrder] = useState<string[]>(initial.order);
+  // The order last applied, read when a failed send has to be rolled back.
+  const appliedOrder = useRef(initial.order);
 
   function applyOrder(next: string[]) {
+    appliedOrder.current = next;
     setOrder(next);
     onChangeRef.current?.(next);
   }
@@ -89,6 +92,7 @@ export default function SharedRanking({ client, roomId, task, initial, onChange 
   }, [client, labels, roomId, userId]);
 
   function broadcast(next: string[], movement: Ranking["movement"]) {
+    const previous = order;
     applyOrder(next); // optimistic
     const ranking: Ranking = {
       taskId: task.id,
@@ -97,8 +101,14 @@ export default function SharedRanking({ client, roomId, task, initial, onChange 
       updatedBy: userId,
       movement,
     };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    void client.sendEvent(roomId, RANKING_EVENT as any, ranking as any);
+    client.sendEvent(roomId, RANKING_EVENT, ranking).catch(() => {
+      // The group never saw this move: undo it, unless a newer order (ours or
+      // another participant's) has replaced it in the meantime. Compare by
+      // value because the local echo of this event re-applies a copy.
+      if (appliedOrder.current.join("\n") === next.join("\n")) {
+        applyOrder(previous);
+      }
+    });
   }
 
   function move(index: number, dir: -1 | 1) {
@@ -136,17 +146,12 @@ export default function SharedRanking({ client, roomId, task, initial, onChange 
       return;
     }
 
-    // Use the item at the insertion boundary as an anchor. Removing the
-    // dragged item first otherwise shifts indexes during downward moves.
     const from = order.indexOf(id);
-    const anchor = dropBoundary >= order.length ? null : order[dropBoundary];
-    if (from < 0 || anchor === id) {
+    const next = from < 0 ? null : insertBeforeAnchor(order, id, dropBoundary);
+    if (!next) {
       finishDrag();
       return;
     }
-    const next = order.filter((itemId) => itemId !== id);
-    const insertionIndex = anchor === null ? next.length : next.indexOf(anchor);
-    next.splice(insertionIndex < 0 ? next.length : insertionIndex, 0, id);
     const to = next.indexOf(id);
     if (to !== from) broadcast(next, { itemId: id, from, to });
     finishDrag();
@@ -189,7 +194,7 @@ export default function SharedRanking({ client, roomId, task, initial, onChange 
                 type="button"
                 onClick={() => move(idx, -1)}
                 disabled={idx === 0}
-                aria-label="Move up"
+                aria-label={`Move up: ${labels.get(id) ?? id}`}
               >
                 ↑
               </button>
@@ -197,7 +202,7 @@ export default function SharedRanking({ client, roomId, task, initial, onChange 
                 type="button"
                 onClick={() => move(idx, 1)}
                 disabled={idx === order.length - 1}
-                aria-label="Move down"
+                aria-label={`Move down: ${labels.get(id) ?? id}`}
               >
                 ↓
               </button>

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import Likert from "./Likert";
 import LikertMatrix from "./LikertMatrix";
+import { AGREE_SCALE_5, FAMILIARITY_OPTIONS } from "../study/scales";
 
 export interface AttitudesAnswers {
   [key: string]: string | number;
@@ -21,14 +22,6 @@ const AI_ITEMS = [
   { key: "gaais8", label: "I think AI is dangerous." },
   { key: "gaais9", label: "I shiver with discomfort when I think about future uses of AI." },
   { key: "gaais10", label: "People like me will suffer if AI is used more and more." },
-];
-
-const AI_SCALE = [
-  "Disagree strongly",
-  "Disagree moderately",
-  "Neither disagree nor agree",
-  "Agree moderately",
-  "Agree strongly",
 ];
 
 const PERSONALITY_ITEMS = [
@@ -68,22 +61,6 @@ const CHAT_COMFORT_OPTIONS = [
   { value: "3", label: "Neither" },
   { value: "4", label: "Rather comfortable" },
   { value: "5", label: "Very comfortable" },
-];
-
-const SPACEFLIGHT_OPTIONS = [
-  { value: "1", label: "Not familiar at all" },
-  { value: "2", label: "Rather unfamiliar" },
-  { value: "3", label: "Neither" },
-  { value: "4", label: "Rather familiar" },
-  { value: "5", label: "Very familiar" },
-];
-
-const SURVIVAL_OPTIONS = [
-  { value: "1", label: "Not familiar at all" },
-  { value: "2", label: "Rather unfamiliar" },
-  { value: "3", label: "Neither" },
-  { value: "4", label: "Rather familiar" },
-  { value: "5", label: "Very familiar" },
 ];
 
 /** The three screens this page walks through, in order. */
@@ -153,7 +130,7 @@ export default function AttitudesPage({ onContinue }: Props) {
           name="ai"
           legend="We are interested in your attitudes towards Artificial Intelligence (AI). By AI we mean devices that can perform tasks that would usually require human intelligence. These can be computers, robots or other hardware devices, possibly augmented with sensors or cameras, etc. Please indicate the extent to which you agree or disagree with each of those."
           items={AI_ITEMS}
-          scaleLabels={AI_SCALE}
+          scaleLabels={AGREE_SCALE_5}
           values={aiValues}
           onChange={(key, value) =>
             setAiValues((prev) => ({ ...prev, [key]: value }))
@@ -195,7 +172,6 @@ export default function AttitudesPage({ onContinue }: Props) {
 
       <Likert
         name="teamwork"
-        layout="list"
         legend="How often do you usually work in teams of three or more people?"
         options={TEAMWORK_OPTIONS}
         value={teamwork}
@@ -204,7 +180,6 @@ export default function AttitudesPage({ onContinue }: Props) {
 
       <Likert
         name="chat-comfort"
-        layout="list"
         legend="How comfortable are you communicating via text chat?"
         options={CHAT_COMFORT_OPTIONS}
         value={chatComfort}
@@ -213,18 +188,16 @@ export default function AttitudesPage({ onContinue }: Props) {
 
       <Likert
         name="spaceflight"
-        layout="list"
         legend="How familiar are you with spaceflight-related topics?"
-        options={SPACEFLIGHT_OPTIONS}
+        options={FAMILIARITY_OPTIONS}
         value={spaceflightFamiliarity}
         onChange={setSpaceflightFamiliarity}
       />
 
       <Likert
         name="survival"
-        layout="list"
         legend="How familiar are you with wilderness / survival-related topics?"
-        options={SURVIVAL_OPTIONS}
+        options={FAMILIARITY_OPTIONS}
         value={survivalFamiliarity}
         onChange={setSurvivalFamiliarity}
       />
