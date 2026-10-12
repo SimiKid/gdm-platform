@@ -723,6 +723,34 @@ describe("window evaluation records", () => {
     expect(rt.windowEvaluations[0].contributionSplit).toEqual([]);
   });
 
+  it("excludes departed members but preserves the remaining members' colour names", async () => {
+    const { rt, bot } = runtime("public");
+    await rt.getParticipantUserIds(); // Snapshot the original three-person roster.
+    vi.mocked(bot.getJoinedMemberIds).mockResolvedValue(MEMBERS.slice(1));
+    record(rt, MEMBERS[0], "many words from the departed person", "gone");
+    record(rt, MEMBERS[1], "oxygen matters", "remaining");
+    await new ContributionBotRules().onWindowElapsed(rt, rt.startedAtMs + 120_000);
+    expect(rt.interventions[0].targets).toEqual([{ userId: MEMBERS[1], identityName: "Blue" }]);
+    expect(rt.windowEvaluations[0].contributionSplit.map((s) => s.userId)).toEqual(MEMBERS.slice(1));
+    vi.mocked(bot.getJoinedMemberIds).mockResolvedValue([MEMBERS[1]]);
+    await new ContributionBotRules().onWindowElapsed(rt, rt.startedAtMs + 240_000);
+    expect(rt.windowEvaluations[1].outcome).toBe("too-few-participants");
+    expect(bot.sendText).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not send a nudge to someone who leaves during wording generation", async () => {
+    const { rt, bot } = runtime("private");
+    record(rt, MEMBERS[0], "oxygen", "m1");
+    const generator = { generate: vi.fn(async () => {
+      vi.mocked(bot.getJoinedMemberIds).mockResolvedValue(MEMBERS.slice(1));
+      return "@Red please invite others";
+    }) };
+    await new ContributionBotRules(undefined, generator).onWindowElapsed(rt, rt.startedAtMs + 120_000);
+    expect(generator.generate).toHaveBeenCalledOnce();
+    expect(bot.sendText).not.toHaveBeenCalled();
+    expect(rt.interventions).toHaveLength(0);
+  });
+
   it("indexes evaluations on the session's window grid", async () => {
     const { rt } = runtime("public");
     const rules = new ContributionBotRules();

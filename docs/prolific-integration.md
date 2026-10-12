@@ -481,12 +481,16 @@ arrived → consent → entry → waiting → chat → exit → done
   waiting-room deadline.
 - A refresh/reconnect within 30 seconds resumes the existing stage and seat.
 - After 30 seconds without a heartbeat, `connection_timeout` becomes terminal.
-- In a waiting lobby, the stale seat is removed. In a provisioning/running
-  group, the group is aborted, the other Prolific members are terminated with
-  `participant_dropout`, and all Matrix members are removed so the remaining
-  participants are not stranded in an invalid task. A voluntary withdrawal
-  from a provisioning/running group aborts the group in the same way (without
-  the Matrix kick).
+- In a waiting lobby, the stale seat is removed. A dropout while provisioning
+  still aborts the unstarted group. Once the discussion is running, a disconnect
+  or voluntary withdrawal ends only that participant's participation and removes
+  their Matrix access. The others keep the original timer, complete the exit
+  survey and receive their normal completion link, even if only one remains.
+- The original roster and research records are retained, so colour names remain
+  stable and the departed participant's terminal outcome stays available in
+  outcome exports. Nudge evaluations use current room members, retain their
+  original colour names and suppress nudges when fewer than two remain. Direct
+  participants remain outside Prolific heartbeat/compensation handling.
 - The same submission cannot join another group after receiving a terminal
   outcome. Reopening the link shows the stored exit/debrief state.
 - A full group provisions the Matrix room in the background and starts the live
@@ -518,7 +522,7 @@ debriefing page they get **Finish study** instead of a Prolific link.
 | `connection_timeout` | No heartbeat beyond 30-second grace | `none` at arrival/consent; `manual_review` at entry; time-based `partial` at waiting/chat/exit | Technical/group failure, falling back to Voluntary withdrawal |
 | `unmatched` | Group not full after five minutes | time-based `partial` | Group not formed |
 | `technical_failure` | Lobby still provisioning its room when the waiting deadline passed | time-based `partial` | Technical/group failure, falling back to Group not formed |
-| `participant_dropout` | Another participant leaves/disconnects during group | time-based `partial` for affected Prolific group members | Technical/group failure, falling back to Group not formed |
+| `participant_dropout` | Another participant leaves/disconnects before the provisioned group starts (or historical live-group abort) | time-based `partial` for affected Prolific group members | Technical/group failure, falling back to Group not formed |
 | `group_aborted` | A new study round was started while the participant was in a waiting lobby | time-based `partial` | Technical/group failure, falling back to Group not formed |
 
 Time-based partial compensation is calculated from the persisted arrival time

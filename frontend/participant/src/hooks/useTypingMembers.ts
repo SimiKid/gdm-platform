@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import type { MatrixClient } from "matrix-js-sdk";
 import { RoomMemberEvent } from "matrix-js-sdk";
-import { buildIdentities, identityFor, isBot } from "@gdm/shared";
+import { buildIdentities, identityFor, isBot, type Identity } from "@gdm/shared";
 
 /** Pseudonyms of the other participants currently typing (Matrix typing). */
 export function useTypingMembers(
   client: MatrixClient,
   roomId: string | null,
   userId: string,
+  identities?: Map<string, Identity>,
 ): string[] {
   const [typingMembers, setTypingMembers] = useState<string[]>([]);
 
@@ -26,7 +27,7 @@ export function useTypingMembers(
           .map(
             (member) =>
               identityFor(
-                buildIdentities(
+                identities ?? buildIdentities(
                   room.getJoinedMembers().map((item) => item.userId),
                 ),
                 member.userId,
@@ -35,11 +36,13 @@ export function useTypingMembers(
       setTypingMembers(members);
     }
     client.on(RoomMemberEvent.Typing, refreshTyping);
+    client.on(RoomMemberEvent.Membership, refreshTyping);
     refreshTyping();
     return () => {
       client.off(RoomMemberEvent.Typing, refreshTyping);
+      client.off(RoomMemberEvent.Membership, refreshTyping);
     };
-  }, [client, roomId, userId]);
+  }, [client, roomId, userId, identities]);
 
   return typingMembers;
 }

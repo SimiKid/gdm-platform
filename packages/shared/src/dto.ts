@@ -82,6 +82,8 @@ export interface ParticipationOutcomeResponse {
 export interface PublicParticipant {
   id: string;
   name: string;
+  /** Public room identity; preserves colour names after a member leaves. */
+  matrixUserId?: string;
 }
 
 /** A session as returned to participant clients — participants sanitized. */
@@ -270,6 +272,8 @@ export const GDM_RECIPIENT_KEY = "de.gdm.recipient";
  * to run (bot rules, relay, timer). The Chat Service joins the room itself.
  */
 export interface StartSessionNotification {
+  /** Original roster, including departed members, for stable pseudonyms. */
+  participantUserIds?: string[];
   sessionId: string;
   roomId: string;
   condition: Condition;

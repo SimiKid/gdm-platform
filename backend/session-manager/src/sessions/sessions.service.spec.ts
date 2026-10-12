@@ -191,7 +191,7 @@ describe("SessionsService (session-manager)", () => {
     expect(next.session.id).not.toBe(first.session.id);
   });
 
-  it("aborts a live group and records partial review for peers after a dropout", async () => {
+  it("lets the remaining participant finish normally after a live withdrawal", async () => {
     const condition = (await store.listConditions())[0];
     await store.upsertCondition({ ...condition, groupSize: 2 });
     const other = {
@@ -204,7 +204,7 @@ describe("SessionsService (session-manager)", () => {
       participantName: "",
       prolific,
     });
-    await svc.openSession({
+    const second = await svc.openSession({
       trackingToken: "live-prolific-two",
       participantName: "",
       prolific: other,
@@ -218,11 +218,27 @@ describe("SessionsService (session-manager)", () => {
       "voluntary_withdrawal",
     );
     expect(withdrawing.compensationKind).toBe("manual_review");
-    expect((await svc.getSession(first.session.id)).status).toBe("aborted");
-    await expect(svc.getParticipationOutcome(other)).resolves.toMatchObject({
-      outcome: "participant_dropout",
-      compensationKind: "partial",
+    expect((await svc.getSession(first.session.id)).status).toBe("running");
+    expect(matrix.kick).toHaveBeenCalledExactlyOnceWith(
+      "!room:localhost", first.matrix.userId, expect.any(String),
+    );
+    await expect(svc.getParticipationOutcome(other)).resolves.toBeNull();
+    const recovered = await svc.recoverRunningSessions("@bot:localhost");
+    expect(recovered[0].participantUserIds).toEqual([first.matrix.userId, second.matrix.userId]);
+    await svc.finalizeSession(first.session.id, { messages: [], rankingHistory: [] });
+    await svc.submitSurvey({
+      sessionId: first.session.id, participantId: second.participantId,
+      kind: "exit", survey: { answers: { satisfaction: 7 }, submittedAt: new Date().toISOString() },
     });
+    await store.updateStudySettings({ compensationUrl: "https://example.test/complete" });
+    await expect(svc.completeParticipant(first.session.id, second.participantId)).resolves.toMatchObject({
+      compensationUrl: "https://example.test/complete",
+    });
+    await expect(svc.getParticipationOutcome(other)).resolves.toMatchObject({ outcome: "completed" });
+    await expect(svc.getParticipationOutcome(prolific)).resolves.toMatchObject({ outcome: "voluntary_withdrawal" });
+    expect((await svc.getSession(first.session.id)).participants).toHaveLength(2);
+    const publicSession = await svc.getPublicSession(first.session.id);
+    expect(publicSession.participants.map((p) => p.matrixUserId)).toEqual([first.matrix.userId, second.matrix.userId]);
   });
 
   it("does not requeue an unmatched Prolific submission after its lobby ends", async () => {
@@ -314,7 +330,7 @@ describe("SessionsService (session-manager)", () => {
     expect(requestReturn).toHaveBeenCalledOnce();
   });
 
-  it("aborts the group and removes every Matrix member after a live disconnect", async () => {
+  it("keeps the group running and removes only the disconnected participant", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime("2026-08-31T10:00:00.000Z");
     const localStore = new StoreService();
@@ -347,14 +363,17 @@ describe("SessionsService (session-manager)", () => {
     vi.setSystemTime("2026-08-31T10:00:31.000Z");
 
     expect(await localService.sweepDisconnectedParticipants()).toBe(1);
-    expect((await localService.getSession(first.session.id)).status).toBe("aborted");
-    expect(localMatrix.kick).toHaveBeenCalledTimes(2);
+    expect((await localService.getSession(first.session.id)).status).toBe("running");
+    expect(localMatrix.kick).toHaveBeenCalledExactlyOnceWith(
+      "!room:localhost", first.matrix.userId, expect.any(String),
+    );
     await expect(localService.getParticipationOutcome(prolific)).resolves.toMatchObject({
       outcome: "connection_timeout",
     });
-    await expect(localService.getParticipationOutcome(peer)).resolves.toMatchObject({
-      outcome: "participant_dropout",
-    });
+    await expect(localService.getParticipationOutcome(peer)).resolves.toBeNull();
+    await expect(localService.resumeProlific(prolific)).resolves.toMatchObject({ stage: "terminated" });
+    await expect(localService.resumeProlific(peer)).resolves.toMatchObject({ stage: "chat" });
+    expect(await localService.sweepDisconnectedParticipants()).toBe(0);
   });
 
   it("keeps direct admission enabled while Prolific validation is configured", async () => {

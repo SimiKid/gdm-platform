@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { MatrixClient } from "matrix-js-sdk";
 import {
   buildIdentities,
@@ -41,7 +41,6 @@ export default function Chat({ client, session, onTimeUp, onWithdraw }: Props) {
         : "ranking";
   const userId = client.getUserId() ?? "";
   const messages = useRoomMessages(client, activeRoomId, userId);
-  const typingMembers = useTypingMembers(client, activeRoomId, userId);
   const sendBehavior = useBehaviorTelemetry(client, activeRoomId);
   const { viewportRef, endRef, newMessageCount, scrollToLatest, trackScroll } =
     useFollowLatest(messages, activeRoomId);
@@ -75,13 +74,18 @@ export default function Chat({ client, session, onTimeUp, onWithdraw }: Props) {
       ?.getJoinedMembers()
       .map((member) => member.userId)
       .filter((id) => !isServiceUser(id)) ?? [];
-  const identities = buildIdentities(participantMemberIds);
+  const roster = session?.participants.flatMap((p) => p.matrixUserId ? [p.matrixUserId] : []);
+  // Study identities come from the immutable session roster, not current membership.
+  const identityKey = (roster?.length ? roster : participantMemberIds).slice().sort().join("\n");
+  const identities = useMemo(() => buildIdentities(identityKey ? identityKey.split("\n") : []), [identityKey]);
+  const typingMembers = useTypingMembers(client, activeRoomId, userId, identities);
   const me = identityFor(identities, userId);
   const groupReady =
     session === null ||
     (room !== null &&
       participantMemberIds.includes(userId) &&
-      participantMemberIds.length >= session.condition.groupSize);
+      (roster?.length === session.participants.length ||
+        participantMemberIds.length >= session.condition.groupSize));
 
   // Every participant name in this room, used to highlight mentions on render.
   const mentionNames = [...identities.values()].map((id) => id.name);
@@ -282,6 +286,7 @@ export default function Chat({ client, session, onTimeUp, onWithdraw }: Props) {
               task={session.rankingTask}
               initial={session.ranking}
               onChange={setGroupOrder}
+              identities={identities}
             />
           )}
           {workspaceMode === "external" && (

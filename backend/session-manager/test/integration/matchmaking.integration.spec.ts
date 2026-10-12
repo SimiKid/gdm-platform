@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
+import { SessionsService } from "../../src/sessions/sessions.service";
 import type { Condition } from "@gdm/shared";
 import {
   closeHarness,
@@ -175,6 +176,42 @@ describe("matchmaking & lifecycle (integration)", () => {
         compensationKind: "partial",
       },
     });
+  });
+
+  it("persists a withdrawal without aborting peers and completes the group after restart", async () => {
+    const prolific = {
+      participantId: "aaaaaaaaaaaaaaaaaaaaaaaa",
+      studyId: "bbbbbbbbbbbbbbbbbbbbbbbb",
+      sessionId: "cccccccccccccccccccccccc",
+    };
+    const first = (await request(t.http).post("/api/sessions").send({
+      trackingToken: "tt-withdrawing", participantName: "", prolific, conditionId: "baseline",
+    }).expect(201)).body;
+    const peer = await openSession(t, "Peer", "baseline");
+    await openSession(t, "Third", "baseline");
+    await waitForRunningSession(t, first.session.id, "tt-Peer");
+    await request(t.http).post("/api/prolific/terminate")
+      .send({ prolific, outcome: "voluntary_withdrawal" }).expect(201);
+    expect(t.matrix.kicks.map((k) => k.userId)).toEqual([first.matrix.userId]);
+
+    await t.close();
+    t = await createTestApp();
+    const session = (await request(t.http).get(`/api/sessions/${first.session.id}`)
+      .set("Authorization", "Bearer tt-Peer").expect(200)).body;
+    expect(session.status).toBe("running");
+    expect(session.participants).toHaveLength(3);
+    expect(session.participants.map((p: { matrixUserId: string }) => p.matrixUserId)).toContain(first.matrix.userId);
+    const ended = (await request(t.http).post("/api/prolific/resume").send({ prolific }).expect(201)).body;
+    expect(ended).toMatchObject({ stage: "terminated", termination: { outcome: "voluntary_withdrawal" } });
+
+    const service = t.app.get(SessionsService);
+    await service.finalizeSession(first.session.id, { messages: [], rankingHistory: [] });
+    await request(t.http).post("/api/surveys").set("Authorization", "Bearer tt-Peer").send({
+      sessionId: first.session.id, participantId: peer.participantId, kind: "exit",
+      survey: { answers: { satisfaction: 7 }, submittedAt: new Date().toISOString() },
+    }).expect(201);
+    await expect(service.completeParticipant(first.session.id, peer.participantId)).resolves.toHaveProperty("completedAt");
+    expect((await service.getSession(first.session.id)).status).toBe("completed");
   });
 
   it("does not leak tracking tokens or surveys through participant endpoints", async () => {

@@ -765,6 +765,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         condition: session.condition,
         durationMinutes: session.durationMinutes,
         startedAt: session.startedAt,
+        participantUserIds: session.participants.flatMap((p) => p.matrixUserId ? [p.matrixUserId] : []),
         checkpoint: checkpointFromSession(session),
       });
     }
@@ -891,9 +892,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * A participant left for good: free their seat in a waiting lobby, or end
-   * their live group (the others receive a dropout outcome). Returns true
-   * when a provisioning/running group was aborted.
+   * A participant left for good: free a waiting seat, or remove only that
+   * participant from a running discussion. Keep their research records and
+   * the original roster. Returns true only if an unstarted provisioning group
+   * was aborted.
    */
   private async leaveSession(
     existing: { session: Session; participant: Participant },
@@ -907,9 +909,22 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       );
       return false;
     }
-    if (session.status !== "provisioning" && session.status !== "running") {
+    if (session.status === "running") {
+      if (session.roomId && participant.matrixUserId) {
+        try {
+          await this.matrix.kick(
+            session.roomId,
+            participant.matrixUserId,
+            "Your participation in this study has ended.",
+          );
+        } catch (error) {
+          // A room-access failure must not end the remaining participants' study.
+          this.log.error(`could not remove departed participant from ${session.id}: ${String(error)}`);
+        }
+      }
       return false;
     }
+    if (session.status !== "provisioning") return false;
     await this.store.updateSessionLifecycle(session.id, { status: "aborted" });
     await this.terminateSessionParticipants(
       session.id,

@@ -62,9 +62,13 @@ export class SessionRuntime {
     private readonly bot: MatrixBotService,
     startedAt?: string,
     checkpoint?: RuntimeCheckpoint,
+    participantUserIds?: string[],
   ) {
     this.startedAtMs = startedAt ? new Date(startedAt).getTime() : Date.now();
     if (checkpoint) this.restore(checkpoint);
+    if (participantUserIds?.length) {
+      this.participantUserIds = Promise.resolve(participantUserIds.filter((id) => !isServiceUser(id)).sort());
+    }
   }
 
   recordMessage(message: Message): void {
@@ -160,6 +164,12 @@ export class SessionRuntime {
         throw error;
       });
     return this.participantUserIds;
+  }
+
+  /** Refresh membership for targeting; the original roster stays unchanged. */
+  async getActiveParticipantUserIds(): Promise<string[]> {
+    const roster = new Set(await this.getParticipantUserIds());
+    return (await this.bot.getJoinedMemberIds(this.roomId)).filter((id) => roster.has(id));
   }
 
   /** Post a nudge / message into the room as the bot (visible to everyone). */
