@@ -149,7 +149,10 @@ export class ContributionBotRules implements BotRules {
       record(inWarmup ? "warm-up" : "wrap-up");
       return;
     }
-    const participantIds = await this.getParticipantIds(runtime);
+    const roster = await this.getParticipantIds(runtime);
+    // Do not target departed members or encourage others to invite them back.
+    // If membership cannot be checked, skip this evaluation rather than guess.
+    const participantIds = await runtime.getActiveParticipantUserIds();
     if (participantIds.length < 2) {
       record("too-few-participants");
       return;
@@ -169,6 +172,7 @@ export class ContributionBotRules implements BotRules {
       windowEndMs,
       llmMode,
       Math.max(state.lastInterventionAtMs ?? 0, warmupEndMs),
+      roster,
     );
     const overThreshold = split
       .filter((entry) => entry.dominanceScore >= config.contributionThreshold)
@@ -200,6 +204,12 @@ export class ContributionBotRules implements BotRules {
     const nudgeIndex = runtime.interventions.length;
     const message = await this.buildMessage(runtime, split, target, nudgeIndex);
 
+    // Generation is asynchronous: a target may have left while it was running.
+    const stillActive = await runtime.getActiveParticipantUserIds();
+    if (stillActive.length < 2 || !stillActive.includes(target.userId)) {
+      record(stillActive.length < 2 ? "too-few-participants" : "no-target", evaluated);
+      return;
+    }
     if (audience === "public") {
       await runtime.post(message);
     } else {
@@ -360,8 +370,9 @@ function contributionSplit(
   nowMs: number,
   llmMode: LlmMode,
   trackerResetAtMs: number | undefined,
+  roster: string[] = participantIds,
 ): ContributionShare[] {
-  const identities = buildIdentities(participantIds);
+  const identities = buildIdentities(roster);
   const windowCutoffMs = nowMs - config.contributionWindowMinutes * 60_000;
   const byUser = new Map<
     string,

@@ -205,6 +205,33 @@ describe("Chat telemetry", () => {
     expect(screen.getByPlaceholderText("Type a message")).toBeInTheDocument();
   });
 
+  it("keeps chat, colours and completion working after members leave, including after refresh", async () => {
+    const ids = ["@alpha:test", "@beta:test", "@participant:test"];
+    const session = {
+      ...studySession,
+      participants: ids.map((matrixUserId, i) => ({ id: `p${i}`, name: "", matrixUserId })),
+      startedAt: new Date().toISOString(),
+      durationMinutes: 1,
+    };
+    const { client, setJoinedMembers, sendTextMessage } = createClient([], ids);
+    const onTimeUp = vi.fn();
+    const view = render(<Chat client={client} session={session} onTimeUp={onTimeUp} />);
+    expect(screen.getByText(/You are writing as Green/)).toBeInTheDocument();
+    act(() => setJoinedMembers(["@participant:test"]));
+    expect(screen.getByText(/You are writing as Green/)).toBeInTheDocument();
+    expect(screen.queryByText("Loading group...")).not.toBeInTheDocument();
+    expect(screen.getByText("Rank")).toBeInTheDocument();
+    view.unmount();
+    render(<Chat client={client} session={session} onTimeUp={onTimeUp} />);
+    expect(screen.getByText(/You are writing as Green/)).toBeInTheDocument();
+    const input = screen.getByPlaceholderText("Type a message");
+    fireEvent.change(input, { target: { value: "still participating" } });
+    await act(async () => fireEvent.keyDown(input, { key: "Enter" }));
+    expect(sendTextMessage).toHaveBeenCalledWith(ROOM_ID, "still participating");
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(onTimeUp).toHaveBeenCalledOnce();
+  });
+
   it("keeps the structured ranking as the default workspace", () => {
     const { client } = createClient([], [
       "@alpha:test",

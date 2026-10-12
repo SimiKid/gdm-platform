@@ -178,6 +178,7 @@ export class SessionsService
       this.bot,
       note.startedAt,
       note.checkpoint,
+      note.participantUserIds,
     );
     this.runtimes.set(note.roomId, runtime);
     this.retiredRooms.delete(note.roomId);

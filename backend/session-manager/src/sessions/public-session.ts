@@ -19,6 +19,6 @@ export function toPublicSession(session: Session): PublicSession {
     // A room persisted mid-provisioning is recovery metadata, not an
     // invitation to enter a half-configured room.
     roomId: session.status === "provisioning" ? undefined : session.roomId,
-    participants: session.participants.map((p) => ({ id: p.id, name: p.name })),
+    participants: session.participants.map((p) => ({ id: p.id, name: p.name, matrixUserId: p.matrixUserId })),
   };
 }

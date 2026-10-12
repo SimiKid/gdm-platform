@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { SessionRuntime } from "./session-runtime";
 import { fakeBot as makeFakeBot } from "../test-utils";
 import { DEFAULT_INTERVENTION_CONFIG } from "@gdm/shared";
@@ -31,6 +31,17 @@ const message = (id: string): Message => ({
 });
 
 describe("SessionRuntime", () => {
+  it("keeps the original roster on recovery while refreshing active membership", async () => {
+    const bot = makeFakeBot(["@gdm_b:localhost", "@gdm_c:localhost"]);
+    const roster = ["@gdm_a:localhost", "@gdm_b:localhost", "@gdm_c:localhost"];
+    const rt = new SessionRuntime("s", "!r", condition, 10, bot, undefined, undefined, roster);
+    expect(await rt.getParticipantUserIds()).toEqual(roster);
+    expect(await rt.getActiveParticipantUserIds()).toEqual(roster.slice(1));
+    vi.mocked(bot.getJoinedMemberIds).mockResolvedValue([roster[2]]);
+    expect(await rt.getActiveParticipantUserIds()).toEqual([roster[2]]);
+    expect(await rt.getParticipantUserIds()).toEqual(roster);
+  });
+
   it("records messages and indexes them by id", () => {
     const rt = new SessionRuntime("s", "!r", condition, 10, fakeBot());
     rt.recordMessage(message("m1"));

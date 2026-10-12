@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
 import type { MatrixClient, MatrixEvent } from "matrix-js-sdk";
 import { RoomEvent } from "matrix-js-sdk";
-import { buildIdentities, identityFor, MATRIX_EVENT_TYPES } from "@gdm/shared";
+import { buildIdentities, identityFor, MATRIX_EVENT_TYPES, type Identity } from "@gdm/shared";
 import type { Ranking, RankingTask } from "@gdm/shared";
 import { insertBeforeAnchor } from "../study/ranking";
 
@@ -13,6 +13,7 @@ interface Props {
   roomId: string;
   task: RankingTask;
   initial: Ranking;
+  identities?: Map<string, Identity>;
   /** Called whenever the group ranking order changes. */
   onChange?: (order: string[]) => void;
 }
@@ -24,7 +25,7 @@ interface Props {
  * `de.gdm.ranking` timeline events (regular members can send these — no power
  * level needed), and incoming events replace the local order (last-write-wins).
  */
-export default function SharedRanking({ client, roomId, task, initial, onChange }: Props) {
+export default function SharedRanking({ client, roomId, task, initial, onChange, identities }: Props) {
   const onChangeRef = useRef(onChange);
   useEffect(() => { onChangeRef.current = onChange; });
 
@@ -73,7 +74,7 @@ export default function SharedRanking({ client, roomId, task, initial, onChange 
         applyOrder(content.order);
         if (content.movement && content.updatedBy !== userId) {
           const members = activeRoom.getJoinedMembers().map((member) => member.userId);
-          const identity = identityFor(buildIdentities(members), content.updatedBy);
+          const identity = identityFor(identities ?? buildIdentities(members), content.updatedBy);
           const item = labels.get(content.movement.itemId) ?? content.movement.itemId;
           setActivity({
             text: `${identity.name} moved ${item} from #${content.movement.from + 1} to #${content.movement.to + 1}`,
@@ -89,7 +90,7 @@ export default function SharedRanking({ client, roomId, task, initial, onChange 
       client.off(RoomEvent.Timeline, onTimeline);
       if (activityTimer.current) clearTimeout(activityTimer.current);
     };
-  }, [client, labels, roomId, userId]);
+  }, [client, labels, roomId, userId, identities]);
 
   function broadcast(next: string[], movement: Ranking["movement"]) {
     const previous = order;

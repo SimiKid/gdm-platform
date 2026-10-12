@@ -250,6 +250,7 @@ export class RoomProvisioner {
       condition: session.condition,
       durationMinutes: session.durationMinutes,
       startedAt: session.startedAt,
+      participantUserIds: session.participants.flatMap((p) => p.matrixUserId ? [p.matrixUserId] : []),
     };
     const res = await fetch(`${this.chatServiceUrl}/internal/sessions/start`, {
       method: "POST",
