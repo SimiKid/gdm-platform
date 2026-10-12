@@ -308,6 +308,23 @@ describe("ReportsService (in-memory store)", () => {
     });
   });
 
+  it("exports the exit ranking timer and leaves a timed-out exit ranking unscored", async () => {
+    session.participants[0].exitSurvey = exitSurvey({
+      finalRankingCompleted: false,
+      finalRankingTimedOut: true,
+      exitRankingSecondsUsed: 180,
+    });
+    const [p1] = (await reports.exportParticipants()).participants;
+    expect(p1).toMatchObject({
+      exitRankingCompleted: false,
+      exitRankingTimedOut: true,
+      exitRankingSecondsUsed: 180,
+      exitRankingError: null,
+    });
+    const exit = (await reports.exportRankings()).rankings.find((row) => row.type === "exit");
+    expect(exit).toMatchObject({ rankingCompleted: false, error: null });
+  });
+
   it("never scores or exports ranking orders for Etherpad, even with stale ranking data", async () => {
     session.condition.config.workspaceMode = "etherpad";
     const { participants } = await reports.exportParticipants();

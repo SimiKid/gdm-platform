@@ -238,6 +238,19 @@ export function validateSurveyAnswers(
     if (answers.finalRanking !== undefined) {
       exactRanking(answers.finalRanking, expectedItemIds, "finalRanking");
     }
+    for (const key of ["finalRankingCompleted", "finalRankingTimedOut"]) {
+      if (answers[key] !== undefined && typeof answers[key] !== "boolean") {
+        bad(`${key} must be a boolean`);
+      }
+    }
+    if (answers.exitRankingSecondsUsed !== undefined) {
+      integerInRange(
+        answers.exitRankingSecondsUsed,
+        "exitRankingSecondsUsed",
+        0,
+        180,
+      );
+    }
     // Legacy exit fields (pre-v2)
     if (answers.satisfaction !== undefined) {
       integerInRange(answers.satisfaction, "satisfaction", 1, 7);

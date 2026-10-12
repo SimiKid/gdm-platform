@@ -73,6 +73,9 @@ export function participantsCsv(participants: ParticipantRow[]): string {
       "individual_ranking_seconds_used",
       "individual_ranking_error",
       "exit_submitted",
+      "exit_ranking_completed",
+      "exit_ranking_timed_out",
+      "exit_ranking_seconds_used",
       "exit_ranking_error",
       "satisfaction",
       "fairness",
@@ -142,6 +145,9 @@ export function participantsCsv(participants: ParticipantRow[]): string {
       cell(row.individualRankingSecondsUsed),
       cell(row.individualRankingError),
       cell(row.exitSubmitted),
+      cell(row.exitRankingCompleted),
+      cell(row.exitRankingTimedOut),
+      cell(row.exitRankingSecondsUsed),
       cell(row.exitRankingError),
       cell(row.satisfaction),
       cell(row.fairness),
@@ -200,6 +206,7 @@ export function participantRow(session: Session, participant: Participant) {
         event.type === type,
     );
   const rankingCompleted = isEtherpad(session) ? null : scalarAnswer(entry, "rankingCompleted");
+  const exitRankingCompleted = isEtherpad(session) ? null : scalarAnswer(exit, "finalRankingCompleted");
 
   return {
     participantPseudonym: pseudonymize("P", participant.id),
@@ -242,7 +249,16 @@ export function participantRow(session: Session, participant: Participant) {
         ? rankingErrorScore(rankingAnswer(entry, "individualRanking"))
         : null,
     exitSubmitted: exit ? true : null,
-    exitRankingError: isEtherpad(session) ? null : rankingErrorScore(rankingAnswer(exit, "finalRanking")),
+    exitRankingCompleted,
+    exitRankingTimedOut: isEtherpad(session) ? null : scalarAnswer(exit, "finalRankingTimedOut"),
+    exitRankingSecondsUsed: isEtherpad(session) ? null : scalarAnswer(exit, "exitRankingSecondsUsed"),
+    // Same policy as the entry ranking: a timed-out exit order is
+    // auto-completed and not scored. Older exits carry no flag and stored
+    // finalRanking only when complete.
+    exitRankingError:
+      isEtherpad(session) || exitRankingCompleted === false
+        ? null
+        : rankingErrorScore(rankingAnswer(exit, "finalRanking")),
     satisfaction: scalarAnswer(exit, "satisfaction"),
     fairness: scalarAnswer(exit, "fairness"),
     feltHeard: scalarAnswer(exit, "feltHeard"),

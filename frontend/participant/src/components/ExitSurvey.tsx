@@ -1,4 +1,5 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { formatMmSs } from "@gdm/shared";
 import type {
   CompleteParticipantResponse,
   PublicSession,
@@ -23,6 +24,15 @@ interface Props {
 }
 
 type ExitStep = "ranking" | "reflection2" | "reflection3";
+
+const RANKING_SECONDS = 3 * 60;
+
+interface RankingOutcome {
+  /** False when the 3-minute timer expired before every item was ranked. */
+  completed: boolean;
+  timedOut: boolean;
+  secondsUsed: number;
+}
 
 const CONFIDENCE_OPTIONS = [
   { value: "1", label: "Not confident at all" },
@@ -74,7 +84,10 @@ const BOT_PERCEPTION_ITEMS = [
 /**
  * Exit Survey — shown when the discussion timer runs out.
  *
- * Step 1: final individual ranking adjustment.
+ * Step 1: final individual ranking adjustment, on a 3-minute timer. When it
+ *         expires the current state is submitted as-is (leftover items are
+ *         appended in their shown order and the ranking is flagged
+ *         incomplete), matching the entry ranking task.
  * Step 2: task confidence + group dynamics matrix.
  * Step 3: psychological safety matrix + bot perception matrix, then submit.
  */
@@ -94,6 +107,17 @@ export default function ExitSurvey({
 
   // Step 1: ranking
   const [ranked, setRanked] = useState<string[]>(groupRanking ?? []);
+  const [secondsLeft, setSecondsLeft] = useState(RANKING_SECONDS);
+  const rankingOutcome = useRef<RankingOutcome | null>(null);
+  const rankingTimed = step === "ranking" && !etherpadMode;
+
+  // Keep the latest ranking in refs so the timer submits fresh data.
+  const rankedRef = useRef(ranked);
+  const itemIdsRef = useRef(items.map((item) => item.id));
+  useEffect(() => {
+    rankedRef.current = ranked;
+    itemIdsRef.current = items.map((item) => item.id);
+  });
 
   // Step 2: confidence + group dynamics
   const [confidence, setConfidence] = useState("");
@@ -118,28 +142,58 @@ export default function ExitSurvey({
     PSYCH_SAFETY_ITEMS.every((item) => psychSafety[item.key]) &&
     BOT_PERCEPTION_ITEMS.every((item) => botPerception[item.key]);
 
-  function finishRanking() {
+  function finishRanking(outcome?: RankingOutcome, order?: string[]) {
     if (rankingFinished.current) return;
     rankingFinished.current = true;
+    rankingOutcome.current = outcome ?? null;
+    if (order) setRanked(order);
     setStep("reflection2");
   }
+
+  useEffect(() => {
+    if (!rankingTimed) return;
+    const end = Date.now() + RANKING_SECONDS * 1000;
+    const tick = () => {
+      const left = Math.max(0, Math.round((end - Date.now()) / 1000));
+      setSecondsLeft(left);
+      if (left === 0) {
+        clearInterval(id);
+        const r = rankedRef.current;
+        // Time is up: submit what we have, leftovers in shown order.
+        const leftovers = itemIdsRef.current.filter((itemId) => !r.includes(itemId));
+        finishRanking(
+          {
+            completed: leftovers.length === 0,
+            timedOut: true,
+            secondsUsed: RANKING_SECONDS,
+          },
+          [...r, ...leftovers],
+        );
+      }
+    };
+    const id = setInterval(tick, 500);
+    return () => clearInterval(id);
+  }, [rankingTimed]);
 
   async function submit() {
     if (submissionInFlight.current) return;
     submissionInFlight.current = true;
     setSubmitting(true);
     setSubmitError(false);
+    const outcome = rankingOutcome.current;
     const answers: Record<string, string | number | boolean | string[]> = {
-      ...(etherpadMode ? { exitEtherpadId: exitPadId ?? "" } : { finalRankingCompleted: allRanked, finalRankingTimedOut: false }),
+      ...(etherpadMode
+        ? { exitEtherpadId: exitPadId ?? "" }
+        : {
+            finalRanking: ranked,
+            finalRankingCompleted: outcome?.completed ?? allRanked,
+            finalRankingTimedOut: outcome?.timedOut ?? false,
+            exitRankingSecondsUsed: outcome?.secondsUsed ?? 0,
+          }),
       // Both exit questionnaire pages are untimed; kept so the answer schema
       // still matches the timed sessions recorded before this was removed.
       exitQuestionnaireTimedOut: false,
     };
-    // Keep an unfinished order without treating it as a scored, complete ranking.
-    if (!etherpadMode) {
-      if (allRanked) answers.finalRanking = ranked;
-      else answers.finalRankingPartial = ranked;
-    }
     if (confidence) answers.taskConfidence = Number(confidence);
     for (const item of GROUP_DYNAMICS_ITEMS) {
       if (groupDynamics[item.key]) answers[item.key] = Number(groupDynamics[item.key]);
@@ -189,8 +243,18 @@ export default function ExitSurvey({
     );
   }
   if (step === "ranking") {
+    const timerLow = secondsLeft <= 60;
     return (
       <StudyShell onWithdraw={onWithdraw}>
+        <div
+          className={`task-timer ${timerLow ? "low" : ""}`}
+          role="timer"
+          aria-label={`Time remaining: ${formatMmSs(secondsLeft)}`}
+        >
+          <span aria-hidden="true">⏱</span> {formatMmSs(secondsLeft)}
+          <span className="task-timer-caption">time remaining</span>
+        </div>
+
         <div className="study-card">
           <h1>Final Task Reflection (1/3)</h1>
 
@@ -210,6 +274,10 @@ export default function ExitSurvey({
             Once you are done, please click submit to move on to the final
             questionnaire.
           </p>
+          <p>
+            <strong>You have 3 minutes to adjust your final ranking.</strong>{" "}
+            You may submit earlier once every item is ranked.
+          </p>
 
           <RankingBoard
             items={items}
@@ -223,7 +291,13 @@ export default function ExitSurvey({
               type="button"
               className="btn btn-primary"
               disabled={!allRanked}
-              onClick={() => finishRanking()}
+              onClick={() =>
+                finishRanking({
+                  completed: true,
+                  timedOut: false,
+                  secondsUsed: RANKING_SECONDS - secondsLeft,
+                })
+              }
             >
               Submit my final ranking
             </button>

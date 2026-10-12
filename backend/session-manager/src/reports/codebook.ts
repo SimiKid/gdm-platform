@@ -111,7 +111,10 @@ exclusions. Treat it as identifying data; keep it out of analysis folders.
 | individual_ranking_completed | \`false\` = the entry ranking timed out and was auto-completed in shown order |
 | individual_ranking_seconds_used | Time spent on the individual ranking |
 | individual_ranking_error | NASA error score of the entry ranking; empty unless completed = true |
-| exit_ranking_error | NASA error score of the participant's final individual ranking (exit survey) |
+| exit_ranking_completed | \`false\` = the 3-minute exit ranking timed out and was auto-completed in shown order; empty for exits recorded before the timer |
+| exit_ranking_timed_out | \`true\` = the exit ranking was submitted by the 3-minute timer rather than by the participant |
+| exit_ranking_seconds_used | Time spent on the exit ranking (0–180) |
+| exit_ranking_error | NASA error score of the participant's final individual ranking (exit survey); empty when exit_ranking_completed = false |
 | satisfaction, fairness, felt_heard | Legacy exit 1–7 scales (pre-v2 only) |
 | task_confidence | Confidence in group ranking (1–5) |
 | group_considered … comfortable_again | Group dynamics items (1–5, includes attention_check_1) |
@@ -170,6 +173,8 @@ solution). \`type\`:
   (\`ranking_completed\` = false means it timed out and was auto-completed
   in shown order; such rows carry no \`error\`)
 - \`exit\` — the participant's fresh individual ranking after the discussion
+  (same timeout rule as \`entry\`; empty \`ranking_completed\` on exits
+  recorded before the 3-minute timer)
 - \`group-edit\` — one state of the shared group ranking; \`edit_index\`
   orders the history (0 = first recorded state) and
   \`participant_pseudonym\` is the member who produced it
@@ -202,6 +207,7 @@ ${expertKey}
 - Historical sessions run before window instrumentation have no windows.csv
   rows and no classification-failure accounting.
 - Entry rankings that timed out (\`individual_ranking_completed\` = false)
-  are auto-completed permutations; they are not scored.
+  are auto-completed permutations; they are not scored. The same applies to
+  timed-out exit rankings (\`exit_ranking_completed\` = false).
 `;
 }
