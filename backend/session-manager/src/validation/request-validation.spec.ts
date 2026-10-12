@@ -87,6 +87,22 @@ describe("request validation", () => {
     );
   });
 
+  it("bounds the timed exit ranking to its 3-minute window", () => {
+    const expected = MOON_SURVIVAL.items.map((item) => item.id);
+    const exit = (answers: Record<string, string | number | boolean | string[]>) => ({
+      sessionId: "s", participantId: "p", kind: "exit" as const,
+      survey: { submittedAt: "2026-08-07T12:00:00.000Z", answers },
+    });
+    expect(() => validateSurveyAnswers(exit({
+      finalRanking: expected, finalRankingCompleted: false,
+      finalRankingTimedOut: true, exitRankingSecondsUsed: 180,
+    }), expected)).not.toThrow();
+    expect(() => validateSurveyAnswers(exit({ exitRankingSecondsUsed: 181 }), expected))
+      .toThrow("exitRankingSecondsUsed");
+    expect(() => validateSurveyAnswers(exit({ finalRankingTimedOut: "yes" }), expected))
+      .toThrow("finalRankingTimedOut must be a boolean");
+  });
+
   it("requires HTTPS compensation links except on local development hosts", () => {
     expect(validateCompensationUrl(" https://app.prolific.com/done ")).toBe(
       "https://app.prolific.com/done",

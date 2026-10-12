@@ -104,14 +104,15 @@ export function rankingRows(session: Session): RankingRow[] {
     }
     const exitOrder = rankingAnswer(participant.exitSurvey, "finalRanking");
     if (exitOrder) {
+      const exitCompleted = scalarAnswer(participant.exitSurvey, "finalRankingCompleted");
       rows.push({
         ...base,
         type: "exit",
         participantPseudonym: pseudonym,
         editIndex: null,
         timestamp: participant.exitSurvey?.submittedAt ?? null,
-        rankingCompleted: null,
-        error: rankingErrorScore(exitOrder),
+        rankingCompleted: typeof exitCompleted === "boolean" ? exitCompleted : null,
+        error: exitCompleted === false ? null : rankingErrorScore(exitOrder),
         order: exitOrder,
         ranks: ranksOf(exitOrder),
       });

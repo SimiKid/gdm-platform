@@ -56,17 +56,24 @@ function savedAnswers(fetchMock: ReturnType<typeof mockApi>) {
   return JSON.parse(call![1].body as string).survey.answers;
 }
 
+function answerReflections() {
+  fireEvent.click(screen.getByRole("radio", { name: "Rather confident" }));
+  screen.getAllByRole("radio", { name: /: Disagree strongly$/i }).forEach(radio => fireEvent.click(radio));
+  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  screen.getAllByRole("radio", { name: /: Disagree strongly$/i }).forEach(radio => fireEvent.click(radio));
+}
+
 describe("exit survey", () => {
-  it("is untimed end to end and keeps every answer through to submit", async () => {
+  it("times only the final ranking and keeps every answer through to submit", async () => {
     const fetchMock = mockApi();
     const onDone = vi.fn();
     render(<ExitSurvey session={session} participantId="p" groupRanking={order} onDone={onDone} />);
 
-    // 1/2 — the final ranking: no countdown, and waiting advances nothing.
+    // 1/3 — the final ranking runs on a 3-minute countdown.
     expect(screen.getByText("Final Task Reflection (1/3)")).toBeInTheDocument();
-    expect(screen.queryByRole("timer")).not.toBeInTheDocument();
-    act(() => vi.advanceTimersByTime(600_000));
-    expect(screen.getByText("Final Task Reflection (1/3)")).toBeInTheDocument();
+    expect(screen.getByRole("timer")).toHaveTextContent("3:00");
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(screen.getByRole("timer")).toHaveTextContent("2:00");
     fireEvent.click(screen.getByRole("button", { name: "Submit my final ranking" }));
 
     // 2/2 — confidence + group dynamics, also untimed.
@@ -90,10 +97,51 @@ describe("exit survey", () => {
       finalRanking: order,
       finalRankingCompleted: true,
       finalRankingTimedOut: false,
+      exitRankingSecondsUsed: 60,
       exitQuestionnaireTimedOut: false,
       taskConfidence: 4,
       groupConsidered: 1,
       safeSpeakUp: 1,
+    });
+  });
+
+  it("submits the final ranking when the 3 minutes run out, leftovers in shown order", async () => {
+    const fetchMock = mockApi();
+    const onDone = vi.fn();
+    // Only the first two items were placed (no group ranking to pre-fill).
+    render(<ExitSurvey session={session} participantId="p" groupRanking={order.slice(0, 2)} onDone={onDone} />);
+
+    act(() => vi.advanceTimersByTime(180_000));
+    expect(screen.getByText("Final Task Reflection (2/3)")).toBeInTheDocument();
+    expect(screen.queryByRole("timer")).not.toBeInTheDocument();
+
+    answerReflections();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Submit" })));
+
+    expect(onDone).toHaveBeenCalledOnce();
+    const answers = savedAnswers(fetchMock);
+    expect(answers).toMatchObject({
+      finalRanking: order,
+      finalRankingCompleted: false,
+      finalRankingTimedOut: true,
+      exitRankingSecondsUsed: 180,
+    });
+    expect(answers).not.toHaveProperty("finalRankingPartial");
+  });
+
+  it("flags a complete ranking that the timer submitted as completed but timed out", async () => {
+    const fetchMock = mockApi();
+    render(<ExitSurvey session={session} participantId="p" groupRanking={order} onDone={vi.fn()} />);
+
+    act(() => vi.advanceTimersByTime(180_000));
+    answerReflections();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Submit" })));
+
+    expect(savedAnswers(fetchMock)).toMatchObject({
+      finalRanking: order,
+      finalRankingCompleted: true,
+      finalRankingTimedOut: true,
+      exitRankingSecondsUsed: 180,
     });
   });
 });
